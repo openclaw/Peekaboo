@@ -115,7 +115,26 @@ enum WatchCaptureArtifactWriter {
     }
 
     @discardableResult
-    static func writePNG(image: CGImage, to url: URL, highlight: [CGRect]?) throws -> String {
+    static func writePNG(
+        image: CGImage,
+        to url: URL,
+        highlight: [CGRect]?,
+        sourceFrame: WatchCaptureFrame? = nil) throws -> String
+    {
+        let data: Data = if highlight?.isEmpty != false, let original = sourceFrame?.sourcePNG(for: image) {
+            original
+        } else {
+            try self.encodePNG(image: image, highlight: highlight, url: url)
+        }
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            throw PeekabooError.fileIOError("Failed to write PNG to \(url.path): \(error.localizedDescription)")
+        }
+        return self.sha256(data)
+    }
+
+    private static func encodePNG(image: CGImage, highlight: [CGRect]?, url: URL) throws -> Data {
         let finalImage: CGImage = if let highlight, !highlight.isEmpty,
                                      let annotated = self.annotate(image: image, boxes: highlight)
         {
@@ -137,13 +156,7 @@ enum WatchCaptureArtifactWriter {
         if !CGImageDestinationFinalize(destination) {
             throw PeekabooError.fileIOError("Failed to encode PNG for: \(url.path)")
         }
-        let data = encoded as Data
-        do {
-            try data.write(to: url, options: .atomic)
-        } catch {
-            throw PeekabooError.fileIOError("Failed to write PNG to \(url.path): \(error.localizedDescription)")
-        }
-        return self.sha256(data)
+        return encoded as Data
     }
 
     private static func sha256(_ data: Data) -> String {

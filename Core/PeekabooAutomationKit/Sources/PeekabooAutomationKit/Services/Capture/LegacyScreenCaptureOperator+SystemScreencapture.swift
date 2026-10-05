@@ -18,14 +18,7 @@ struct LegacyCapturedRaster {
             LegacyPNGValidator.hasValidStructureAndCRC(data),
             let source = CGImageSourceCreateWithData(data as CFData, nil),
             let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
-            let providerData = image.dataProvider?.data
-        else {
-            throw OperationError.captureFailed(reason: "Failed to decode screencapture output")
-        }
-        let (requiredPixelBytes, overflow) = image.bytesPerRow.multipliedReportingOverflow(by: image.height)
-        guard !overflow,
-              requiredPixelBytes > 0,
-              CFDataGetLength(providerData) >= requiredPixelBytes
+            LegacyPNGValidator.hasCompletePixelData(image)
         else {
             throw OperationError.captureFailed(reason: "Failed to decode screencapture output")
         }
