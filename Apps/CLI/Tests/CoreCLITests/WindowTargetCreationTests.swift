@@ -16,6 +16,67 @@ struct WindowTargetCreationTests {
     }
 
     @Test
+    func `window CLI PID aliases reach the compatibility resolver and target`() throws {
+        for application in ["PID:12345", "pid:12345", "PiD:12345", " \tpid:12345\n"] {
+            var options = WindowIdentificationOptions()
+            options.app = application
+            options.pid = 12345
+
+            try options.validate()
+            let normalizedApplication = application.trimmingCharacters(in: .whitespacesAndNewlines)
+            #expect(try options.resolveApplicationIdentifier() == normalizedApplication)
+            switch try options.toWindowTarget() {
+            case let .application(identifier):
+                #expect(identifier == normalizedApplication)
+            default:
+                Issue.record("Expected the resolved PID application target")
+            }
+            #expect(throws: (any Error).self) {
+                try options.validateMutation()
+            }
+        }
+    }
+
+    @Test
+    func `window CLI PID alias resolver preserves invalid and conflicting errors`() {
+        for application in ["pid:12345", " \tPiD:12345\n", "PID:12345"] {
+            var options = WindowIdentificationOptions()
+            options.app = application
+            options.pid = 54321
+            do {
+                _ = try options.resolveApplicationIdentifier()
+                Issue.record("Expected conflicting PID resolution error")
+            } catch {
+                #expect(error.localizedDescription.contains("Conflicting PIDs"))
+                #expect(error.localizedDescription.contains("12345"))
+                #expect(error.localizedDescription.contains("54321"))
+            }
+        }
+
+        for application in ["pid:invalid", " PiD:2147483648 "] {
+            var options = WindowIdentificationOptions()
+            options.app = application
+            options.pid = 12345
+            do {
+                _ = try options.resolveApplicationIdentifier()
+                Issue.record("Expected invalid PID resolution error")
+            } catch {
+                #expect(error.localizedDescription.contains("Invalid PID format in --app"))
+            }
+        }
+
+        var namedApplication = WindowIdentificationOptions()
+        namedApplication.app = "Fixture"
+        namedApplication.pid = 12345
+        do {
+            _ = try namedApplication.resolveApplicationIdentifier()
+            Issue.record("Expected named application and PID to remain exclusive")
+        } catch {
+            #expect(error.localizedDescription.contains("Provide the application either with --app or --pid, not both"))
+        }
+    }
+
+    @Test
     func `window CLI syntax preserves conflicting PID error`() {
         var options = WindowIdentificationOptions()
         options.app = "PID:12345"
