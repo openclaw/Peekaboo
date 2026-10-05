@@ -193,6 +193,23 @@ try {
     await writeFile(archive, bytes);
     await assert.rejects(validate(archive, 'Fixture.app'), /escaping symlink/);
   }
+  // Archive links are always relative: noncanonical absolute spellings must
+  // be refused before any composed containment resolution.
+  for (const target of ['/tmp/./Fixture.app/alias/../outside', '/tmp/unused/../Fixture.app/value']) {
+    const absoluteEntries = [
+      { path: 'Fixture.app/', type: 'directory' },
+      { path: 'Fixture.app/alias', type: 'symlink', target: '.' },
+      { path: 'Fixture.app/absolute', type: 'symlink', target }
+    ];
+    for (const [extension, bytes, validate] of [
+      ['zip', zipFixture(absoluteEntries), validateZipArchive],
+      ['tar.gz', tarFixture(absoluteEntries), validateTarGzArchive]
+    ]) {
+      const archive = path.join(testDirectory, `absolute.${extension}`);
+      await writeFile(archive, bytes);
+      await assert.rejects(validate(archive, 'Fixture.app'), /unsafe symlink target/);
+    }
+  }
   const safeZip = path.join(testDirectory, 'safe.zip');
   await writeFile(safeZip, zipFixture([
     { path: 'Fixture.app/', type: 'directory' },

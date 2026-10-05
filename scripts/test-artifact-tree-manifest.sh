@@ -56,6 +56,39 @@ ln -s Versions/Current/missing "$TEST_DIR/framework/dangling"
 [[ "$(cat "$TEST_DIR/framework/current")" == 'framework fixture' ]] || fail 'native framework link fixture failed'
 /usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$TEST_DIR/framework" >"$TEST_DIR/framework.json"
 jq -e '([.entries[] | select(.type == "symlink")] | length) == 3' "$TEST_DIR/framework.json" >/dev/null || fail 'safe composed/dangling links changed'
+# Absolute spelling must preserve native component resolution, including aliases
+# and noncanonical prefixes such as '/tmp/./...'.
+ln -s "$TEST_DIR/./framework/Versions/Current/../A/value" "$TEST_DIR/framework/absolute"
+ln -s "$TEST_DIR/./framework/Versions/Current/missing" "$TEST_DIR/framework/absolute-dangling"
+ln -s "$TEST_DIR/./framework/Versions/Current" "$TEST_DIR/framework/absolute-alias"
+ln -s absolute-alias/value "$TEST_DIR/framework/nested-absolute"
+[[ "$(cat "$TEST_DIR/framework/absolute")" == 'framework fixture' ]] || fail 'native absolute framework link fixture failed'
+[[ "$(cat "$TEST_DIR/framework/nested-absolute")" == 'framework fixture' ]] || fail 'native nested absolute link fixture failed'
+/usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$TEST_DIR/framework" >"$TEST_DIR/absolute-framework.json"
+jq -e '([.entries[] | select(.type == "symlink")] | length) == 7' "$TEST_DIR/absolute-framework.json" >/dev/null || fail 'safe absolute/dangling links changed'
+
+printf 'owned absolute outside fixture\n' > "$TEST_DIR/outside"
+for spelling in "$TEST_DIR/./absolute-composed" "$TEST_DIR/unused/../absolute-composed"; do
+  mkdir -p "$TEST_DIR/absolute-composed" "$TEST_DIR/unused"
+  rm -f "$TEST_DIR/absolute-composed/alias" "$TEST_DIR/absolute-composed/escape"
+  ln -s . "$TEST_DIR/absolute-composed/alias"
+  ln -s "$spelling/alias/../outside" "$TEST_DIR/absolute-composed/escape"
+  [[ "$(cat "$TEST_DIR/absolute-composed/escape")" == 'owned absolute outside fixture' ]] || fail 'native absolute composed-link fixture did not escape'
+  if /usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$TEST_DIR/absolute-composed" >"$TEST_DIR/absolute-composed.json" 2>"$TEST_DIR/absolute-composed.err"; then
+    fail 'absolute composed root-escaping symlink was accepted'
+  fi
+  grep -q 'symlink escapes root' "$TEST_DIR/absolute-composed.err" || fail 'absolute composed symlink diagnostic missing'
+done
+
+mkdir -p "$TEST_DIR/nested-absolute"
+ln -s "$TEST_DIR/./nested-absolute" "$TEST_DIR/nested-absolute/alias"
+ln -s alias/../outside "$TEST_DIR/nested-absolute/escape"
+[[ "$(cat "$TEST_DIR/nested-absolute/escape")" == 'owned absolute outside fixture' ]] || fail 'native nested absolute fixture did not escape'
+if /usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$TEST_DIR/nested-absolute" >"$TEST_DIR/nested-absolute.json" 2>"$TEST_DIR/nested-absolute.err"; then
+  fail 'nested absolute composed root-escaping symlink was accepted'
+fi
+grep -q 'symlink escapes root' "$TEST_DIR/nested-absolute.err" || fail 'nested absolute diagnostic missing'
+
 mkdir -p "$TEST_DIR/cycle"
 ln -s second "$TEST_DIR/cycle/first"
 ln -s first "$TEST_DIR/cycle/second"

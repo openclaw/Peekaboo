@@ -13,41 +13,34 @@ entries = []
 # Resolve each component before applying '..': lexical normalization alone can
 # hide an escape through another in-tree link (alias -> ., escape -> alias/../outside).
 validate_link = lambda do |relative, target|
-  pending = if target.start_with?('/')
-              target.delete_prefix(root).split('/')
-            else
-              (File.dirname(relative).split('/') + target.split('/'))
-            end
-  resolved = []
+  absolute_target = target.start_with?('/') ? target : "#{root}/#{File.dirname(relative)}/#{target}"
+  pending = absolute_target.split('/')
+  resolved = '/'
   expansions = 0
   until pending.empty?
     component = pending.shift
     next if component.empty? || component == '.'
     if component == '..'
-      abort("Artifact symlink escapes root: #{relative} -> #{target}") if resolved.empty?
-      resolved.pop
+      resolved = File.dirname(resolved)
       next
     end
-    resolved << component
-    candidate = File.join(physical_root, *resolved)
+    candidate = File.join(resolved, component)
     begin
-      next unless File.lstat(candidate).symlink?
-      expansions += 1
-      abort("Artifact symlink expansion limit exceeded: #{relative}") if expansions > 40
-      nested_target = File.readlink(candidate)
-      resolved.pop
-      if nested_target.start_with?('/')
-        unless nested_target == root || nested_target.start_with?("#{root}/")
-          abort("Artifact symlink escapes root: #{relative} -> #{target}")
-        end
-        resolved.clear
-        pending.unshift(*nested_target.delete_prefix(root).split('/'))
-      else
+      if File.lstat(candidate).symlink?
+        expansions += 1
+        abort("Artifact symlink expansion limit exceeded: #{relative}") if expansions > 40
+        nested_target = File.readlink(candidate)
+        resolved = '/' if nested_target.start_with?('/')
         pending.unshift(*nested_target.split('/'))
+        next
       end
     rescue Errno::ENOENT, Errno::ENOTDIR
       # Preserve receipts for dangling, root-contained links.
     end
+    resolved = candidate
+  end
+  unless resolved == physical_root || resolved.start_with?("#{physical_root}/")
+    abort("Artifact symlink escapes root: #{relative} -> #{target}")
   end
 end
 
