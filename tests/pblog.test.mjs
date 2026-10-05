@@ -21,6 +21,7 @@ exit "\${PBLOG_TEST_EXIT:-0}"
   writeFileSync(path.join(directory, 'sudo'), `#!/bin/bash
 printf '%s\\0' "$@" > "$PBLOG_TEST_SUDO_ARGS"
 [[ "$1" == -n && "$2" == log ]] || exit 99
+[[ "$PBLOG_TEST_SUDO_EXIT" == 0 ]] || exit "$PBLOG_TEST_SUDO_EXIT"
 shift 2
 exec log "$@"
 `, { mode: 0o755 });
@@ -39,6 +40,7 @@ exec log "$@"
         PBLOG_TEST_ARGS: argsPath,
         PBLOG_TEST_SUDO_ARGS: sudoArgsPath,
         PBLOG_TEST_EXIT: '0',
+        PBLOG_TEST_SUDO_EXIT: '0',
         ...environment,
       },
     }),
@@ -91,11 +93,42 @@ for (const outputFile of [false, true]) {
   }
 }
 
-test('unpiped log exit status is preserved', (t) => {
-  const result = fixture(t).run(['--all'], { PBLOG_TEST_EXIT: '7' });
-  assert.equal(result.error, undefined);
-  assert.equal(result.signal, null);
-  assert.equal(result.status, 7);
+for (const outputFile of [false, true]) {
+  for (const all of [false, true]) {
+    for (const privateMode of [false, true]) {
+      test(`log failure survives ${outputFile ? 'file' : 'stdout'} / ${all ? 'all' : 'tail'} / ${privateMode ? 'private' : 'normal'}`, (t) => {
+        const f = fixture(t);
+        const output = path.join(f.directory, 'failed.log');
+        const args = [...(all ? ['--all'] : ['--lines', '2']), ...(outputFile ? ['--output', output] : []), ...(privateMode ? ['--private'] : [])];
+        const result = f.run(args, { PBLOG_TEST_EXIT: '7' });
+        assert.equal(result.error, undefined);
+        assert.equal(result.signal, null);
+        assert.equal(result.status, 7);
+        assert.equal(result.stderr, '');
+        assert.equal(outputFile ? readFileSync(output, 'utf8') : result.stdout, all ? 'first\nsecond\nthird\n' : 'second\nthird\n');
+      });
+    }
+    test(`mock sudo refusal survives ${outputFile ? 'file' : 'stdout'} / ${all ? 'all' : 'tail'}`, (t) => {
+      const f = fixture(t);
+      const result = f.run(['--private', ...(all ? ['--all'] : ['--lines', '2']), ...(outputFile ? ['--output', path.join(f.directory, 'denied.log')] : [])], { PBLOG_TEST_SUDO_EXIT: '9' });
+      assert.equal(result.error, undefined);
+      assert.equal(result.signal, null);
+      assert.equal(result.status, 9);
+      assert.deepEqual(f.args(), []);
+      assert.equal(result.stdout, '');
+    });
+  }
+}
+
+test('output redirection and tail failures remain failures', (t) => {
+  const f = fixture(t);
+  for (const args of [['--output', path.join(f.directory, 'log', 'not-a-directory')], ['--lines', 'not-a-count']]) {
+    const result = f.run(args);
+    assert.equal(result.error, undefined);
+    assert.equal(result.signal, null);
+    assert.notEqual(result.status, 0);
+    assert.notEqual(result.stderr, '');
+  }
 });
 
 const valueOptions = ['-n', '--lines', '-l', '--last', '-c', '--category', '-s', '--search', '-o', '--output', '--subsystem'];

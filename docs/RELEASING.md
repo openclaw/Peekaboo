@@ -340,6 +340,7 @@ pin, and frozen source commit. It verifies the existing draft/tag/assets, skips 
 tarball, repairs an interrupted expected-asset upload, and idempotently completes registry verification and the final
 draft body. A full `appcast.xml` snapshot is checksummed with the receipt so resume cannot bless unrelated feed drift.
 If npm accepted an upload but still returns E404, resume stops on its retained attempt marker; wait for propagation.
+An absent-version probe requires an explicit npm `E404` error code. Authentication/server failures, contradictory codes, or `E404`/`404 Not Found` appearing only in a URL or diagnostic are unknown publication state and stop the driver; they do not authorize a new upload.
 Use `--retry-npm-publish` only after independently confirming the version truly was not accepted.
 Publication requires `NPM_TOKEN`; the driver writes an owner-only temporary npm config that pins both the default and
 `@steipete` registries to npmjs, passes the registry explicitly to every probe/publish, and pins every GitHub mutation

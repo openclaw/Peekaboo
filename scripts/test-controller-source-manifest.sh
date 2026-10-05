@@ -123,4 +123,30 @@ rmdir "$FIXTURE_ROOT/src/controller.swift"
 mkfifo "$FIXTURE_ROOT/src/controller.swift"
 expect_refusal 'symlinked or not a regular source file'
 
+# A one-child directory must not qualify even when the catalog matches its tree-listing bytes.
+rm "$FIXTURE_ROOT/src/controller.swift"
+mkdir "$FIXTURE_ROOT/src/controller.swift"
+printf 'owned source bytes\n' > "$FIXTURE_ROOT/src/controller.swift/only.swift"
+git -C "$FIXTURE_ROOT" add .
+git -C "$FIXTURE_ROOT" commit -qm directory
+directory_commit="$(git -C "$FIXTURE_ROOT" rev-parse HEAD)"
+git -C "$FIXTURE_ROOT" ls-tree "$directory_commit" -- src/controller.swift | grep -q '^040000 tree '
+git -C "$FIXTURE_ROOT" ls-tree "$directory_commit" -- src/controller.swift/ | grep -q '^100644 blob '
+git -C "$FIXTURE_ROOT" show "$directory_commit:src/controller.swift" > "$TEST_DIR/tree-listing"
+tree_sha="$(shasum -a 256 "$TEST_DIR/tree-listing" | awk '{print $1}')"
+cat > "$FIXTURE_ROOT/scripts/multi-target-certification-catalog.json" <<EOF
+{"current_build_source":{"controller_source_manifest":[{"path":"src/controller.swift","sha256":"$tree_sha"}]}}
+EOF
+git -C "$FIXTURE_ROOT" add scripts/multi-target-certification-catalog.json
+git -C "$FIXTURE_ROOT" commit -qm directory-catalog
+expect_refusal 'not a regular source blob' --source-commit "$(git -C "$FIXTURE_ROOT" rev-parse HEAD)"
+
+# The spelling that expands the directory is refused by path validation before Git reads it.
+cat > "$FIXTURE_ROOT/scripts/multi-target-certification-catalog.json" <<EOF
+{"current_build_source":{"controller_source_manifest":[{"path":"src/controller.swift/","sha256":"$tree_sha"}]}}
+EOF
+git -C "$FIXTURE_ROOT" add scripts/multi-target-certification-catalog.json
+git -C "$FIXTURE_ROOT" commit -qm trailing-slash-catalog
+expect_refusal 'controller source path is unsafe' --source-commit "$(git -C "$FIXTURE_ROOT" rev-parse HEAD)"
+
 printf 'test-controller-source-manifest: ok\n'
