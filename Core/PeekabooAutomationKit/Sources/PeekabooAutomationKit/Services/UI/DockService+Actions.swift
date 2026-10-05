@@ -1,3 +1,4 @@
+import AppKit
 @preconcurrency import AXorcist
 import CoreGraphics
 import Foundation
@@ -226,8 +227,9 @@ extension DockService {
                     }
                     return refreshedSelection
                 },
-                validateBeforeSubmit: {
+                validateBeforeSubmit: { selection in
                     try self.validateDockProcessIdentity(target.identity)
+                    try Self.validateContextMenuOwner(selection.evidence.selectedProcessIdentity)
                 },
                 failureEvidence: { selection in [selection.evidence] },
                 submit: { selection in
@@ -324,7 +326,7 @@ extension DockService {
         targetMenuItem: String,
         prepare: () async throws -> Selection,
         revalidate: ((Selection) async throws -> Selection)? = nil,
-        validateBeforeSubmit: () throws -> Void = {},
+        validateBeforeSubmit: (Selection) throws -> Void = { _ in },
         failureEvidence: (Selection) -> [DesktopSelectedLeafEvidence]? = { _ in nil },
         submit: (Selection) throws -> Void) async throws -> Selection
     {
@@ -333,7 +335,7 @@ extension DockService {
             let prepared = try await prepare()
             selection = try await revalidate?(prepared) ?? prepared
             try Task.checkCancellation()
-            try validateBeforeSubmit()
+            try validateBeforeSubmit(selection)
             try self.checkDockDispatchCancellation()
         } catch {
             throw DesktopActionFailure.dispatchedUnverified(
@@ -377,7 +379,23 @@ extension DockService {
             processIdentity: .init(
                 processIdentifier: dockApp.processIdentifier,
                 processStartIdentity: startIdentity))
+        try self.validateDockProcessIdentity(.init(
+            processIdentifier: dockApp.processIdentifier, processStartIdentity: startIdentity))
+        try Self.validateContextMenuOwner(selection.evidence.selectedProcessIdentity)
+        try Self.checkDockDispatchCancellation()
         try selection.element.performAction(.press)
+    }
+
+    static func isContextMenuOwner(dockPID: pid_t, menuPID: pid_t, bundleIdentifier: String?) -> Bool {
+        menuPID == dockPID || bundleIdentifier == "com.apple.dock.helper"
+    }
+
+    private static func validateContextMenuOwner(_ identity: ApplicationProcessIdentity) throws {
+        guard SystemIdentityResolver.processStartIdentity(identity.processIdentifier) == identity.processStartIdentity
+        else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable, message: "Dock menu owner changed before selection")
+        }
     }
 
     private func findContextMenuItem(
@@ -390,9 +408,14 @@ extension DockService {
             try await Task.sleep(nanoseconds: delayNanoseconds)
         }
 
-        let childMenus = (dockElement.children() ?? []).filter {
-            $0.role() == "AXMenu" && $0.pid() == processIdentity.processIdentifier
+        try self.validateDockProcessIdentity(processIdentity)
+        guard dockElement.pid() == processIdentity.processIdentifier else {
+            throw DockError.menuItemNotFound(targetMenuItem)
         }
+        // Newer macOS versions host these direct children in DockHelper.
+        // Bind through the selected Dock item, then retain the menu owner's
+        // own process generation; unrelated system-wide menus stay excluded.
+        let childMenus = (dockElement.children() ?? []).filter { $0.role() == "AXMenu" }
         let systemMenus = (Element.systemWide().children() ?? []).filter {
             $0.role() == "AXMenu" && $0.pid() == processIdentity.processIdentifier
         }
@@ -407,8 +430,22 @@ extension DockService {
             throw DockError.menuItemNotFound(targetMenuItem)
         }
 
+        guard let menuPID = foundMenu.pid(),
+              Self.isContextMenuOwner(
+                  dockPID: processIdentity.processIdentifier,
+                  menuPID: menuPID,
+                  bundleIdentifier: NSRunningApplication(processIdentifier: menuPID)?
+                      .bundleIdentifier),
+              let menuStartIdentity = SystemIdentityResolver.processStartIdentity(menuPID)
+        else {
+            throw DockError.menuItemNotFound(targetMenuItem)
+        }
+        let menuIdentity = ApplicationProcessIdentity(
+            processIdentifier: menuPID,
+            processStartIdentity: menuStartIdentity)
+
         let snapshots = (foundMenu.children() ?? []).indexed().compactMap { index, element -> DockLeafSnapshot? in
-            guard element.pid() == processIdentity.processIdentifier,
+            guard element.pid() == menuIdentity.processIdentifier,
                   let title = element.title()?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !title.isEmpty,
                   let frame = element.frame(),
@@ -456,8 +493,14 @@ extension DockService {
         }
         let evidence = try Self.dockLeafEvidence(
             selection: selection,
-            processIdentity: processIdentity,
+            processIdentity: menuIdentity,
             kind: .dockContextMenuItem)
+        guard SystemIdentityResolver.processStartIdentity(menuPID) == menuStartIdentity else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Dock context-menu owner changed process generation before selection.",
+                hint: "Inspect or dismiss the open Dock menu before retrying.")
+        }
         return DockContextMenuSelection(element: selection.candidate.value.element, evidence: evidence)
     }
 }

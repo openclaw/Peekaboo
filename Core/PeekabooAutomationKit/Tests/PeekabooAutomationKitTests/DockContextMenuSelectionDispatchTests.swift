@@ -6,6 +6,14 @@ import Testing
 struct DockContextMenuSelectionDispatchTests {
     @Test
     @MainActor
+    func `Only Dock and its menu helper can own a selected context menu`() {
+        #expect(DockService.isContextMenuOwner(dockPID: 10, menuPID: 10, bundleIdentifier: nil))
+        #expect(DockService.isContextMenuOwner(dockPID: 10, menuPID: 11, bundleIdentifier: "com.apple.dock.helper"))
+        #expect(!DockService.isContextMenuOwner(dockPID: 10, menuPID: 12, bundleIdentifier: "test.unrelated"))
+    }
+
+    @Test
+    @MainActor
     func `Dock cancellation before first submission is typed and retry safe`() {
         do {
             try DockService.checkDockDispatchCancellation { throw CancellationError() }
@@ -331,7 +339,7 @@ struct DockContextMenuSelectionDispatchTests {
             try await DockService.dispatchContextMenuSelection(
                 targetMenuItem: "Options",
                 prepare: { 7 },
-                validateBeforeSubmit: {
+                validateBeforeSubmit: { _ in
                     guard captured == current else { throw FixtureError.generationDrift }
                 },
                 submit: { _ in
@@ -425,7 +433,7 @@ struct DockContextMenuSelectionDispatchTests {
         try await DockService.dispatchContextMenuSelection(
             targetMenuItem: "Options",
             prepare: { 7 },
-            validateBeforeSubmit: {
+            validateBeforeSubmit: { _ in
                 validationCount += 1
                 guard captured == current else { throw FixtureError.generationDrift }
             },
