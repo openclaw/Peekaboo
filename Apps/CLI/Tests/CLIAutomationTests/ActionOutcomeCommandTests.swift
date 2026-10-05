@@ -479,6 +479,48 @@ struct ActionOutcomeCommandTests {
         #expect(!humanResult.combinedOutput.contains("--force"))
     }
 
+    @Test(arguments: DesktopActionOutcomeFixtures.batchEvidenceCases)
+    func `quit batch preserves running accepted and response lost evidence`(
+        fixture: DesktopActionBatchEvidenceFixture
+    ) async throws {
+        let applications = (0..<2).map { index in
+            AutomationTestFixtures.application(
+                processIdentifier: Int32(42 + index),
+                processStartIdentity: UInt64(7 + index),
+                bundleIdentifier: "com.example.batch-\(index)",
+                name: "Batch Fixture \(index)",
+                isHiddenKnown: true,
+                activationPolicy: .regular
+            )
+        }
+        let service = OutcomeStubApplicationService(applications: applications)
+        service.quitActionSteps = try fixture.outcomes.enumerated().map { index, outcome in
+            if fixture.failingIndexes.contains(index) {
+                try .failure(#require(DesktopActionFailure(outcome: outcome, message: "Owned batch fixture")))
+            } else {
+                .result(payload: true, outcome: outcome)
+            }
+        }
+        let result = try await InProcessCommandRunner.runWithOwnedRuntime(
+            ["app", "quit", "--all", "--json", "--no-remote"],
+            services: TestServicesFactory.makePeekabooServices(applications: service)
+        )
+        let object = try Self.jsonObject(result.stdout)
+        let outcome = try #require(object["outcome"] as? [String: Any])
+        let data = try #require(object["data"] as? [String: Any])
+        let rows = try #require(data["results"] as? [[String: Any]])
+        let projection = try JSONDecoder().decode(
+            DesktopActionOutcome.Projection.self,
+            from: JSONSerialization.data(withJSONObject: outcome)
+        )
+        #expect(projection == fixture.expectedOutcome.projection)
+        #expect(result.exitStatus == (fixture.failingIndexes.isEmpty ? 0 : 1))
+        #expect(object["success"] as? Bool == fixture.failingIndexes.isEmpty)
+        #expect(service.quitActionResultCallCount == 2)
+        #expect(rows.count == 2)
+        #expect(rows.filter { $0["success"] as? Bool == true }.count == fixture.succeededCount)
+    }
+
     @Test
     func `quit batch keeps response loss unsafe when another attempt has no receipt`() async throws {
         let applications = [

@@ -158,8 +158,80 @@ assert.throws(() => validateArchiveEntries([
   { path: 'Fixture.app', type: 'symlink', target: 'Fixture.app' }
 ], 'Fixture.app'), /root is not a directory/);
 
+assert.throws(() => validateArchiveEntries([
+  { path: 'Fixture.app/', type: 'directory' },
+  { path: 'Fixture.app/alias', type: 'symlink', target: '.' },
+  { path: 'Fixture.app/escape', type: 'symlink', target: 'alias/../outside' }
+], 'Fixture.app'), /escaping symlink/);
+assert.throws(() => validateArchiveEntries([
+  { path: 'Fixture.app/', type: 'directory' },
+  { path: 'Fixture.app/loop', type: 'symlink', target: 'loop' }
+], 'Fixture.app'), /symlink expansion limit/);
+assert.equal(validateArchiveEntries([
+  { path: 'Fixture.app/', type: 'directory' },
+  { path: 'Fixture.app/alias', type: 'symlink', target: '.' },
+  { path: 'Fixture.app/current', type: 'symlink', target: 'alias/missing' }
+], 'Fixture.app').length, 3);
+
+assert.equal(validateArchiveEntries([
+  ...safeRecords,
+  { path: 'Fixture.app/current', type: 'symlink', target: 'Versions/Current/../A/value' },
+  { path: 'Fixture.app/dangling', type: 'symlink', target: 'Versions/Current/missing' }
+], 'Fixture.app').length, 7);
+
 const testDirectory = await mkdtemp(path.join(os.tmpdir(), 'peekaboo-terminal-archive-policy.'));
 try {
+  for (const count of [32, 33]) {
+    const chain = [
+      { path: 'Fixture.app/', type: 'directory' },
+      { path: 'Fixture.app/value', type: 'file', data: 'boundary' },
+      ...Array.from({ length: count }, (_, index) => ({
+        path: `Fixture.app/link-${index}`, type: 'symlink',
+        target: index + 1 === count ? 'value' : `link-${index + 1}`
+      }))
+    ];
+    if (count === 32) assert.equal(validateArchiveEntries(chain, 'Fixture.app').length, count + 2);
+    else assert.throws(() => validateArchiveEntries(chain, 'Fixture.app'), /symlink expansion limit/);
+    for (const [extension, bytes, validate] of [
+      ['zip', zipFixture(chain), validateZipArchive],
+      ['tar.gz', tarFixture(chain), validateTarGzArchive]
+    ]) {
+      const archive = path.join(testDirectory, `chain-${count}.${extension}`);
+      await writeFile(archive, bytes);
+      if (count === 32) assert.equal((await validate(archive, 'Fixture.app')).length, count + 2);
+      else await assert.rejects(validate(archive, 'Fixture.app'), /symlink expansion limit/);
+    }
+  }
+  const composedEntries = [
+    { path: 'Fixture.app/', type: 'directory' },
+    { path: 'Fixture.app/alias', type: 'symlink', target: '.' },
+    { path: 'Fixture.app/escape', type: 'symlink', target: 'alias/../outside' }
+  ];
+  for (const [extension, bytes, validate] of [
+    ['zip', zipFixture(composedEntries), validateZipArchive],
+    ['tar.gz', tarFixture(composedEntries), validateTarGzArchive]
+  ]) {
+    const archive = path.join(testDirectory, `composed.${extension}`);
+    await writeFile(archive, bytes);
+    await assert.rejects(validate(archive, 'Fixture.app'), /escaping symlink/);
+  }
+  // Archive links are always relative: noncanonical absolute spellings must
+  // be refused before any composed containment resolution.
+  for (const target of ['/tmp/./Fixture.app/alias/../outside', '/tmp/unused/../Fixture.app/value']) {
+    const absoluteEntries = [
+      { path: 'Fixture.app/', type: 'directory' },
+      { path: 'Fixture.app/alias', type: 'symlink', target: '.' },
+      { path: 'Fixture.app/absolute', type: 'symlink', target }
+    ];
+    for (const [extension, bytes, validate] of [
+      ['zip', zipFixture(absoluteEntries), validateZipArchive],
+      ['tar.gz', tarFixture(absoluteEntries), validateTarGzArchive]
+    ]) {
+      const archive = path.join(testDirectory, `absolute.${extension}`);
+      await writeFile(archive, bytes);
+      await assert.rejects(validate(archive, 'Fixture.app'), /unsafe symlink target/);
+    }
+  }
   for (const gap of [25, 16 * 1024 * 1024]) {
     const oversizedDescriptorZip = path.join(testDirectory, `oversized-descriptor-${gap}.zip`);
     await writeFile(oversizedDescriptorZip, zipFixture([
