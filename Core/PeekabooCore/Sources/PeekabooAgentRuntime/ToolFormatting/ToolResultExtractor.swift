@@ -51,7 +51,7 @@ public enum ToolResultExtractor {
 
         // Try Double and convert
         if let value = result[key] as? Double {
-            return Int(value)
+            return Int(exactly: value.rounded(.towardZero))
         }
 
         // Try String and convert
@@ -67,7 +67,7 @@ public enum ToolResultExtractor {
                 return value
             }
             if let value = wrapper["value"] as? Double {
-                return Int(value)
+                return Int(exactly: value.rounded(.towardZero))
             }
             if let value = wrapper["value"] as? String,
                let intValue = Int(value)
@@ -82,7 +82,7 @@ public enum ToolResultExtractor {
                 return value
             }
             if let value = data[key] as? Double {
-                return Int(value)
+                return Int(exactly: value.rounded(.towardZero))
             }
         }
 
@@ -245,7 +245,7 @@ public enum ToolResultExtractor {
                 return intValue
             }
             if let doubleValue = value as? Double {
-                return Int(doubleValue)
+                return Int(exactly: doubleValue.rounded(.towardZero))
             }
             if let stringValue = value as? String,
                let intValue = Int(stringValue)
@@ -260,7 +260,7 @@ public enum ToolResultExtractor {
                     return intValue
                 }
                 if let doubleValue = wrappedValue as? Double {
-                    return Int(doubleValue)
+                    return Int(exactly: doubleValue.rounded(.towardZero))
                 }
                 if let stringValue = wrappedValue as? String,
                    let intValue = Int(stringValue)

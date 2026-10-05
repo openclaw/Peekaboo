@@ -471,12 +471,12 @@ public class ElementToolFormatter: BaseToolFormatter {
             return intValue
         }
         if let doubleValue = value as? Double {
-            return Int(doubleValue.rounded())
+            return Int(exactly: doubleValue.rounded())
         }
         if let stringValue = value as? String,
            let doubleValue = Double(stringValue)
         {
-            return Int(doubleValue.rounded())
+            return Int(exactly: doubleValue.rounded())
         }
         return nil
     }
