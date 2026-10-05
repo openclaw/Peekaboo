@@ -48,6 +48,16 @@ ln -s bin/missing "$TEST_DIR/tree/current"
   "$(shasum -a 256 "$TEST_DIR/substituted.json" | awk '{print $1}')" ]] || \
   fail 'retargeted symlink did not change the manifest digest'
 
+mkdir -p "$TEST_DIR/composed"
+printf 'owned outside fixture\n' > "$TEST_DIR/outside"
+ln -s . "$TEST_DIR/composed/alias"
+ln -s alias/../outside "$TEST_DIR/composed/escape"
+[[ "$(cat "$TEST_DIR/composed/escape")" == 'owned outside fixture' ]] || fail 'native composed-link fixture did not escape'
+if /usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$TEST_DIR/composed" >"$TEST_DIR/composed.json" 2>"$TEST_DIR/composed.err"; then
+  fail 'composed root-escaping symlink was accepted'
+fi
+grep -q 'symlink escapes root' "$TEST_DIR/composed.err" || fail 'composed symlink diagnostic missing'
+
 ln -s ../outside "$TEST_DIR/tree/escape"
 if /usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$TEST_DIR/tree" >/dev/null 2>&1; then
   fail 'root-escaping symlink was accepted'

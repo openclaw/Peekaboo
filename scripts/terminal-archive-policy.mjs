@@ -62,6 +62,33 @@ function validateSymlink(record, expectedRoot, label, allowSymlinks) {
   }
 }
 
+function validateComposedSymlinks(records, expectedRoot, label) {
+  const links = new Map(records.filter((record) => record.type === 'symlink')
+    .map((record) => [normalizedCollisionKey(record.path), record.target]));
+  for (const record of records.filter((record) => record.type === 'symlink')) {
+    const pending = [...path.posix.dirname(record.path).split('/'), ...record.target.split('/')];
+    const resolved = [];
+    let expansions = 0;
+    while (pending.length > 0) {
+      const component = pending.shift();
+      if (component === '' || component === '.') continue;
+      if (component === '..') {
+        if (resolved.length <= 1) fail(label, `contains an escaping symlink: ${record.path} -> ${record.target}`);
+        resolved.pop();
+        continue;
+      }
+      resolved.push(component);
+      const target = links.get(normalizedCollisionKey(resolved.join('/')));
+      if (target !== undefined) {
+        if (++expansions > 40) fail(label, `exceeds the symlink expansion limit: ${record.path}`);
+        resolved.pop();
+        pending.unshift(...target.split('/'));
+      }
+    }
+    if (resolved[0] !== expectedRoot) fail(label, `contains an escaping symlink: ${record.path}`);
+  }
+}
+
 export function validateArchiveEntries(entries, expectedRoot, label = 'archive', options = {}) {
   validateExpectedRoot(expectedRoot, label);
   if (!Array.isArray(entries) || entries.length === 0) fail(label, 'entry contract is empty');
@@ -128,6 +155,7 @@ export function validateArchiveEntries(entries, expectedRoot, label = 'archive',
   if (rootRecord.type !== null && rootRecord.type !== 'directory') {
     fail(label, `root is not a directory: ${expectedRoot}`);
   }
+  validateComposedSymlinks(records, expectedRoot, label);
   for (const record of records) {
     let ancestor = path.posix.dirname(record.path);
     while (ancestor !== '.' && ancestor !== '/') {

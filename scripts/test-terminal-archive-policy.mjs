@@ -157,8 +157,36 @@ assert.throws(() => validateArchiveEntries([
   { path: 'Fixture.app', type: 'symlink', target: 'Fixture.app' }
 ], 'Fixture.app'), /root is not a directory/);
 
+assert.throws(() => validateArchiveEntries([
+  { path: 'Fixture.app/', type: 'directory' },
+  { path: 'Fixture.app/alias', type: 'symlink', target: '.' },
+  { path: 'Fixture.app/escape', type: 'symlink', target: 'alias/../outside' }
+], 'Fixture.app'), /escaping symlink/);
+assert.throws(() => validateArchiveEntries([
+  { path: 'Fixture.app/', type: 'directory' },
+  { path: 'Fixture.app/loop', type: 'symlink', target: 'loop' }
+], 'Fixture.app'), /symlink expansion limit/);
+assert.equal(validateArchiveEntries([
+  { path: 'Fixture.app/', type: 'directory' },
+  { path: 'Fixture.app/alias', type: 'symlink', target: '.' },
+  { path: 'Fixture.app/current', type: 'symlink', target: 'alias/missing' }
+], 'Fixture.app').length, 3);
+
 const testDirectory = await mkdtemp(path.join(os.tmpdir(), 'peekaboo-terminal-archive-policy.'));
 try {
+  const composedEntries = [
+    { path: 'Fixture.app/', type: 'directory' },
+    { path: 'Fixture.app/alias', type: 'symlink', target: '.' },
+    { path: 'Fixture.app/escape', type: 'symlink', target: 'alias/../outside' }
+  ];
+  for (const [extension, bytes, validate] of [
+    ['zip', zipFixture(composedEntries), validateZipArchive],
+    ['tar.gz', tarFixture(composedEntries), validateTarGzArchive]
+  ]) {
+    const archive = path.join(testDirectory, `composed.${extension}`);
+    await writeFile(archive, bytes);
+    await assert.rejects(validate(archive, 'Fixture.app'), /escaping symlink/);
+  }
   const safeZip = path.join(testDirectory, 'safe.zip');
   await writeFile(safeZip, zipFixture([
     { path: 'Fixture.app/', type: 'directory' },
