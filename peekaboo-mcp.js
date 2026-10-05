@@ -14,16 +14,19 @@ const MAX_RESTARTS = 5;
 const RESTART_WINDOW_MS = 60_000;
 const INITIAL_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
+const SHUTDOWN_TIMEOUT_MS = 5000;
 
 export class PeekabooMCPWrapper {
   constructor(options = {}) {
     this.binaryPath = options.binaryPath || defaultBinaryPath;
     this.initialDelayMs = options.initialDelayMs || INITIAL_DELAY_MS;
     this.maxDelayMs = options.maxDelayMs || MAX_DELAY_MS;
+    this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? SHUTDOWN_TIMEOUT_MS;
     this.restartTimestamps = [];
     this.delay = this.initialDelayMs;
     this.child = null;
     this.restartTimer = null;
+    this.shutdownTimer = null;
     this.shuttingDown = false;
   }
 
@@ -52,6 +55,7 @@ export class PeekabooMCPWrapper {
     });
 
     this.child.on('exit', (code, signal) => {
+      this.clearShutdownTimer();
       this.child = null;
       if (this.shuttingDown) return process.exit(code || 0);
 
@@ -64,6 +68,7 @@ export class PeekabooMCPWrapper {
     });
 
     this.child.on('error', (err) => {
+      this.clearShutdownTimer();
       this.child = null;
       console.error('[Peekaboo MCP] Failed to launch:', err.message);
       if (err.code === 'EACCES') {
@@ -96,10 +101,23 @@ export class PeekabooMCPWrapper {
   }
 
   shutdown() {
+    if (this.shuttingDown) return;
     this.shuttingDown = true;
     this.clearRestartTimer();
     if (this.child && !this.child.killed) {
-      this.child.kill('SIGTERM');
+      const child = this.child;
+      child.kill('SIGTERM');
+      this.shutdownTimer = setTimeout(() => {
+        this.shutdownTimer = null;
+        if (this.child === child) child.kill('SIGKILL');
+      }, this.shutdownTimeoutMs);
+    }
+  }
+
+  clearShutdownTimer() {
+    if (this.shutdownTimer) {
+      clearTimeout(this.shutdownTimer);
+      this.shutdownTimer = null;
     }
   }
 
