@@ -140,6 +140,16 @@ Provider-backed `agent` and `analyze` calls require configuration at server star
 
 ## Troubleshooting
 
+### npm wrapper shutdown
+
+The npm `peekaboo-mcp` launcher owns its Swift server child and restarts it after crashes. On SIGINT or SIGTERM,
+it cancels pending restart backoff, sends SIGTERM to that child, and allows five seconds for exit before sending
+SIGKILL to the same still-owned child. Repeated shutdown requests do not restart or extend this deadline.
+This is process cleanup, not confirmation that an in-flight desktop operation had no effect; observe before retrying.
+
+`pnpm run test:mcp-wrapper` covers wrapper imports, startup and bounded shutdown with disposable child fixtures,
+including the normal entrypoint's five-second deadline. It does not send desktop input or start the installed app.
+
 ### Server Won't Start
 
 - Run `"$PEEKABOO_BIN" mcp` directly and inspect stderr.

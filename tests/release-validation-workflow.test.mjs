@@ -44,6 +44,14 @@ function fixture(t) {
   return root;
 }
 
+test('normal macOS CI and safe tests run release build-number contracts', () => {
+  const entry = macosWorkflow.split('      - name: Verify release build-number contracts\n')[1]?.split('\n      - name:')[0];
+  assert.ok(entry);
+  assert.match(entry, /run: bash scripts\/test-release-version\.sh/);
+  const packageJSON = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.match(packageJSON.scripts['test:safe'], /scripts\/test-release-version\.sh/);
+});
+
 test('normal macOS CI runs the complete serial Tachikoma suite in an independent hosted job', () => {
   const entry = tachikomaStep();
   const command = scriptFromStep('Run Tachikoma package tests', entry);

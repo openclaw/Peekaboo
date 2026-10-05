@@ -5,17 +5,29 @@ import { pathToFileURL } from "node:url";
 
 const itemPattern = /^[ \t]*<item>[\s\S]*?^[ \t]*<\/item>[ \t]*(?:\r?\n)?/gm;
 
+function escapeXml(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;',
+  })[character]);
+}
+
+function unescapeXml(value) {
+  return value?.replace(/&(amp|lt|gt|quot|apos);/g, (_, entity) => ({
+    amp: '&', lt: '<', gt: '>', quot: '"', apos: "'",
+  })[entity]) ?? null;
+}
+
 function containsVersion(item, version) {
   return item.includes(`sparkle:shortVersionString="${version}"`) ||
     item.includes(`<sparkle:shortVersionString>${version}</sparkle:shortVersionString>`);
 }
 
 function attribute(item, name) {
-  return item.match(new RegExp(`${name}="([^"]+)"`))?.[1] ?? null;
+  return unescapeXml(item.match(new RegExp(`${name}="([^"]+)"`))?.[1]);
 }
 
 function element(item, name) {
-  return item.match(new RegExp(`<${name}>([^<]+)</${name}>`))?.[1] ?? null;
+  return unescapeXml(item.match(new RegExp(`<${name}>([^<]+)</${name}>`))?.[1]);
 }
 
 function itemVersion(item) {
@@ -89,19 +101,20 @@ export function updateAppcastEntry(xml, entry) {
   validateCandidate(existingItems, entry);
   const firstIndent = existingItems[0]?.[0].match(/^([ \t]*)<item>/)?.[1] ?? "        ";
   const childIndent = `${firstIndent}    `;
+  const escaped = Object.fromEntries(Object.entries(entry).map(([key, value]) => [key, escapeXml(value)]));
   const item = `${firstIndent}<item>
-${childIndent}<title>Peekaboo ${entry.version}</title>
-${childIndent}<link>${entry.releaseUrl}</link>
-${childIndent}<sparkle:releaseNotesLink>${entry.releaseUrl}</sparkle:releaseNotesLink>
-${childIndent}<pubDate>${entry.pubDate}</pubDate>
+${childIndent}<title>Peekaboo ${escaped.version}</title>
+${childIndent}<link>${escaped.releaseUrl}</link>
+${childIndent}<sparkle:releaseNotesLink>${escaped.releaseUrl}</sparkle:releaseNotesLink>
+${childIndent}<pubDate>${escaped.pubDate}</pubDate>
 ${childIndent}<enclosure
-${childIndent}  url="${entry.assetUrl}"
-${childIndent}  sparkle:version="${entry.buildNumber}"
-${childIndent}  sparkle:shortVersionString="${entry.version}"
-${childIndent}  sparkle:minimumSystemVersion="${entry.minimumSystemVersion}"
-${childIndent}  length="${entry.zipLength}"
+${childIndent}  url="${escaped.assetUrl}"
+${childIndent}  sparkle:version="${escaped.buildNumber}"
+${childIndent}  sparkle:shortVersionString="${escaped.version}"
+${childIndent}  sparkle:minimumSystemVersion="${escaped.minimumSystemVersion}"
+${childIndent}  length="${escaped.zipLength}"
 ${childIndent}  type="application/octet-stream"
-${childIndent}  sparkle:edSignature="${entry.edSignature}" />
+${childIndent}  sparkle:edSignature="${escaped.edSignature}" />
 ${firstIndent}</item>`;
 
   const withoutCurrentVersion = xml.replace(itemPattern, (existingItem) =>
@@ -110,13 +123,13 @@ ${firstIndent}</item>`;
 
   let updated;
   if (nextFirstItem) {
-    updated = withoutCurrentVersion.replace(nextFirstItem, `${item}\n${nextFirstItem}`);
+    updated = withoutCurrentVersion.replace(nextFirstItem, () => `${item}\n${nextFirstItem}`);
   } else {
     const languagePattern = /(<language>en<\/language>[ \t]*\r?\n)/;
     if (!languagePattern.test(withoutCurrentVersion)) {
       throw new Error("Appcast channel is missing <language>en</language>");
     }
-    updated = withoutCurrentVersion.replace(languagePattern, `$1${item}\n`);
+    updated = withoutCurrentVersion.replace(languagePattern, (_, language) => `${language}${item}\n`);
   }
   validateAppcast(updated, entry);
   return updated;

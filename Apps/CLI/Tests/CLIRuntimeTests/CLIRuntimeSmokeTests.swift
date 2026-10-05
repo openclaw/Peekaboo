@@ -669,6 +669,8 @@ struct CLIRuntimeSmokeTests {
         #expect(!result.standardOutput.contains("type --app"))
         #expect(!result.standardOutput.contains("****"))
         #expect(result.standardOutput.contains("explicit fresh exact non-dialog snapshot receipt"))
+        #expect(result.standardOutput.contains(TypeCommand.clearHelp))
+        #expect(!result.standardOutput.contains("Clear the field before typing (Cmd+A, Delete)"))
 
         let clipboardMarker = try #require(result.standardOutput.range(of: "#### `clipboard`"))
         let clipboardTail = result.standardOutput[clipboardMarker.lowerBound...]
