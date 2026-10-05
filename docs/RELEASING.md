@@ -305,6 +305,8 @@ resource forks, extended attributes, and quarantine metadata instead of emitting
 modifying the source app's file bytes, modes, symlinks, signatures, or stapled ticket. The terminal artifact packager uses
 the same producer while retaining its stricter source-xattr guard and exact-tree roundtrip check. Final release ZIP
 validation still requires the exact app root and verifies the extracted app's signatures and notarization ticket.
+Before extraction, ZIP data-descriptor gaps are bounded to the format's 24-byte maximum before allocation or reading;
+the existing descriptor checksum and size checks still apply.
 
 The script runs release preparation, builds the universal CLI and npm package, signs/notarizes/staples the macOS app
 and branded DMG, generates checksums and Sparkle metadata, and uploads a draft GitHub release. The complete preparation
