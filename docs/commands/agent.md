@@ -28,6 +28,7 @@ read_when:
 
 ## Implementation notes
 - The command resolves output “modes” (`minimal`, `compact`, `enhanced`, `quiet`, `verbose`) using terminal detection heuristics; `--simple` and `--no-color` force minimal mode, while `--quiet` suppresses progress output entirely.
+- Task and tool text used in terminal titles has C0/C1 control scalars removed before either VibeTunnel or ANSI output. Accents, emoji and Unicode joiners remain intact; title text cannot introduce additional terminal escape commands.
 - JSON and quiet runs skip progress-event construction and rendering but retain provider streaming, typed tool results,
   usage, execution traces, safety metadata, and session history. SDK event delegates keep receiving events by default;
   `receivesAgentEvents = false` opts out for one execution without changing provider selection.

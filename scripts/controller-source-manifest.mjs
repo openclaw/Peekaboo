@@ -2,7 +2,7 @@
 
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -44,7 +44,24 @@ function validateRelativePath(candidate) {
 
 function readSource(relativePath) {
   validateRelativePath(relativePath);
-  if (!sourceCommit) return readFileSync(path.join(root, relativePath));
+  if (!sourceCommit) {
+    const components = relativePath.split('/');
+    for (let index = 1; index <= components.length; index += 1) {
+      const candidate = path.join(root, ...components.slice(0, index));
+      const metadata = lstatSync(candidate);
+      if (metadata.isSymbolicLink() || (index === components.length && !metadata.isFile())) {
+        throw new Error(`controller source is symlinked or not a regular source file: ${relativePath}`);
+      }
+    }
+    return readFileSync(path.join(root, relativePath));
+  }
+  const entry = spawnSync('/usr/bin/git', ['ls-tree', '-z', sourceCommit, '--', relativePath], {
+    cwd: root, encoding: 'utf8'
+  });
+  if (entry.status !== 0 || !/^100(?:644|755) blob (?:[0-9a-f]{40}|[0-9a-f]{64})\t/.test(entry.stdout ?? '') ||
+      entry.stdout.split('\0').filter(Boolean).length !== 1) {
+    throw new Error(`controller source is not a regular source blob: ${relativePath}`);
+  }
   const result = spawnSync('/usr/bin/git', ['show', `${sourceCommit}:${relativePath}`], {
     cwd: root,
     encoding: null,

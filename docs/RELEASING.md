@@ -257,6 +257,7 @@ The build and final manifests also record and revalidate the canonicalized `DEVE
 `xcodebuild -version`, macOS SDK version, and `swiftc --version`. The 4.3.0 publication toolchain is Xcode 27; retain its
 exact beta/build identity in proof rather than conflating it with hosted Xcode 26.x compatibility results. A toolchain
 receipt does not replace successful universal builds, tests, runtime-library validation, signing, or notarization.
+Controller source receipts require regular source files and a regular catalog. Worktree mode rejects symbolic links in either the file or its ancestors, as well as directories and special files. Frozen-commit mode reads regular Git blobs (including executable files), never a symlink's target-text blob; later worktree changes do not alter the frozen receipt. These checks do not claim an atomic snapshot of a concurrently changing worktree.
 Runtime-library verification, including reused binaries, audits strong `libswift*` imports against the oldest
 eligible installed macOS SDK older than 27 and prints the SDK used; see
 [Swift runtime compatibility](building.md#swift-runtime-compatibility).
