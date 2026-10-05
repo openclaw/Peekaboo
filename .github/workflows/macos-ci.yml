@@ -74,6 +74,9 @@ jobs:
           done
           /usr/bin/xcodebuild -version
 
+      - name: Verify Swift runtime-library contracts
+        run: bash scripts/test-swift-runtime-libraries.sh
+
       - name: Compute SwiftPM cache key (PeekabooCore)
         id: cache-key-core
         env:
