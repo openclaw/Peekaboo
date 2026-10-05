@@ -22,25 +22,22 @@ private func visualizerDebugLog(_ message: @autoclosure () -> String) {}
 public final class VisualizerEventReceiver {
     private let logger = os.Logger(subsystem: "boo.peekaboo.visualizer", category: "VisualizerEventReceiver")
     private let coordinator: VisualizerCoordinator
-    private var observer: (any NSObjectProtocol)?
+    private var observer: VisualizerEventNotificationObserver?
     private var cleanupTask: Task<Void, Never>?
 
     public init(visualizerCoordinator: VisualizerCoordinator) {
         self.coordinator = visualizerCoordinator
-        self.observer = DistributedNotificationCenter.default().addObserver(
-            forName: .visualizerEventDispatched,
-            object: nil,
-            queue: .main)
-        { [weak self] notification in
-            guard let descriptor = notification.object as? String else {
-                self?.logger.error("Visualizer notification missing identifier")
-                return
-            }
+        self.observer = VisualizerEventNotificationObserver(name: .visualizerEventDispatched)
+            { [weak self] notification in
+                guard let descriptor = notification.object as? String else {
+                    self?.logger.error("Visualizer notification missing identifier")
+                    return
+                }
 
-            Task { @MainActor [weak self] in
-                await self?.handle(descriptor: descriptor)
+                Task { @MainActor [weak self] in
+                    await self?.handle(descriptor: descriptor)
+                }
             }
-        }
 
         self.cleanupTask = Task.detached(priority: .background) {
             try? VisualizerEventStore.cleanup(olderThan: 600)
@@ -52,9 +49,6 @@ public final class VisualizerEventReceiver {
 
     @MainActor
     deinit {
-        if let observer {
-            DistributedNotificationCenter.default().removeObserver(observer)
-        }
         cleanupTask?.cancel()
     }
 
