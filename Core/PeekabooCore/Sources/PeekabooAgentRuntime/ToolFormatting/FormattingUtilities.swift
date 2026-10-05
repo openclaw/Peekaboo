@@ -7,17 +7,18 @@ import Foundation
 
 /// Shared formatting utilities for tool output
 public enum FormattingUtilities {
+    private static let keyboardSymbols = [
+        "cmd": "⌘", "command": "⌘", "shift": "⇧",
+        "option": "⌥", "opt": "⌥", "alt": "⌥", "control": "⌃", "ctrl": "⌃",
+        "return": "↩", "enter": "↩", "escape": "⎋", "esc": "⎋", "tab": "⇥",
+        "delete": "⌫", "backspace": "⌫", "del": "⌫",
+        "forwarddelete": "⌦", "forward_delete": "⌦",
+    ]
+
     /// Format keyboard shortcut with proper symbols
     public static func formatKeyboardShortcut(_ keys: String) -> String {
-        let symbols = [
-            "cmd": "⌘", "command": "⌘", "shift": "⇧",
-            "option": "⌥", "opt": "⌥", "alt": "⌥", "control": "⌃", "ctrl": "⌃",
-            "return": "↩", "enter": "↩", "escape": "⎋", "esc": "⎋", "tab": "⇥",
-            "delete": "⌫", "backspace": "⌫", "del": "⌫",
-            "forwarddelete": "⌦", "forward_delete": "⌦",
-        ]
-        return keys.split(whereSeparator: { $0 == "," || $0 == "+" || $0.isWhitespace })
-            .map { symbols[$0.lowercased()] ?? String($0) }
+        keys.split(whereSeparator: { $0 == "," || $0 == "+" || $0.isWhitespace })
+            .map { self.keyboardSymbols[$0.lowercased()] ?? String($0) }
             .joined()
     }
 
