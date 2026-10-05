@@ -13,6 +13,10 @@ struct DialogSavedFileVerificationTests {
         case missingReceipt, changedWindowID, changedReceiptGeneration, changedReceiptBounds, changedBoundsSidecar
     }
 
+    enum UnavailableSavedFileParent: CaseIterable, Sendable {
+        case absent, replaced, unreadableInventory, unreadableBounds
+    }
+
     @Test
     func `document read uses the fresh retained parent instead of a matching neighboring window`() throws {
         let fixture = SavedFileVerificationFixture(parentDocument: "/stale/report.txt")
@@ -109,6 +113,106 @@ struct DialogSavedFileVerificationTests {
         #expect(result.path == file.path)
         #expect(result.foundVia == "document_path")
         #expect(fixture.inventoryReadCount == 1)
+    }
+
+    @Test(arguments: UnavailableSavedFileParent.allCases, [false, true])
+    func `post action filesystem evidence survives unavailable parent document evidence`(
+        parent: UnavailableSavedFileParent,
+        exactExpectedFile: Bool) async throws
+    {
+        let directory = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let requestedDirectory = directory.appendingPathComponent("requested", isDirectory: true)
+        let unrelatedDirectory = directory.appendingPathComponent("unrelated", isDirectory: true)
+        for child in [requestedDirectory, unrelatedDirectory] {
+            try FileManager.default.createDirectory(at: child, withIntermediateDirectories: false)
+        }
+        let expectedFile = requestedDirectory.appendingPathComponent("report.txt")
+        let savedFile = requestedDirectory.appendingPathComponent(exactExpectedFile ? "report.txt" : "report-2.txt")
+        let unrelatedFile = unrelatedDirectory.appendingPathComponent("report.txt")
+        let startedAt = Date()
+        try Data("saved fixture".utf8).write(to: savedFile, options: .withoutOverwriting)
+        try Data("unrelated fixture".utf8).write(to: unrelatedFile, options: .withoutOverwriting)
+        let fixture = SavedFileVerificationFixture(parentDocument: unrelatedFile.absoluteString)
+        let neighbor = SavedFileVerificationFixture.element(950_002, document: unrelatedFile.absoluteString)
+        switch parent {
+        case .absent:
+            fixture.windows = [neighbor]
+        case .replaced:
+            fixture.windows = [neighbor, SavedFileVerificationFixture.element(
+                950_003, document: unrelatedFile.absoluteString)]
+        case .unreadableInventory:
+            fixture.windows = [neighbor, fixture.parent]
+            fixture.inventoryReadable = false
+        case .unreadableBounds:
+            fixture.windows = [neighbor, fixture.parent]
+            fixture.receipt = nil
+        }
+        let request = try fixture.request(expectedPath: expectedFile.path, startedAt: startedAt)
+
+        let result = try await fixture.service().verifySavedFile(request)
+
+        #expect(URL(fileURLWithPath: result.path).resolvingSymlinksInPath() == savedFile.resolvingSymlinksInPath())
+        #expect(result.foundVia == (exactExpectedFile ? "expected_path" : "expected_directory_scan"))
+        #expect(fixture.inventoryReadCount == 1)
+        #expect(fixture.receiptElements.allSatisfy { DialogService.sameElement($0, fixture.parent) })
+        #expect(fixture.ownerElements.allSatisfy { DialogService.sameElement($0, fixture.parent) })
+    }
+
+    @Test
+    func `post action document verification retries transient unreadable parent evidence`() async throws {
+        let directory = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let savedFile = directory.appendingPathComponent("report.txt")
+        let startedAt = Date()
+        try Data("saved fixture".utf8).write(to: savedFile, options: .withoutOverwriting)
+        let fixture = SavedFileVerificationFixture(parentDocument: savedFile.absoluteString)
+        var observedAvailability: [Bool] = []
+        fixture.beforeInventoryRead = { readCount in
+            fixture.inventoryReadable = readCount > 1
+            observedAvailability.append(fixture.inventoryReadable)
+        }
+        defer { fixture.beforeInventoryRead = nil }
+        let request = try fixture.request(startedAt: startedAt, timeout: 5)
+
+        let result = try await fixture.service().verifySavedFile(request)
+
+        #expect(result.path == savedFile.path)
+        #expect(result.foundVia == "document_path")
+        #expect(observedAvailability == [false, true])
+        #expect(fixture.receiptElements == [fixture.parent])
+    }
+
+    @Test
+    func `post action unavailable parent exhausts its budget without global fallback`() async throws {
+        let name = "peekaboo-unavailable-parent-\(UUID().uuidString)"
+        let unrelatedFile = URL(fileURLWithPath: "/private/tmp").appendingPathComponent(name + ".txt")
+        let saveStartedAt = Date()
+        try Data("unrelated global fixture".utf8).write(to: unrelatedFile, options: .withoutOverwriting)
+        defer { try? FileManager.default.removeItem(at: unrelatedFile) }
+        let fixture = SavedFileVerificationFixture(parentDocument: unrelatedFile.absoluteString)
+        fixture.windows = [
+            SavedFileVerificationFixture.element(950_002, document: unrelatedFile.absoluteString),
+            fixture.parent,
+        ]
+        fixture.inventoryReadable = false
+        let request = try fixture.request(expectedBaseName: name, startedAt: saveStartedAt, timeout: 0.15)
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+
+        do {
+            _ = try await fixture.service().verifySavedFile(request)
+            Issue.record("Expected unavailable parent evidence to exhaust the post-action verification budget")
+        } catch let error as DialogError {
+            guard case let .fileVerificationFailed(expectedPath) = error else { throw error }
+            #expect(expectedPath == "(unknown directory; name prefix: \(name))")
+        }
+
+        #expect(clock.now - startedAt >= .milliseconds(150))
+        #expect(fixture.inventoryReadCount > 0)
+        #expect(fixture.receiptElements.isEmpty)
+        #expect(fixture.ownerElements.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: unrelatedFile.path))
     }
 
     @Test
@@ -231,6 +335,7 @@ private final class SavedFileVerificationFixture {
     var ownerPID: Int32? = 42
     var applicationReadCount = 0
     var inventoryReadCount = 0
+    var beforeInventoryRead: ((Int) -> Void)?
     var ownerElements: [Element] = []
     var receiptElements: [Element] = []
 
@@ -250,6 +355,7 @@ private final class SavedFileVerificationFixture {
         readers.windows = { pid in
             #expect(pid == 42)
             self.inventoryReadCount += 1
+            self.beforeInventoryRead?(self.inventoryReadCount)
             return (self.windows, self.inventoryReadable)
         }
         readers.ownerPID = { window in

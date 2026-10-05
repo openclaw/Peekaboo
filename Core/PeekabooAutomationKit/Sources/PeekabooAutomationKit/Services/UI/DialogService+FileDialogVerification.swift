@@ -195,7 +195,9 @@ extension DialogService {
         while Date() < deadline {
             try Task.checkCancellation()
             let documentPath: String? = if let retainedParentWindow = request.retainedParentWindow {
-                try self.documentPathForRetainedFileDialogParent(
+                // Save may close or rebuild the parent. Missing post-action metadata must not prevent
+                // independent filesystem verification; the strict helper still rejects another window.
+                try? self.documentPathForRetainedFileDialogParent(
                     target: request.retainedTarget,
                     retainedParentWindow: retainedParentWindow)
             } else {
