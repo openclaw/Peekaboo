@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# A successful tail must not hide log/sudo failures from calling scripts.
+set -o pipefail
+
 # Default values
 LINES=50
 TIME="5m"

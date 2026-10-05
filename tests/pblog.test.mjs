@@ -97,3 +97,13 @@ test('unpiped log exit status is preserved', (t) => {
   assert.equal(result.signal, null);
   assert.equal(result.status, 7);
 });
+
+for (const outputFile of [false, true]) {
+  test(`tailed log failure remains nonzero with ${outputFile ? 'file' : 'stdout'} output`, (t) => {
+    const f = fixture(t);
+    const result = f.run(['--lines', '2', ...(outputFile ? ['--output', path.join(f.directory, 'failed.log')] : [])], { PBLOG_TEST_EXIT: '7' });
+    assert.equal(result.error, undefined);
+    assert.equal(result.signal, null);
+    assert.equal(result.status, 7);
+  });
+}
