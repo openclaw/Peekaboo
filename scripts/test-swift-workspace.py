@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -85,6 +86,15 @@ class WorkspaceFixture(unittest.TestCase):
 
 
 class WorkspaceContract(WorkspaceFixture):
+    def test_build_child_signal_retains_shell_exit_status(self):
+        for child_signal in (signal.SIGTERM, signal.SIGKILL):
+            with self.subTest(signal=child_signal):
+                command = [sys.executable, "-c", "import os, signal; os.kill(os.getpid(), " +
+                           str(int(child_signal)) + ")"]
+                result = self.run_setup("run", "--", *command, ok=False)
+                self.assertEqual(result.returncode, 128 + child_signal)
+                self.assertFalse((self.root / ".swiftpm/peekaboo-workspace.lock").exists())
+
     def test_clean_setup_idempotence_and_remove_preserve_unrelated_settings(self):
         other = self.root / "Apps/CLI/.swiftpm/configuration/registries.json"
         other.parent.mkdir(parents=True)
