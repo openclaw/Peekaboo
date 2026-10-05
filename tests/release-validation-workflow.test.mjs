@@ -884,4 +884,5 @@ test('hosted runtime inspection keeps the existing real-runtime execution check'
   assert.doesNotMatch(entry, /--inspection-only/);
   const script = readFileSync(new URL('../scripts/test-swift-runtime-libraries.sh', import.meta.url), 'utf8');
   assert.ok(script.includes('bash "$ROOT_DIR/scripts/test-swift-runtime-slice-rpaths.sh"'));
+  assert.match(script, /unset MAC_RELEASE_CODESIGN_IDENTITY MAC_RELEASE_CODESIGN_TEAM_ID SIGN_IDENTITY/);
 });

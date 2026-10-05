@@ -13,7 +13,7 @@ fi
 
 # The release preflight exports the publication signer for its signed CLI build; these fixtures are
 # ad-hoc signed, so the verifier must not inherit that expectation.
-unset MAC_RELEASE_CODESIGN_IDENTITY MAC_RELEASE_CODESIGN_TEAM_ID
+unset MAC_RELEASE_CODESIGN_IDENTITY MAC_RELEASE_CODESIGN_TEAM_ID SIGN_IDENTITY
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 bash "$ROOT_DIR/scripts/test-swift-runtime-slice-rpaths.sh"
