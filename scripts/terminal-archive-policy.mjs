@@ -472,6 +472,8 @@ async function validateZipLocalEntries(handle, fileSize, directoryOffset, record
     }
     const gap = nextOffset - current.end;
     if ((current.record.flags & 0x0008) !== 0) {
+      // ZIP32/ZIP64 descriptors, with an optional signature, occupy at most 24 bytes.
+      if (gap > 24) fail(label, `has an invalid ZIP data descriptor: ${current.path}`);
       const descriptor = await readExact(handle, current.end, gap, label);
       validateZipDescriptor(descriptor, current.record, label);
     } else if (gap !== 0) {
