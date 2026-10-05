@@ -492,3 +492,10 @@ for (const control of ['\u0000', '\t', '\n', '\r', '\u001f', '\u007f']) {
 }
 
 console.log('test-release-driver-contract: ok');
+
+assert.equal(classifyNpmViewResult({ exitCode: 1, stdout: JSON.stringify({ error: { code: 'E404' } }), stderr: '', expectedVersion: '9.8.7' }), 'absent');
+for (const probe of [
+  { stdout: JSON.stringify({ error: { code: 'E500', summary: 'GET http://owned.invalid/E404/pkg' } }), stderr: 'npm error code E500\nnpm error 500 GET http://owned.invalid/E404/pkg' },
+  { stdout: '', stderr: 'npm error code E401\nnpm error authentication failed; server said 404 Not Found' },
+  { stdout: '', stderr: 'npm error code E404\nnpm error code E401' }
+]) assert.throws(() => classifyNpmViewResult({ ...probe, exitCode: 1, expectedVersion: '9.8.7' }), /probe failed/);
