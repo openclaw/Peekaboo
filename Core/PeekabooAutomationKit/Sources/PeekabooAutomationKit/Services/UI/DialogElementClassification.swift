@@ -127,7 +127,8 @@ enum DialogElementClassifier {
     }
 
     private static func hasFilePanelIdentifier(_ identifier: String) -> Bool {
-        identifier.contains("NSOpenPanel") || identifier.contains("NSSavePanel")
+        identifier == "open-panel" || identifier == "save-panel" ||
+            identifier.contains("NSOpenPanel") || identifier.contains("NSSavePanel")
     }
 
     private static func isSwiftUIWindowGroupIdentifier(_ identifier: String) -> Bool {

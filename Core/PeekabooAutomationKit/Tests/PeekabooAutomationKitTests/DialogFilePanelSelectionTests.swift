@@ -11,6 +11,40 @@ struct DialogFilePanelSelectionTests {
     private let alert = Element(AXUIElementCreateApplication(946_003))
     private let secondPanel = Element(AXUIElementCreateApplication(946_004))
 
+    @Test(arguments: ["open-panel", "save-panel"])
+    func `native panel evidence avoids a second descriptor and button traversal`(identifier: String) {
+        let evidence = DialogElementEvidence(
+            role: "AXWindow", subrole: "AXUnknown", roleDescription: "", identifier: identifier, title: "Öffnen")
+        let result = DialogService.filePanelElements(
+            in: .init(structural: [], legacy: [self.sheet], evidence: [self.sheet: evidence]),
+            window: self.window,
+            matching: { _ in
+                Issue.record("Recognized native panel must use its fresh classification snapshot")
+                return false
+            })
+        #expect(result == [self.sheet])
+        #expect(DialogElementClassifier.isDialog(evidence))
+        #expect(!DialogElementClassifier.isStructuralDialog(evidence))
+    }
+
+    @Test
+    func `file panel classification is not retained across discovery passes`() {
+        let original = DialogElementEvidence(
+            role: "AXSheet", subrole: "", roleDescription: "", identifier: "save-panel", title: "")
+        let replacement = DialogElementEvidence(
+            role: "AXSheet", subrole: "", roleDescription: "", identifier: "unrelated-alert", title: "Warning")
+        let initial = DialogService.filePanelElements(
+            in: .init(structural: [self.sheet], legacy: [], evidence: [self.sheet: original]),
+            window: self.window,
+            matching: { _ in false })
+        let refreshed = DialogService.filePanelElements(
+            in: .init(structural: [self.sheet], legacy: [], evidence: [self.sheet: replacement]),
+            window: self.window,
+            matching: { _ in false })
+        #expect(initial == [self.sheet])
+        #expect(refreshed.isEmpty)
+    }
+
     @Test(arguments: ["Open Questions", "Saved Draft", "Choose Theme", "Replacement Parts"])
     func `ordinary document titles cannot make a real file panel ambiguous`(title: String) {
         let document = self.element(946_010, title: title, subrole: "AXStandardWindow")

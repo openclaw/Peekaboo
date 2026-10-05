@@ -45,6 +45,11 @@ The Mac app does not maintain its own formatter registry:
 
 Unknown tool names fall back to a title-cased name and raw/pretty-printed JSON rather than being added to a parallel Mac-only stack.
 
+Compatibility shortcut summaries tokenize whole key names case-insensitively, so names containing `enter` or `delete`
+are not rewritten as key symbols. Forward delete (`forwarddelete`/`forward_delete`, ⌦) stays distinct from backward
+delete (`delete`/`backspace`/`del`, ⌫), including the single-key fallback. These are display rules, not keyboard parsing
+or delivery changes; current structured tool summaries take precedence over compatibility formatter fallback.
+
 ## Adding a New Tool
 
 1. Add the formatter-facing name to `ToolType`.

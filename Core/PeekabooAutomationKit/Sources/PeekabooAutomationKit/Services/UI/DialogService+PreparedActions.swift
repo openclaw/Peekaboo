@@ -206,9 +206,21 @@ extension DialogService {
         case unreadable
     }
 
+    @MainActor
     struct FreshDialogElements {
         let structural: [Element]
         let legacy: [Element]
+        let evidence: [Element: DialogElementEvidence]
+
+        init(
+            structural: [Element],
+            legacy: [Element],
+            evidence: [Element: DialogElementEvidence] = [:])
+        {
+            self.structural = structural
+            self.legacy = legacy
+            self.evidence = evidence
+        }
     }
 
     struct DialogTargetRevalidationObservation {
@@ -483,6 +495,7 @@ extension DialogService {
         let budget = try suppliedBudget ?? DialogOperationDeadline.resolve(operationName: "dialog hierarchy discovery")
         var structuralDialogs: [Element] = []
         var legacyDialogs: [Element] = []
+        var dialogEvidence: [Element: DialogElementEvidence] = [:]
         var visited: Set<Element> = []
         var stack = [window]
 
@@ -494,10 +507,12 @@ extension DialogService {
             let evidence = node.evidence
             if DialogElementClassifier.isStructuralDialog(evidence) {
                 structuralDialogs.append(element)
+                dialogEvidence[element] = evidence
             } else if DialogElementClassifier.permitsLegacyReadHeuristics(evidence),
                       DialogElementClassifier.isDialog(evidence)
             {
                 legacyDialogs.append(element)
+                dialogEvidence[element] = evidence
             }
             stack.append(contentsOf: node.children.reversed())
         }
@@ -505,7 +520,8 @@ extension DialogService {
             structural: DialogTraversal.preferredStructuralDialogs(
                 in: window,
                 candidates: structuralDialogs),
-            legacy: legacyDialogs)
+            legacy: legacyDialogs,
+            evidence: dialogEvidence)
     }
 
     func semanticButtons(in dialog: Element, request: DialogActionPreparationRequest) -> [Element] {
