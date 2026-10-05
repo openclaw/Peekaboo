@@ -55,6 +55,8 @@ login-keychain or Dropbox fallbacks, and the private locator is never tracked in
 
 ### Release helper pin and relocated publication checkout
 
+The build-number helper accepts numeric `major.minor.patch` versions, optionally followed by case-insensitive `alpha`/`a`, `beta`/`b`, or `rc` prereleases. Unnumbered prereleases mean 1; `.2`, `-2`, and compact `2` suffixes remain supported. Prerelease numbers must be 1–29, minor/patch components 0–99, and numeric components cannot have leading zeroes. Extra identifiers, build metadata, empty suffixes, and overflowing values fail without a build-number result. The conservative major limit is 9223372036853, leaving room for every supported minor, patch, and suffix; it is not the largest individually representable version. Stable build-number mappings are unchanged.
+
 Credentialed release steps run through the shared `agent-scripts` `release-mac-app` helper, pinned by commit plus
 executable and library SHA-256 (`EXPECTED_RELEASE_HELPER_*` in `scripts/build-terminal-artifacts.sh`). The helper is
 found only at `../agent-scripts` beside the publication checkout, then at `~/Projects/agent-scripts`; it must be a

@@ -21,6 +21,7 @@ exit "\${PBLOG_TEST_EXIT:-0}"
   writeFileSync(path.join(directory, 'sudo'), `#!/bin/bash
 printf '%s\\0' "$@" > "$PBLOG_TEST_SUDO_ARGS"
 [[ "$1" == -n && "$2" == log ]] || exit 99
+[[ "$PBLOG_TEST_SUDO_EXIT" == 0 ]] || exit "$PBLOG_TEST_SUDO_EXIT"
 shift 2
 exec log "$@"
 `, { mode: 0o755 });
@@ -39,6 +40,7 @@ exec log "$@"
         PBLOG_TEST_ARGS: argsPath,
         PBLOG_TEST_SUDO_ARGS: sudoArgsPath,
         PBLOG_TEST_EXIT: '0',
+        PBLOG_TEST_SUDO_EXIT: '0',
         ...environment,
       },
     }),
@@ -66,7 +68,7 @@ test('historical debug and error queries preserve flags and mock-only sudo', (t)
   success(f.run(['--all', '--debug', '--subsystem', 'boo.test']));
   assert.deepEqual(f.args(), ['show', '--predicate', 'subsystem == "boo.test"', '--debug', '--last', '5m']);
   success(f.run(['--private', '--all', '--errors', '--subsystem', 'boo.test']));
-  const expected = ['show', '--predicate', 'subsystem == "boo.test" AND eventType == "error"', '--info', '--debug', '--last', '5m'];
+  const expected = ['show', '--predicate', 'subsystem == "boo.test" AND logType == "error"', '--info', '--debug', '--last', '5m'];
   assert.deepEqual(f.args(), expected);
   assert.deepEqual(f.sudoArgs(), ['-n', 'log', ...expected]);
 });
@@ -91,11 +93,80 @@ for (const outputFile of [false, true]) {
   }
 }
 
-test('unpiped log exit status is preserved', (t) => {
-  const result = fixture(t).run(['--all'], { PBLOG_TEST_EXIT: '7' });
+for (const outputFile of [false, true]) {
+  for (const all of [false, true]) {
+    for (const privateMode of [false, true]) {
+      test(`log failure survives ${outputFile ? 'file' : 'stdout'} / ${all ? 'all' : 'tail'} / ${privateMode ? 'private' : 'normal'}`, (t) => {
+        const f = fixture(t);
+        const output = path.join(f.directory, 'failed.log');
+        const args = [...(all ? ['--all'] : ['--lines', '2']), ...(outputFile ? ['--output', output] : []), ...(privateMode ? ['--private'] : [])];
+        const result = f.run(args, { PBLOG_TEST_EXIT: '7' });
+        assert.equal(result.error, undefined);
+        assert.equal(result.signal, null);
+        assert.equal(result.status, 7);
+        assert.equal(result.stderr, '');
+        assert.equal(outputFile ? readFileSync(output, 'utf8') : result.stdout, all ? 'first\nsecond\nthird\n' : 'second\nthird\n');
+      });
+    }
+    test(`mock sudo refusal survives ${outputFile ? 'file' : 'stdout'} / ${all ? 'all' : 'tail'}`, (t) => {
+      const f = fixture(t);
+      const result = f.run(['--private', ...(all ? ['--all'] : ['--lines', '2']), ...(outputFile ? ['--output', path.join(f.directory, 'denied.log')] : [])], { PBLOG_TEST_SUDO_EXIT: '9' });
+      assert.equal(result.error, undefined);
+      assert.equal(result.signal, null);
+      assert.equal(result.status, 9);
+      assert.deepEqual(f.args(), []);
+      assert.equal(result.stdout, '');
+    });
+  }
+}
+
+test('output redirection and tail failures remain failures', (t) => {
+  const f = fixture(t);
+  for (const args of [['--output', path.join(f.directory, 'log', 'not-a-directory')], ['--lines', 'not-a-count']]) {
+    const result = f.run(args);
+    assert.equal(result.error, undefined);
+    assert.equal(result.signal, null);
+    assert.notEqual(result.status, 0);
+    assert.notEqual(result.stderr, '');
+  }
+});
+
+const valueOptions = ['-n', '--lines', '-l', '--last', '-c', '--category', '-s', '--search', '-o', '--output', '--subsystem'];
+for (const option of valueOptions) {
+  test(`missing value for ${option}`, (t) => {
+    const f = fixture(t);
+    const result = f.run([option]);
+    assert.equal(result.error, undefined, 'The parser must terminate before the subprocess timeout');
+    assert.equal(result.signal, null);
+    assert.equal(result.status, 2);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, `${option} requires a value\n`);
+    assert.deepEqual(f.args(), []);
+    assert.deepEqual(f.sudoArgs(), []);
+  });
+
+  test(`supplied values for ${option} preserve parsing before help`, (t) => {
+    const f = fixture(t);
+    for (const value of ['fixture', '', '-literal']) {
+      const result = f.run([option, value, '--help']);
+      success(result);
+      assert.match(result.stdout, /^Usage: pblog.sh/);
+      assert.deepEqual(f.args(), []);
+      assert.deepEqual(f.sudoArgs(), []);
+    }
+  });
+}
+
+test('a trailing missing value fails after preceding valid options, before private log access', (t) => {
+  const f = fixture(t);
+  const result = f.run(['--private', '--debug', '--last', '5m', '--search', 'literal text', '--output']);
   assert.equal(result.error, undefined);
   assert.equal(result.signal, null);
-  assert.equal(result.status, 7);
+  assert.equal(result.status, 2);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, '--output requires a value\n');
+  assert.deepEqual(f.args(), []);
+  assert.deepEqual(f.sudoArgs(), []);
 });
 
 for (const outputFile of [false, true]) {
@@ -106,25 +177,64 @@ for (const outputFile of [false, true]) {
     const output = path.join(f.directory, 'structured.json');
     const result = f.run(['--json', ...(outputFile ? ['--output', output] : [])]);
     success(result);
+    assert.equal(outputFile ? readFileSync(output, 'utf8') : result.stdout, json);
     assert.deepEqual(JSON.parse(outputFile ? readFileSync(output, 'utf8') : result.stdout), JSON.parse(json));
   });
 }
 
-test('follow emits an event before the long-lived log child exits', async (t) => {
-  const f = fixture(t);
-  writeFileSync(path.join(f.directory, 'log'), '#!/bin/bash\nprintf "owned live event\\n"\nsleep 2\n', { mode: 0o755 });
-  const child = spawn('/bin/bash', [script, '--follow'], {
-    cwd: f.directory, env: { ...process.env, PATH: `${f.directory}:${process.env.PATH}` },
-    stdio: ['ignore', 'pipe', 'ignore']
-  });
-  const started = Date.now();
-  let output = '';
-  let firstEventMs;
-  child.stdout.on('data', (chunk) => {
-    output += chunk;
-    if (output.includes('owned live event') && firstEventMs === undefined) firstEventMs = Date.now() - started;
-  });
-  const status = await new Promise((resolve, reject) => { child.on('exit', resolve); child.on('error', reject); });
-  assert.equal(status, 0);
-  assert.ok(firstEventMs < 1500, `event was withheld until ${firstEventMs}ms`);
-});
+for (const outputFile of [false, true]) {
+  for (const json of [false, true]) {
+    test(`follow forwards ${json ? 'JSON' : 'text'} to ${outputFile ? 'a file' : 'stdout'} before releasing the producer`, async (t) => {
+      const f = fixture(t);
+      const outputPath = path.join(f.directory, 'live.log');
+      const event = json ? '{"event":"owned live event"}' : 'owned live event';
+      writeFileSync(path.join(f.directory, 'log'), `#!/bin/bash
+printf '%s\\n' '${event}'
+IFS= read -r release
+[[ "$release" == release ]] || exit 91
+`, { mode: 0o755 });
+      const child = spawn('/bin/bash', [script, '--follow', '--lines', '1', ...(json ? ['--json'] : []), ...(outputFile ? ['--output', outputPath] : [])], {
+        cwd: f.directory, env: { ...process.env, PATH: `${f.directory}:${process.env.PATH}` },
+        detached: true, stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let output = '', stderr = '', closed = false, released = false, observedBeforeRelease = false;
+      const completion = new Promise((resolve) => {
+        child.once('error', (error) => resolve({ error }));
+        child.once('close', (code, signal) => { closed = true; resolve({ code, signal }); });
+      });
+      const killOwnedGroup = () => {
+        if (closed || !Number.isInteger(child.pid)) return;
+        try { process.kill(-child.pid, 'SIGKILL'); }
+        catch (error) { if (error.code !== 'ESRCH') throw error; }
+      };
+      const release = (observed) => {
+        if (released || closed) return;
+        released = true;
+        observedBeforeRelease = observed;
+        child.stdin.end('release\n');
+      };
+      const observe = () => {
+        const current = outputFile ? (existsSync(outputPath) ? readFileSync(outputPath, 'utf8') : '') : output;
+        if (current.includes(`${event}\n`)) release(true);
+      };
+      child.stdin.on('error', () => {});
+      child.stdout.on('data', (chunk) => { output += chunk; observe(); });
+      child.stderr.on('data', (chunk) => { stderr += chunk; });
+      const poll = outputFile ? setInterval(observe, 10) : undefined;
+      // The fallback ends a broken, EOF-buffering pipeline; it is not a latency assertion.
+      const fallback = setTimeout(() => release(false), 3000);
+      const deadline = setTimeout(killOwnedGroup, 5000);
+      t.after(killOwnedGroup);
+      let result;
+      try { result = await completion; }
+      finally { clearInterval(poll); clearTimeout(fallback); clearTimeout(deadline); killOwnedGroup(); }
+      assert.equal(result.error, undefined);
+      assert.equal(result.signal, null);
+      assert.equal(result.code, 0, stderr);
+      assert.equal(stderr, '');
+      assert.equal(observedBeforeRelease, true, 'Event was withheld until the test released its producer');
+      assert.equal(outputFile ? readFileSync(outputPath, 'utf8') : output, `${event}\n`);
+      if (outputFile) assert.equal(output, '');
+    });
+  }
+}
