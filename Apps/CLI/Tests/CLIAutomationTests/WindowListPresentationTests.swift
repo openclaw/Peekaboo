@@ -1,3 +1,4 @@
+import Commander
 import CoreGraphics
 import Foundation
 import Testing
@@ -11,7 +12,7 @@ struct WindowListPresentationTests {
     func `text lists distinguish off-screen windows from minimized windows`(groupBySpace: Bool) async throws {
         let arguments = ["window", "list", "--pid", "42", "--no-remote"] +
             (groupBySpace ? ["--group-by-space"] : [])
-        let result = try await InProcessCommandRunner.run(arguments, services: Self.services())
+        let result = try await InProcessCommandRunner.runWithOwnedRuntime(arguments, services: Self.services())
 
         #expect(result.exitStatus == 0)
         let lines = result.stdout.split(separator: "\n")
@@ -27,16 +28,25 @@ struct WindowListPresentationTests {
         #expect(result.stdout.contains("Size: 800x600"))
     }
 
-    @Test
-    func `JSON keeps native visibility without adding a minimized presentation field`() async throws {
-        let result = try await InProcessCommandRunner.run(
-            ["window", "list", "--pid", "42", "--no-remote", "--json"],
-            services: Self.services()
+    @Test(arguments: [nil, "PID:42", "pid:42", " \tPiD:42\n", "PID:00042"] as [String?])
+    func `JSON keeps the same owner and window inventory for equivalent PID aliases`(alias: String?) async throws {
+        let services = Self.services()
+        let applications = try #require(services.applications as? StubApplicationService)
+        let result = try await InProcessCommandRunner.runWithOwnedRuntime(
+            ["window", "list", "--pid", "42", "--no-remote", "--json"] +
+                (alias.map { ["--app", $0] } ?? []),
+            services: services
         )
         #expect(result.exitStatus == 0)
         let object = try #require(JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
         let data = try #require(object["data"] as? [String: Any])
         let windows = try #require(data["windows"] as? [[String: Any]])
+        let target = try #require(data["target_application_info"] as? [String: Any])
+        #expect(target["pid"] as? Int == 42)
+        #expect(windows.map { $0["window_id"] as? Int } == [903, 907, 909])
+        #expect(applications.findApplicationRequests == [
+            alias?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "PID:42",
+        ])
         #expect(windows.map { $0["is_on_screen"] as? Bool } == [false, false, true])
         #expect(windows.map { $0["window_index"] as? Int } == [3, 7, 9])
         for window in windows {
@@ -49,6 +59,22 @@ struct WindowListPresentationTests {
                 "layer"
             ])
         }
+    }
+
+    @Test(arguments: ["PID:42", "pid:42", " \tPiD:42\n", "PID:00042"])
+    func `redundant PID aliases still refuse window mutation before lookup`(alias: String) async throws {
+        let services = Self.services()
+        let applications = try #require(services.applications as? StubApplicationService)
+        let windows = try #require(services.windows as? StubWindowService)
+        let failure = try #require(await #expect(throws: ValidationError.self) {
+            try await InProcessCommandRunner.runWithOwnedRuntime(
+                ["window", "move", "--app", alias, "--pid", "42", "--x", "10", "--y", "20", "--json", "--no-remote"],
+                services: services
+            )
+        })
+        #expect(String(describing: failure) == "Use either --app or --pid, not both.")
+        #expect(applications.findApplicationRequests.isEmpty)
+        #expect(windows.moveCalls.isEmpty)
     }
 
     private static func services() -> PeekabooServices {

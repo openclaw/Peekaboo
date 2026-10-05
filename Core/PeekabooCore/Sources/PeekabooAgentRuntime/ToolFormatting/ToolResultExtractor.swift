@@ -42,6 +42,21 @@ public enum ToolResultExtractor {
 
     // MARK: - Integer Extraction
 
+    static func integer(_ value: Double, rounding: FloatingPointRoundingRule = .towardZero) -> Int? {
+        Int(exactly: value.rounded(rounding))
+    }
+
+    static func shellExitCode(from result: [String: Any]) -> Int? {
+        if let code = self.int("exitCode", from: result) {
+            return code
+        }
+        let supplied = result["exitCode"] != nil ||
+            (result["data"] as? [String: Any])?["exitCode"] != nil ||
+            (result["metadata"] as? [String: Any])?["exitCode"] != nil
+        // Legacy producers omit the field; only a supplied unusable value is unknown.
+        return supplied ? nil : 0
+    }
+
     /// Extract an integer value from the result
     public static func int(_ key: String, from result: [String: Any]) -> Int? {
         // Try direct Int
@@ -51,7 +66,7 @@ public enum ToolResultExtractor {
 
         // Try Double and convert
         if let value = result[key] as? Double {
-            return Int(exactly: value.rounded(.towardZero))
+            return self.integer(value)
         }
 
         // Try String and convert
@@ -67,7 +82,7 @@ public enum ToolResultExtractor {
                 return value
             }
             if let value = wrapper["value"] as? Double {
-                return Int(exactly: value.rounded(.towardZero))
+                return self.integer(value)
             }
             if let value = wrapper["value"] as? String,
                let intValue = Int(value)
@@ -82,7 +97,7 @@ public enum ToolResultExtractor {
                 return value
             }
             if let value = data[key] as? Double {
-                return Int(exactly: value.rounded(.towardZero))
+                return self.integer(value)
             }
         }
 
@@ -245,7 +260,7 @@ public enum ToolResultExtractor {
                 return intValue
             }
             if let doubleValue = value as? Double {
-                return Int(exactly: doubleValue.rounded(.towardZero))
+                return self.integer(doubleValue)
             }
             if let stringValue = value as? String,
                let intValue = Int(stringValue)
@@ -260,7 +275,7 @@ public enum ToolResultExtractor {
                     return intValue
                 }
                 if let doubleValue = wrappedValue as? Double {
-                    return Int(exactly: doubleValue.rounded(.towardZero))
+                    return self.integer(doubleValue)
                 }
                 if let stringValue = wrappedValue as? String,
                    let intValue = Int(stringValue)
@@ -286,12 +301,6 @@ public enum ToolResultExtractor {
             return false
         }
 
-        // Check exit code for shell commands
-        if let exitCode = int("exitCode", from: result) {
-            return exitCode == 0
-        }
-
-        // Default to true if no explicit failure indicators
-        return true
+        return self.shellExitCode(from: result) == 0
     }
 }
