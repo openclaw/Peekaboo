@@ -9,7 +9,7 @@ import Testing
 @Suite(.serialized, .tags(.safe))
 struct CLIWindowMutationResultTests {
     @Test
-    func `verified geometry commands classify idempotent and changed frames canonically`() async throws {
+    func `verified geometry commands preserve dispatch evidence and distinguish genuine no ops`() async throws {
         let original = CGRect(x: 10, y: 20, width: 640, height: 480)
         let cases: [(arguments: [String], changed: CGRect)] = [
             (
@@ -27,11 +27,24 @@ struct CLIWindowMutationResultTests {
         ]
 
         for testCase in cases {
-            #expect(try await self.geometryOutcomeState(
+            let unchanged = try await self.geometryOutcome(
                 arguments: testCase.arguments,
                 originalBounds: original,
                 verifiedBounds: original
-            ) == "confirmed_no_change")
+            )
+            #expect(unchanged.outcome == Self.dispatchedOutcome)
+            #expect(unchanged.mutationDispatched)
+            #expect(!unchanged.retrySafe)
+            #expect(unchanged.requiresFreshObservation)
+
+            let noOp = try await self.geometryOutcome(
+                arguments: testCase.arguments,
+                originalBounds: original,
+                verifiedBounds: original,
+                reportedOutcome: .confirmedNoChange(route: .bridge)
+            )
+            #expect(noOp.outcome == .confirmedNoChange(route: .bridge))
+            #expect(!noOp.mutationDispatched)
 
             var changedArguments = testCase.arguments
             switch changedArguments[1] {
@@ -49,23 +62,28 @@ struct CLIWindowMutationResultTests {
             default:
                 Issue.record("Unexpected geometry action")
             }
-            #expect(try await self.geometryOutcomeState(
+            let changed = try await self.geometryOutcome(
                 arguments: changedArguments,
                 originalBounds: original,
                 verifiedBounds: testCase.changed
-            ) == "confirmed_change")
+            )
+            #expect(try changed.outcome == .confirmedChange(
+                route: .bridge,
+                delivery: #require(Self.dispatchedOutcome.delivery),
+                unitCount: .one
+            ))
         }
     }
 
     @Test
     func `verified maximize frame change promotes dispatched outcome to confirmed change`() async throws {
-        let state = try await self.geometryOutcomeState(
+        let outcome = try await self.geometryOutcome(
             arguments: ["window", "maximize", "--window-id", "77"],
             originalBounds: CGRect(x: 10, y: 20, width: 640, height: 480),
             verifiedBounds: CGRect(x: 0, y: 0, width: 1200, height: 800)
         )
 
-        #expect(state == "confirmed_change")
+        #expect(outcome.state == .confirmedChange)
     }
 
     @Test
@@ -217,22 +235,25 @@ struct CLIWindowMutationResultTests {
         try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
     }
 
-    private func geometryOutcomeState(
+    private static let dispatchedOutcome = DesktopActionOutcome.dispatchedUnverified(
+        route: .bridge,
+        delivery: .init(mechanism: .accessibilityValue, mode: .background),
+        evidence: .deliveryAccepted,
+        unitCount: .one
+    )
+
+    private func geometryOutcome(
         arguments: [String],
         originalBounds: CGRect,
-        verifiedBounds: CGRect
-    ) async throws -> String {
+        verifiedBounds: CGRect,
+        reportedOutcome: DesktopActionOutcome? = nil
+    ) async throws -> DesktopActionOutcome.Projection {
         let original = Self.window(bounds: originalBounds)
         let windows = OutcomeStubWindowService(windowsByApp: ["Fixture": [original]])
-        windows.actionOutcome = .dispatchedUnverified(
-            route: .bridge,
-            delivery: .init(mechanism: .accessibilityValue, mode: .background),
-            evidence: .deliveryAccepted,
-            unitCount: .one
-        )
+        windows.actionOutcome = reportedOutcome ?? Self.dispatchedOutcome
         windows.postActionReadbackWindow = Self.window(bounds: verifiedBounds)
         let services = TestServicesFactory.makePeekabooServices(windows: windows)
-        let result = try await InProcessCommandRunner.run(
+        let result = try await InProcessCommandRunner.runWithOwnedRuntime(
             arguments + ["--json", "--no-remote"],
             services: services
         )
@@ -240,7 +261,10 @@ struct CLIWindowMutationResultTests {
         #expect(result.exitStatus == 0)
         let object = try Self.jsonObject(result.stdout)
         let outcome = try #require(object["outcome"] as? [String: Any])
-        return try #require(outcome["state"] as? String)
+        return try JSONDecoder().decode(
+            DesktopActionOutcome.Projection.self,
+            from: JSONSerialization.data(withJSONObject: outcome)
+        )
     }
 
     private static func window(bounds: CGRect) -> ServiceWindowInfo {
