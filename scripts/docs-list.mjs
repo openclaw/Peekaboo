@@ -73,7 +73,14 @@ function extractMetadata(fullPath) {
       if (inline.startsWith('[') && inline.endsWith(']')) {
         collectingReadWhen = false;
         try {
-          const parsed = JSON.parse(inline.replace(/'/g, '"'));
+          let parsed;
+          try {
+            parsed = JSON.parse(inline);
+          } catch {
+            // Retain the existing simple single-quoted array support without
+            // rewriting apostrophes inside otherwise valid JSON strings.
+            parsed = JSON.parse(inline.replace(/'/g, '"'));
+          }
           if (Array.isArray(parsed)) {
             for (const item of parsed) {
               if (typeof item === 'string' && item.trim().length > 0) {

@@ -524,52 +524,6 @@ struct PasteToolTransactionGateTests {
     }
 
     @Test
-    func `Cancellation during restore delay waits for consumption before restoring`() async throws {
-        let app = Self.editorApplication()
-        let delivered = PasteDeliveryLatch()
-        let automation = await MainActor.run {
-            SignalingAutomationService(accessibilityGranted: true, delivered: delivered)
-        }
-        let applications = await MainActor.run { MockApplicationService(applications: [app]) }
-        let clipboard = await MainActor.run { TransactionGateClipboardService() }
-        let context = await MCPToolTestHelpers.makeContext(
-            automation: automation,
-            applications: applications,
-            clipboard: clipboard,
-            snapshotOwner: Self.uiSnapshots.owner)
-
-        let command = Task { @MainActor in
-            try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
-                "app": "Editor",
-                "dataBase64": "cGF5bG9hZA==",
-                "uti": "public.data",
-                "restore_delay_ms": 250,
-            ]))
-        }
-
-        await delivered.wait()
-        let clock = ContinuousClock()
-        let canceledAt = clock.now
-        command.cancel()
-
-        try await Task.sleep(for: .milliseconds(75))
-        #expect(await MainActor.run { clipboard.current?.utiIdentifier } == "public.data")
-        #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
-
-        let response = try await command.value
-        #expect(response.isError)
-        #expect(self.responseText(response).contains("may have pasted; do not retry"))
-        #expect(self.responseText(response).contains("indeterminate"))
-        #expect(await MainActor.run { automation.targetedHotkeyCalls.first?.expectedProcessIdentity } ==
-            AutomationTestFixtures.processIdentity(processIdentifier: 333, processStartIdentity: 33))
-        #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
-        #expect(clock.now - canceledAt >= .milliseconds(150))
-        #expect(clock.now - canceledAt < .seconds(1))
-        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
-        #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
-    }
-
-    @Test
     func `Foreground focus occurs after the transaction lock and is revalidated`() async throws {
         let heldFD = try self.holdPasteTransactionLock()
         var lockHeld = true
@@ -680,18 +634,55 @@ struct PasteToolTransactionGateTests {
         #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
     }
 
-    @Test
-    func `Throwing dispatch settles before MCP restore and unlock`() async throws {
+    @Test(arguments: [false, true])
+    @MainActor
+    func `Dispatch failure and cancellation settle before MCP restore and unlock`(
+        cancelAfterDelivery: Bool) async throws
+    {
         let app = Self.editorApplication()
-        let delivered = PasteDeliveryLatch()
-        let automation = await MainActor.run {
-            SignalingAutomationService(
-                accessibilityGranted: true,
-                delivered: delivered,
-                errorAfterDelivery: ExpectedPasteToolDispatchError.afterPosting)
+        let clock = ContinuousClock()
+        var dispatchedAt: ContinuousClock.Instant?
+        var restoringAt: ContinuousClock.Instant?
+        var restoreObservations = 0
+        let contenderFD = try self.openPasteTransactionLock()
+        defer { close(contenderFD) }
+        let automation = MockAutomationService(accessibilityGranted: true)
+        let applications = MockApplicationService(applications: [app])
+        let clipboard = TransactionGateClipboardService()
+        automation.afterPinnedHotkey = {
+            dispatchedAt = clock.now
+            if cancelAfterDelivery {
+                withUnsafeCurrentTask {
+                    #expect($0 != nil)
+                    $0?.cancel()
+                }
+            }
         }
-        let applications = await MainActor.run { MockApplicationService(applications: [app]) }
-        let clipboard = await MainActor.run { TransactionGateClipboardService() }
+        automation.pinnedHotkeyError = { _ in
+            cancelAfterDelivery ? nil : ExpectedPasteToolDispatchError.afterPosting
+        }
+        // A mid-delay observation can resume after settling; inspect restoration at its boundary.
+        clipboard.beforeMutation = {
+            guard clipboard.setCallCount > 0 else { return }
+            restoringAt = clock.now
+            restoreObservations += 1
+            #expect(clipboard.current?.utiIdentifier == "public.data")
+            #expect(clipboard.current?.data == Data("payload".utf8))
+            #expect(clipboard.restoreCallCount == 0)
+            #expect(automation.targetedHotkeyCalls.count == 1)
+            #expect(automation.targetedHotkeyCalls.first?.keys == "cmd,v")
+            let lockResult = flock(contenderFD, LOCK_EX | LOCK_NB)
+            let lockError = errno
+            if lockResult == 0 {
+                flock(contenderFD, LOCK_UN)
+            }
+            #expect(lockResult == -1 && (lockError == EWOULDBLOCK || lockError == EAGAIN))
+        }
+        defer {
+            clipboard.beforeMutation = nil
+            automation.afterPinnedHotkey = nil
+            automation.pinnedHotkeyError = nil
+        }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
@@ -705,28 +696,20 @@ struct PasteToolTransactionGateTests {
                 "restore_delay_ms": 250,
             ]))
         }
-
-        await delivered.wait()
-        let clock = ContinuousClock()
-        let dispatchedAt = clock.now
-        try await Task.sleep(for: .milliseconds(75))
-        #expect(await MainActor.run { clipboard.current?.utiIdentifier } == "public.data")
-        #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
-
-        let contenderFD = try self.openPasteTransactionLock()
-        defer { close(contenderFD) }
-        #expect(flock(contenderFD, LOCK_EX | LOCK_NB) != 0)
-
         let response = try await command.value
+        #expect(command.isCancelled == cancelAfterDelivery)
         #expect(response.isError)
         #expect(self.responseText(response).contains("may have pasted; do not retry"))
         #expect(self.responseText(response).contains("indeterminate"))
-        #expect(await MainActor.run { automation.targetedHotkeyCalls.first?.expectedProcessIdentity } ==
+        #expect(response.meta?.objectValue?["retry_safe"] == .bool(false))
+        #expect(response.meta?.objectValue?["requires_fresh_observation"] == .bool(true))
+        #expect(automation.targetedHotkeyCalls.first?.expectedProcessIdentity ==
             AutomationTestFixtures.processIdentity(processIdentifier: 333, processStartIdentity: 33))
-        #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
-        #expect(clock.now - dispatchedAt >= .milliseconds(150))
-        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
-        #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
+        #expect(automation.lastHotkeyKeys == nil)
+        #expect(restoreObservations == 1)
+        #expect(try #require(restoringAt) - #require(dispatchedAt) >= .milliseconds(250))
+        #expect(clipboard.current?.textPreview == "prior")
+        #expect(clipboard.restoreCallCount == 1)
         #expect(flock(contenderFD, LOCK_EX | LOCK_NB) == 0)
         #expect(flock(contenderFD, LOCK_UN) == 0)
     }
@@ -979,32 +962,46 @@ extension PasteToolTransactionGateTests {
     }
 
     @Test
+    @MainActor
     func `Cancelled foreground current clipboard paste settles then reports indeterminate`() async throws {
-        let delivered = PasteDeliveryLatch()
-        let automation = await MainActor.run {
-            SignalingAutomationService(accessibilityGranted: true, delivered: delivered)
+        let clock = ContinuousClock()
+        var dispatchedAt: ContinuousClock.Instant?
+        var completedAt: ContinuousClock.Instant?
+        let automation = OutcomePasteAutomationService(hotkeyResponse: .outcome(nil))
+        automation.afterHotkey = {
+            dispatchedAt = clock.now
+            withUnsafeCurrentTask {
+                #expect($0 != nil)
+                $0?.cancel()
+            }
         }
-        let clipboard = await MainActor.run { TransactionGateClipboardService() }
+        defer { automation.afterHotkey = nil }
+        let clipboard = TransactionGateClipboardService()
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             clipboard: clipboard,
             snapshotOwner: Self.uiSnapshots.owner)
         let command = Task { @MainActor in
-            try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+            let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
                 "foreground": true,
                 "restore_delay_ms": 250,
             ]))
+            completedAt = clock.now
+            return response
         }
-
-        await delivered.wait()
-        command.cancel()
         let response = try await command.value
 
+        #expect(command.isCancelled)
         #expect(response.isError)
         #expect(self.responseText(response).contains("indeterminate"))
         #expect(self.responseText(response).contains("may have pasted; do not retry"))
-        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
-        #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
+        #expect(response.meta?.objectValue?["retry_safe"] == .bool(false))
+        #expect(response.meta?.objectValue?["requires_fresh_observation"] == .bool(true))
+        #expect(try #require(completedAt) - #require(dispatchedAt) >= .milliseconds(250))
+        #expect(automation.lastHotkeyKeys == "cmd,v")
+        #expect(clipboard.current?.textPreview == "prior")
+        #expect(clipboard.setCallCount == 0)
+        #expect(clipboard.restoreCallCount == 0)
     }
 
     @Test

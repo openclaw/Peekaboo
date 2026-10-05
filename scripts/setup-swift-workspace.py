@@ -209,7 +209,9 @@ def main():
             configure("check")
             if commit:
                 source_command("peekaboo_verify_source_commit", commit)
-            return result.returncode
+            # Python uses negative signal numbers; an executable wrapper must expose
+            # the shell convention rather than letting sys.exit wrap -SIGTERM to 241.
+            return 128 - result.returncode if result.returncode < 0 else result.returncode
         if commit:
             source_command("peekaboo_verify_source_commit", commit)
         return 0

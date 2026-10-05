@@ -8,7 +8,7 @@ struct WindowTargetCreationTests {
     @Test
     @MainActor
     func `window list preflight accepts matching normalized PID aliases`() throws {
-        for alias in ["PID:12345", "pid:12345", "  PiD:12345  "] {
+        for alias in ["PID:12345", "pid:12345", "  PiD:12345  ", "PID:00012345"] {
             var command = WindowCommand.WindowListSubcommand()
             command.app = alias
             command.pid = 12345
@@ -19,10 +19,23 @@ struct WindowTargetCreationTests {
     @Test
     @MainActor
     func `window list preflight rejects mismatched and invalid PID aliases`() {
-        for alias in ["PID:54321", "PID:-1", "PID:0", "PID:abc", "Fixture"] {
+        for alias in ["PID:54321", "PID:-1", "PID:0", "PID:abc", "PID:", "PID:2147483648", "Fixture"] {
             var command = WindowCommand.WindowListSubcommand()
             command.app = alias
             command.pid = 12345
+            #expect(throws: (any Error).self) { try command.validateBeforeRuntime() }
+        }
+    }
+
+    @Test(arguments: [Int32(0), -1, .max])
+    @MainActor
+    func `window list keeps PID range checks with matching aliases`(pid: Int32) throws {
+        var command = WindowCommand.WindowListSubcommand()
+        command.app = "pid:\(pid)"
+        command.pid = pid
+        if pid > 0 {
+            try command.validateBeforeRuntime()
+        } else {
             #expect(throws: (any Error).self) { try command.validateBeforeRuntime() }
         }
     }
