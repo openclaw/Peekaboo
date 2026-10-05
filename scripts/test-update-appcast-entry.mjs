@@ -62,3 +62,22 @@ assert.throws(() => validateAppcast(updated.replaceAll(entry.releaseUrl,
   'https://example.invalid/wrong-release'), entry), /release link|release notes link/);
 
 console.log("test-update-appcast-entry: ok");
+
+// Validate with an XML consumer: query strings must survive RSS serialization.
+const queryEntry = {
+  ...entry,
+  releaseUrl: `${entry.releaseUrl}?channel=stable&source=app`,
+  assetUrl: `${entry.assetUrl}?channel=stable&source=app`,
+};
+const queryXml = updateAppcastEntry(original, queryEntry);
+assert.match(queryXml, /channel=stable&amp;source=app/);
+assert.doesNotThrow(() => validateAppcast(queryXml, queryEntry));
+const { spawnSync } = await import('node:child_process');
+const parsed = spawnSync('python3', ['-c', `
+import sys, xml.etree.ElementTree as ET
+item = ET.fromstring(sys.stdin.read()).find('channel/item')
+assert item.find('link').text == sys.argv[1]
+assert item.find('enclosure').attrib['url'] == sys.argv[2]
+`, queryEntry.releaseUrl, queryEntry.assetUrl], { input: queryXml, encoding: 'utf8' });
+assert.equal(parsed.status, 0, parsed.stderr);
+assert.equal(updateAppcastEntry(queryXml, queryEntry), queryXml);
