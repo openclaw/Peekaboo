@@ -48,12 +48,16 @@ jobs:
       - name: Docs lint
         run: |
           node scripts/docs-lint.mjs
+          pnpm run test:docs
           node --test tests/docs-site-toc.test.mjs
           pnpm run test:guidance
           node --test tests/ambient-state-test-policy.test.mjs
 
       - name: Verify Homebrew release handoff
         run: node --test tests/homebrew-release-assets.test.mjs
+
+      - name: Verify release build-number contracts
+        run: bash scripts/test-release-version.sh
 
       - name: Verify log helper contracts
         run: pnpm run test:log-scripts
@@ -69,6 +73,9 @@ jobs:
             fi
           done
           /usr/bin/xcodebuild -version
+
+      - name: Verify Swift runtime-library contracts
+        run: bash scripts/test-swift-runtime-libraries.sh
 
       - name: Compute SwiftPM cache key (PeekabooCore)
         id: cache-key-core

@@ -275,11 +275,11 @@ public struct InteractionTargetSelector: Equatable, Sendable {
     }
 
     private static func looksLikePIDIdentifier(_ value: String) -> Bool {
-        value.hasPrefix("PID:")
+        self.normalized(value)?.uppercased().hasPrefix("PID:") == true
     }
 
     private static func pid(fromApplicationIdentifier value: String) -> Int32? {
-        guard value.hasPrefix("PID:") else { return nil }
+        guard let value = normalized(value), value.uppercased().hasPrefix("PID:") else { return nil }
         return Int32(value.dropFirst("PID:".count))
     }
 }

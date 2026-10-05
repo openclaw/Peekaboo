@@ -160,30 +160,42 @@ assert.throws(() => validateArchiveEntries([
 
 const testDirectory = await mkdtemp(path.join(os.tmpdir(), 'peekaboo-terminal-archive-policy.'));
 try {
-  const oversizedDescriptorZip = path.join(testDirectory, 'oversized-descriptor.zip');
-  await writeFile(oversizedDescriptorZip, zipFixture([
-    { path: 'Fixture.app/', type: 'directory', flags: 0x0808, descriptor: Buffer.alloc(16 * 1024 * 1024) }
-  ]));
-  const oversizedAllocations = [];
-  const originalAlloc = Buffer.alloc;
-  Buffer.alloc = (size, ...arguments_) => {
-    if (size > 1024 * 1024) oversizedAllocations.push(size);
-    return originalAlloc(size, ...arguments_);
-  };
-  try {
-    await assert.rejects(validateZipArchive(oversizedDescriptorZip, 'Fixture.app'), /invalid ZIP data descriptor/);
-  } finally {
-    Buffer.alloc = originalAlloc;
+  for (const gap of [25, 16 * 1024 * 1024]) {
+    const oversizedDescriptorZip = path.join(testDirectory, `oversized-descriptor-${gap}.zip`);
+    await writeFile(oversizedDescriptorZip, zipFixture([
+      { path: 'Fixture.app/', type: 'directory', flags: 0x0808, descriptor: Buffer.alloc(gap) }
+    ]));
+    const allocations = [];
+    const originalAlloc = Buffer.alloc;
+    Buffer.alloc = (size, ...arguments_) => {
+      allocations.push(size);
+      return originalAlloc(size, ...arguments_);
+    };
+    try {
+      await assert.rejects(validateZipArchive(oversizedDescriptorZip, 'Fixture.app'), /invalid ZIP data descriptor/);
+    } finally {
+      Buffer.alloc = originalAlloc;
+    }
+    assert.ok(!allocations.includes(gap), `invalid ${gap}-byte descriptor must be refused before allocation`);
+    assert.ok(allocations.every(size => size <= 1024 * 1024), 'no unbounded descriptor allocation');
   }
-  assert.deepEqual(oversizedAllocations, [], 'invalid descriptor must be refused before allocating its entire gap');
   for (const signed of [false, true]) {
+    const data = Buffer.from('nonempty descriptor payload');
+    const cursor = signed ? 4 : 0;
     const descriptor = Buffer.alloc(signed ? 16 : 12);
     if (signed) descriptor.writeUInt32LE(0x08074b50, 0);
+    descriptor.writeUInt32LE(crc32(data), cursor);
+    descriptor.writeUInt32LE(deflateRawSync(data).length, cursor + 4);
+    descriptor.writeUInt32LE(data.length, cursor + 8);
     const validDescriptorZip = path.join(testDirectory, `descriptor-${signed}.zip`);
     await writeFile(validDescriptorZip, zipFixture([
-      { path: 'Fixture.app/', type: 'directory', flags: 0x0808, descriptor }
+      { path: 'Fixture.app/', type: 'directory' },
+      { path: 'Fixture.app/value', type: 'file', data, flags: 0x0808, descriptor }
     ]));
-    assert.equal((await validateZipArchive(validDescriptorZip, 'Fixture.app')).length, 1);
+    const records = await validateZipArchive(validDescriptorZip, 'Fixture.app');
+    assert.equal(records.length, 2);
+    assert.equal(records[1].path, 'Fixture.app/value');
+    assert.equal(records[1].type, 'file');
   }
   const safeZip = path.join(testDirectory, 'safe.zip');
   await writeFile(safeZip, zipFixture([
