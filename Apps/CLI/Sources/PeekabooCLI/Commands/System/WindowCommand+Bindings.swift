@@ -89,6 +89,21 @@ extension WindowCommand.WindowListSubcommand: AsyncRuntimeCommand {}
 
 extension WindowCommand.WindowListSubcommand: PreRuntimeValidatingCommand {
     func validateBeforeRuntime() throws {
+        if self.app != nil, self.pid != nil {
+            let exactPID: Int32?
+            do {
+                exactPID = try self.resolveExplicitPIDObservationTarget()
+            } catch {
+                throw ValidationError(error.localizedDescription)
+            }
+            if let exactPID {
+                // Listing is read-only and identical PID aliases name one owner. Mutation commands
+                // continue to reject the two owner channels through their stricter shared gate.
+                let selector = InteractionTargetSelector(processIdentifier: Int(exactPID))
+                _ = try validatedMutationSelector(selector, allowMissingTarget: true)
+                return
+            }
+        }
         let selector = InteractionTargetSelector(
             applicationIdentifier: self.app,
             processIdentifier: self.pid.map(Int.init)

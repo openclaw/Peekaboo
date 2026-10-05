@@ -55,6 +55,8 @@ login-keychain or Dropbox fallbacks, and the private locator is never tracked in
 
 ### Release helper pin and relocated publication checkout
 
+The build-number helper accepts numeric `major.minor.patch` versions, optionally followed by case-insensitive `alpha`/`a`, `beta`/`b`, or `rc` prereleases. Unnumbered prereleases mean 1; `.2`, `-2`, and compact `2` suffixes remain supported. Prerelease numbers must be 1–29, minor/patch components 0–99, and numeric components cannot have leading zeroes. Extra identifiers, build metadata, empty suffixes, and overflowing values fail without a build-number result. The conservative major limit is 9223372036853, leaving room for every supported minor, patch, and suffix; it is not the largest individually representable version. Stable build-number mappings are unchanged.
+
 Credentialed release steps run through the shared `agent-scripts` `release-mac-app` helper, pinned by commit plus
 executable and library SHA-256 (`EXPECTED_RELEASE_HELPER_*` in `scripts/build-terminal-artifacts.sh`). The helper is
 found only at `../agent-scripts` beside the publication checkout, then at `~/Projects/agent-scripts`; it must be a
@@ -255,6 +257,7 @@ The build and final manifests also record and revalidate the canonicalized `DEVE
 `xcodebuild -version`, macOS SDK version, and `swiftc --version`. The 4.3.0 publication toolchain is Xcode 27; retain its
 exact beta/build identity in proof rather than conflating it with hosted Xcode 26.x compatibility results. A toolchain
 receipt does not replace successful universal builds, tests, runtime-library validation, signing, or notarization.
+Controller source receipts require regular source files and a regular catalog. Worktree mode rejects symbolic links in either the file or its ancestors, as well as directories and special files. Frozen-commit mode reads regular Git blobs (including executable files), never a symlink's target-text blob; later worktree changes do not alter the frozen receipt. These checks do not claim an atomic snapshot of a concurrently changing worktree.
 Runtime-library verification, including reused binaries, audits strong `libswift*` imports against the oldest
 eligible installed macOS SDK older than 27 and prints the SDK used; see
 [Swift runtime compatibility](building.md#swift-runtime-compatibility).
@@ -297,11 +300,21 @@ Load release credentials through the maintainer 1Password workflow and satisfy t
   --proof-file /path/to/reviewed-release-proof.md
 ```
 
+ZIP validation requires each DEFLATE stream to consume its entire declared compressed range before extraction.
+Trailing bytes or a second compressed stream are refused even when the first payload's inflated size and CRC match.
+
 App ZIP creation uses `scripts/create-app-zip.sh` for both the notary submission and the final Sparkle archive. It omits
 resource forks, extended attributes, and quarantine metadata instead of emitting `__MACOSX`/AppleDouble entries, without
 modifying the source app's file bytes, modes, symlinks, signatures, or stapled ticket. The terminal artifact packager uses
 the same producer while retaining its stricter source-xattr guard and exact-tree roundtrip check. Final release ZIP
 validation still requires the exact app root and verifies the extracted app's signatures and notarization ticket.
+Before extraction, ZIP data-descriptor gaps are bounded to the format's 24-byte maximum before allocation or reading;
+the existing descriptor checksum and size checks still apply.
+Artifact-tree and archive validation resolve composed symlink components before accepting containment. Traversal is
+limited to Darwin's 32 links including the original link; contained framework chains and dangling targets remain valid.
+Archives continue to reject absolute targets, even though native tree receipts can represent contained absolute links.
+Typed archive inventories also reject entries beneath a known regular file or symlink in either entry order.
+Name-only entries retain path-only validation because they have no file-type evidence.
 
 The script runs release preparation, builds the universal CLI and npm package, signs/notarizes/staples the macOS app
 and branded DMG, generates checksums and Sparkle metadata, and uploads a draft GitHub release. The complete preparation
@@ -337,6 +350,7 @@ pin, and frozen source commit. It verifies the existing draft/tag/assets, skips 
 tarball, repairs an interrupted expected-asset upload, and idempotently completes registry verification and the final
 draft body. A full `appcast.xml` snapshot is checksummed with the receipt so resume cannot bless unrelated feed drift.
 If npm accepted an upload but still returns E404, resume stops on its retained attempt marker; wait for propagation.
+An absent-version probe requires an explicit npm `E404` error code. Authentication/server failures, contradictory codes, or `E404`/`404 Not Found` appearing only in a URL or diagnostic are unknown publication state and stop the driver; they do not authorize a new upload.
 Use `--retry-npm-publish` only after independently confirming the version truly was not accepted.
 Publication requires `NPM_TOKEN`; the driver writes an owner-only temporary npm config that pins both the default and
 `@steipete` registries to npmjs, passes the registry explicitly to every probe/publish, and pins every GitHub mutation
