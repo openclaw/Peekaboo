@@ -4,6 +4,28 @@ import Testing
 @testable import PeekabooCLI
 
 struct TimeoutCancellationTests {
+    @Test(arguments: [(0.2, "200 milliseconds"), (1.5, "1.5 seconds")])
+    func `command deadline retains fractional duration in caught errors`(
+        seconds: Double, expected: String) async throws
+    {
+        let error = try #require(await #expect(throws: PeekabooError.self) {
+            try await withCommandTimeout(seconds: seconds, operationName: "Synthetic wait") {
+                try await Task.sleep(for: .seconds(30))
+            }
+        })
+
+        #expect(error.localizedDescription ==
+            "Operation timed out: Operation 'Synthetic wait' timed out after \(expected)")
+        #expect(TimeoutErrorHandlingCommand().mapErrorToCode(error) == .TIMEOUT)
+        #expect(error.context["reason"] == "Operation 'Synthetic wait' timed out after \(expected)")
+    }
+
+    @Test
+    func `completed command retains its result with a fractional deadline`() async throws {
+        let result = try await withCommandTimeout(seconds: 0.2, operationName: "Synthetic immediate result") { 42 }
+        #expect(result == 42)
+    }
+
     @Test
     func `generic timeout returns caller cancellation promptly`() async throws {
         let gate = TimeoutOperationGate()
@@ -76,6 +98,10 @@ struct TimeoutCancellationTests {
         #expect(startedAt.duration(to: .now) < .seconds(1))
         await gate.finish(with: 1)
     }
+}
+
+private struct TimeoutErrorHandlingCommand: ErrorHandlingCommand {
+    let jsonOutput = false
 }
 
 private actor TimeoutOperationGate {

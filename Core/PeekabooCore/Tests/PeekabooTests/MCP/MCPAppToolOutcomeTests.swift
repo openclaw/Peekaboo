@@ -824,7 +824,7 @@ private final class FalsePayloadQuitAllApplicationService: StubApplicationServic
 }
 
 @MainActor
-private final class ScriptedQuitAllApplicationService: StubApplicationService {
+final class ScriptedQuitAllApplicationService: StubApplicationService {
     enum Attempt {
         case canonicalFailure(DesktopActionFailure)
         case receiptlessFailure
@@ -832,6 +832,7 @@ private final class ScriptedQuitAllApplicationService: StubApplicationService {
         case inFlightCancellation
         case success(DesktopActionOutcome?)
         case successAndCancel(DesktopActionOutcome?)
+        case operation(@MainActor (ApplicationQuitRequest) async throws -> DesktopActionResult<Bool>)
     }
 
     private let targets = [
@@ -867,7 +868,7 @@ private final class ScriptedQuitAllApplicationService: StubApplicationService {
     }
 
     override func quitApplicationActionResult(
-        request _: ApplicationQuitRequest) async throws -> DesktopActionResult<Bool>
+        request: ApplicationQuitRequest) async throws -> DesktopActionResult<Bool>
     {
         self.attemptCount += 1
         guard !self.attempts.isEmpty else {
@@ -889,6 +890,8 @@ private final class ScriptedQuitAllApplicationService: StubApplicationService {
         case let .successAndCancel(outcome):
             withUnsafeCurrentTask { $0?.cancel() }
             return DesktopActionResult(payload: true, outcome: outcome)
+        case let .operation(operation):
+            return try await operation(request)
         }
     }
 }

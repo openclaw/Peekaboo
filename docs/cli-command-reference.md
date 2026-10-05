@@ -67,6 +67,8 @@ This source-tree reference covers all 34 root commands in the upcoming v4 regist
 
 Durations accept bare milliseconds, `ms`, or `s`: `500`, `500ms`, `2s`, and `1.5s` are equivalent forms. Coordinate input is `--at x,y`; with an app/window target it is target-relative unless `--global` is present. Modifier lists use comma-separated values such as `cmd,shift`.
 
+Command-deadline errors retain fractional durations: `200ms` is reported as `200 milliseconds`, and `1.5s` as `1.5 seconds`. Positive subsecond durations are rounded to the nearest millisecond, with a minimum displayed value of one millisecond. This formatting does not change the actual deadline or `TIMEOUT` error code.
+
 Interaction commands share foreground/focus controls where relevant. Background delivery is the default when Peekaboo can resolve an exact process target; physical pointer gestures and intentional global input require `--foreground`.
 
 ## JSON result envelope
