@@ -17,9 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve accepted dispatch evidence and retry-unsafe status after unchanged readback instead of reporting a no-dispatch no-op or a safe retry; positively observed changes still confirm the action. Thanks @rudycelekli! #942.
 - Share native and Bridge literal-replacement eligibility without changing confirmation policy, and clarify typing-unit versus native-event counts.
 - Clarify `type --clear` help and generated learning guidance to distinguish eligible native Accessibility clearing from keyboard routes, without changing delivery, targeting, or success rules.
+- Preserve fractional timeout durations in command and dialog diagnostics instead of truncating them to whole seconds, without changing deadlines or error codes. Thanks @rudycelekli! #946.
 - Strip terminal control scalars from agent/task titles before both VibeTunnel and ANSI output, preserving Unicode joiners and preventing embedded title text from injecting terminal commands. Thanks @rudycelekli! #964.
 - Escape update-feed URLs and metadata as XML while preserving decoded values and literal replacement characters, including multi-parameter URLs. Thanks @rudycelekli! #935.
+- Validate Swift compatibility-library loader paths and required library architectures per executable slice, so another architecture cannot hide a missing path. Thanks @rudycelekli! #937.
 - Correct the visualizer log helper's receiver subsystem and include info/debug output while preserving explicit predicates, without changing logging settings or rendering behavior.
+- Preserve failed log-query exit statuses through tail-limited terminal and file output instead of reporting success from the downstream pipeline. Thanks @rudycelekli! #959.
 - Bound npm MCP wrapper shutdown: cancel pending restarts, allow five seconds for the owned server to exit after SIGTERM, then terminate that same child if necessary. Thanks @rudycelekli! #947.
 
 ## 4.8.0 - 2026-10-03

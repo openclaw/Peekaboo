@@ -13,7 +13,9 @@
 - Preserve accepted dispatch evidence and retry-unsafe status after unchanged readback instead of reporting a no-dispatch no-op or a safe retry; positively observed changes still confirm the action. Thanks @rudycelekli! #942.
 - Share literal-replacement eligibility between native typing and Bridge validation without changing confirmation policy, and clarify that typing counts represent keystrokes and accepted typing units rather than raw event or Accessibility setter calls.
 - Clarify `type --clear` help and generated learning guidance to distinguish eligible native Accessibility clearing from keyboard routes, without changing delivery, targeting, or success rules.
+- Preserve fractional timeout durations in command and dialog diagnostics instead of truncating them to whole seconds, without changing deadlines or error codes. Thanks @rudycelekli! #946.
 - Escape update-feed URLs and metadata as XML while preserving decoded values and literal replacement characters, including multi-parameter URLs. Thanks @rudycelekli! #935.
+- Validate Swift compatibility-library loader paths and required library architectures per executable slice, so another architecture cannot hide a missing path. Thanks @rudycelekli! #937.
 - Distinguish missing blank title-bar space from changed retained geometry in background paste preparation diagnostics, without relaxing clearance or input guards.
 - Update AXorcist to 0.2.1 to unwrap live Accessibility values and clear inherited typing and final hotkey modifier flags. Thanks @jandubois! #797.
 - Keep CLI and MCP action summaries explicit about unverified or unreported receiver effects, and report paste clipboard cleanup separately without changing canonical outcomes, JSON, retry rules, or exit status.
@@ -21,6 +23,7 @@
 - Preserve apostrophes and escaped characters in JSON documentation reading hints, retaining the legacy single-quoted fallback and malformed-input diagnostics. Thanks @rudycelekli! #941.
 - Explain evaluated Bridge host requirements when `see --fresh` cannot obtain authenticated producer-bound snapshots, instead of incorrectly claiming fresh AX is unsupported or a binary update is sufficient; preserve host selection, trust, and error codes.
 - Correct the visualizer log helper's receiver subsystem and include info/debug output while preserving explicit predicates, without changing logging settings or rendering behavior.
+- Preserve failed log-query exit statuses through tail-limited terminal and file output instead of reporting success from the downstream pipeline. Thanks @rudycelekli! #959.
 - Bound npm MCP wrapper shutdown: cancel pending restarts, allow five seconds for the owned server to exit after SIGTERM, then terminate that same child if necessary. Thanks @rudycelekli! #947.
 - Refuse companion-app deployment when source or staged directory permissions prevent moving or cleaning up the bundle, before stopping the running GUI, while preserving read-only files and leaving artifact permissions unchanged.
 - Stop inferring a captured window's main state from selection, list position, or visibility; retain the existing `false`/unavailable convention and preserve already-supplied main-state metadata without extra Accessibility reads.
