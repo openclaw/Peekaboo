@@ -305,6 +305,8 @@ resource forks, extended attributes, and quarantine metadata instead of emitting
 modifying the source app's file bytes, modes, symlinks, signatures, or stapled ticket. The terminal artifact packager uses
 the same producer while retaining its stricter source-xattr guard and exact-tree roundtrip check. Final release ZIP
 validation still requires the exact app root and verifies the extracted app's signatures and notarization ticket.
+Before extraction, ZIP data-descriptor gaps are bounded to the format's 24-byte maximum before allocation or reading;
+the existing descriptor checksum and size checks still apply.
 Artifact-tree and archive validation resolve composed symlink components before accepting containment. Traversal is
 limited to Darwin's 32 links including the original link; contained framework chains and dangling targets remain valid.
 Archives continue to reject absolute targets, even though native tree receipts can represent contained absolute links.
