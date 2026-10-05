@@ -176,6 +176,15 @@ public enum TypeAction: Sendable, Codable {
         }
     }
 
+    /// Shared action-shape eligibility; confirmation still requires exact receiver and value evidence.
+    public static func hasDeterministicReplacementValue(_ actions: [Self]) -> Bool {
+        guard actions.first?.isClear == true else { return false }
+        return actions.dropFirst().allSatisfy { action in
+            guard case let .text(text) = action else { return false }
+            return text.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) }
+        }
+    }
+
     private enum CodingKeys: String, CodingKey { case kind, text, key }
 
     public init(from decoder: any Decoder) throws {

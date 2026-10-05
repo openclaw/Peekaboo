@@ -254,7 +254,7 @@ enum PeekabooBridgeOperationResultSemantics {
             self.noChangeCapableAccessibilityKeys = noChangeCapableAccessibilityKeys
             self.flexibleClearCount = flexibleClearCount
             self.additionalAccessibilityUnits = additionalAccessibilityUnits
-            self.allowsConfirmedChange = allowsConfirmedChange && Self.isDeterministicClearLiteral(actions)
+            self.allowsConfirmedChange = allowsConfirmedChange && TypeAction.hasDeterministicReplacementValue(actions)
             precondition(additionalAccessibilityUnits >= 0)
         }
 
@@ -379,14 +379,6 @@ enum PeekabooBridgeOperationResultSemantics {
                 (false, true)
             default:
                 nil
-            }
-        }
-
-        private static func isDeterministicClearLiteral(_ actions: [TypeAction]) -> Bool {
-            guard let first = actions.first, case .clear = first else { return false }
-            return actions.dropFirst().allSatisfy { action in
-                guard case let .text(text) = action else { return false }
-                return text.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) }
             }
         }
     }

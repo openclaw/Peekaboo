@@ -47,16 +47,14 @@ struct ExactLiteralTypingEffectConfirmation {
     {
         guard let focusedElement = target.focusedElement,
               focusedElement.role != "AXSecureTextField",
-              let firstAction = actions.first,
-              case .clear = firstAction
+              TypeAction.hasDeterministicReplacementValue(actions)
         else { return nil }
 
         var expectedValue = ""
         for action in actions.dropFirst() {
-            guard case let .text(text) = action,
-                  text.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) })
-            else { return nil }
-            expectedValue += text
+            if case let .text(text) = action {
+                expectedValue += text
+            }
         }
         return Self(
             focusedElement: focusedElement,
