@@ -273,7 +273,7 @@ function titleize(input) {
   return input.replaceAll("-", " ").replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
-function markdownToHtml(markdown, currentRel) {
+function markdownToHtml(markdown, currentRel, headingIDs = new Set()) {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   const html = [];
   let paragraph = [];
@@ -293,7 +293,7 @@ function markdownToHtml(markdown, currentRel) {
   };
   const flushBlockquote = () => {
     if (!blockquote.length) return;
-    const inner = markdownToHtml(blockquote.join("\n"), currentRel);
+    const inner = markdownToHtml(blockquote.join("\n"), currentRel, headingIDs);
     html.push(`<blockquote>${inner}</blockquote>`);
     blockquote = [];
   };
@@ -380,7 +380,10 @@ function markdownToHtml(markdown, currentRel) {
       closeList();
       const level = heading[1].length;
       const text = heading[2].trim();
-      const id = slug(text);
+      const baseID = slug(text) || "section";
+      let id = baseID;
+      for (let suffix = 1; headingIDs.has(id); suffix += 1) id = `${baseID}-${suffix}`;
+      headingIDs.add(id);
       const inner = inline(text, currentRel);
       if (level === 1) {
         html.push(`<h1 id="${id}">${inner}</h1>`);
