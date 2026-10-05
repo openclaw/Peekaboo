@@ -50,11 +50,20 @@ public enum ToolResultExtractor {
         if let code = self.int("exitCode", from: result) {
             return code
         }
-        let supplied = result["exitCode"] != nil ||
-            (result["data"] as? [String: Any])?["exitCode"] != nil ||
-            (result["metadata"] as? [String: Any])?["exitCode"] != nil
+        if result["exitCode"] != nil || (result["data"] as? [String: Any])?["exitCode"] != nil {
+            return nil
+        }
+        if let value = (result["metadata"] as? [String: Any])?["exitCode"] {
+            if let code = value as? Int {
+                return code
+            }
+            if let code = value as? Double {
+                return self.integer(code)
+            }
+            return nil
+        }
         // Legacy producers omit the field; only a supplied unusable value is unknown.
-        return supplied ? nil : 0
+        return 0
     }
 
     /// Extract an integer value from the result

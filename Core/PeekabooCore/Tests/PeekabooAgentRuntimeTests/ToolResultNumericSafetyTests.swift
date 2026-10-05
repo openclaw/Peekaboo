@@ -138,4 +138,40 @@ struct ToolResultNumericSafetyTests {
         #expect(!ToolResultExtractor.isSuccess(["success": false, "exitCode": 0]))
         #expect(!ToolResultExtractor.isSuccess(["error": "owned failure", "exitCode": 0]))
     }
+
+    @Test(arguments: [
+        (#"{"metadata":{"exitCode":0}}"#, 0),
+        (#"{"metadata":{"exitCode":1}}"#, 1),
+        (#"{"metadata":{"exitCode":2.7}}"#, 2),
+    ])
+    func `numeric metadata exit codes remain available to shell consumers`(_ json: String, expected: Int) throws {
+        let result = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        let formatter = SystemToolFormatter(toolType: .shell)
+        #expect(ToolResultExtractor.shellExitCode(from: result) == expected)
+        #expect(ToolResultExtractor.isSuccess(result) == (expected == 0))
+        let summary = formatter.formatResultSummary(result: result)
+        #expect(summary == (expected == 0 ? "→ Success" : "→ Failed (exit code: \(expected))"))
+    }
+
+    @Test
+    func `metadata fallback cannot replace a supplied invalid higher priority exit code`() {
+        let invalid: [[String: Any]] = [
+            ["exitCode": Double.infinity], ["exitCode": ["value": Double.infinity]],
+            ["data": ["exitCode": Double.infinity]],
+        ]
+        for var result in invalid {
+            result["metadata"] = ["exitCode": 0]
+            #expect(ToolResultExtractor.shellExitCode(from: result) == nil)
+        }
+        #expect(ToolResultExtractor.shellExitCode(from: ["metadata": ["exitCode": Double.infinity]]) == nil)
+        #expect(ToolResultExtractor.shellExitCode(from: ["metadata": ["exitCode": ["value": 0]]]) == nil)
+        #expect(ToolResultExtractor.int("count", from: ["metadata": ["count": 4]]) == nil)
+    }
+
+    @Test(arguments: ["\n", "\r\n"])
+    func `unavailable shell exit status does not label empty lines as error output`(_ output: String) {
+        let formatter = SystemToolFormatter(toolType: .shell)
+        #expect(formatter.formatResultSummary(result: ["exitCode": Double.infinity, "output": output]) ==
+            "→ Exit status unavailable")
+    }
 }

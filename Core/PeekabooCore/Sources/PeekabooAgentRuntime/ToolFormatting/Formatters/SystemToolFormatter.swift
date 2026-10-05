@@ -170,7 +170,7 @@ public class SystemToolFormatter: BaseToolFormatter {
                 if lines.count > 1 {
                     parts.append("(\(lines.count) lines)")
                 }
-            } else if exitCode != 0 {
+            } else if let exitCode, exitCode != 0, !lines.isEmpty {
                 // Show error output for failed commands
                 let errorPreview = lines.prefix(2).joined(separator: " | ")
                 let truncated = errorPreview.count > 80 ? String(errorPreview.prefix(80)) + "..." : errorPreview
