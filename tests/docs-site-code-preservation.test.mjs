@@ -20,8 +20,13 @@ function renderCode(t, language, source) {
   const html = readFileSync(path.join(fixtureRoot, '_site', 'index.html'), 'utf8');
   const code = html.match(/<pre><code[^>]*>([\s\S]*?)<\/code><\/pre>/)?.[1];
   assert.ok(code !== undefined, 'missing rendered code block');
-  const copyable = code.replace(/<\/?span\b[^>]*>/g, '')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+  // Remove only exact span wrappers that this renderer owns. Literal source
+  // markup remains escaped until these wrappers have been removed.
+  let text = code.replaceAll('</span>', '');
+  for (const cls of ['hl-s', 'hl-c', 'hl-p', 'hl-f', 'hl-cmd', 'hl-n', 'hl-k', 'hl-m', 'hl-t']) {
+    text = text.replaceAll(`<span class="${cls}">`, '');
+  }
+  const copyable = text.replace(/&quot;/g, '"').replace(/&#39;/g, "'")
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
   assert.equal(copyable, source);
   return code;
@@ -45,6 +50,7 @@ test('source text and existing highlighting survive ordered pattern passes', (t)
   assert.match(shell, /class="hl-s">&quot;Finder&quot;/);
   assert.match(shell, /class="hl-n">42/);
   assert.match(shell, /class="hl-c"> # npm &lt;example&gt;/);
+  renderCode(t, 'bash', 'echo "<span class=\'hl-s\'>literal & text</span>"');
   renderCode(t, 'js', 'const value = "npm 12"; // git --flag');
   renderCode(t, 'swift', 'let value = "quoted <text>" // 42');
   renderCode(t, 'json', '{"name":"<example>","count":42,"enabled":true}');
