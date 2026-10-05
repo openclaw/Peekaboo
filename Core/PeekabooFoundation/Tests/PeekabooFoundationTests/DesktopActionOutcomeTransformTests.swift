@@ -20,9 +20,12 @@ struct DesktopActionOutcomeTransformTests {
         let dispatched = DesktopActionOutcome.dispatchedUnverified(
             route: .bridge, delivery: delivery, evidence: .deliveryAccepted, unitCount: .one)
         let observed = dispatched.confirmingDispatchedOutcome(observedChange: false)
-        #expect(observed == .suspectedNoop(route: .bridge, delivery: delivery, unitCount: .one))
+        #expect(observed == dispatched)
         #expect(observed.dispatchState.mutationDispatched)
         #expect(observed.dispatchState.unitCount == .one)
+        let projection = DesktopActionOutcome.Projection(outcome: observed)
+        #expect(!projection.retrySafe)
+        #expect(projection.requiresFreshObservation)
 
         let running = DesktopActionOutcome.dispatchedUnverified(
             route: .bridge, delivery: delivery, evidence: .operationStillRunning, unitCount: .one)
@@ -71,12 +74,7 @@ struct DesktopActionOutcomeTransformTests {
                 delivery: self.originalDelivery,
                 unitCount: unitCount))
             let unchangedReadback = outcome.confirmingDispatchedOutcome(observedChange: false)
-            if evidence == .operationStillRunning {
-                #expect(unchangedReadback == outcome)
-            } else {
-                #expect(unchangedReadback == .suspectedNoop(
-                    route: .bridge, delivery: self.originalDelivery, unitCount: unitCount))
-            }
+            #expect(try self.encoded(unchangedReadback) == self.encoded(outcome))
         }
     }
 
