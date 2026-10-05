@@ -15,6 +15,23 @@ struct DesktopActionOutcomeTransformTests {
         mode: .foreground)
 
     @Test
+    func `unchanged window readback preserves prior dispatch accounting`() {
+        let delivery = DesktopActionOutcome.Delivery(mechanism: .accessibilityValue, mode: .background)
+        let dispatched = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge, delivery: delivery, evidence: .deliveryAccepted, unitCount: .one)
+        let observed = dispatched.confirmingDispatchedOutcome(observedChange: false)
+        #expect(observed == .suspectedNoop(route: .bridge, delivery: delivery, unitCount: .one))
+        #expect(observed.dispatchState.mutationDispatched)
+        #expect(observed.dispatchState.unitCount == .one)
+
+        let running = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge, delivery: delivery, evidence: .operationStillRunning, unitCount: .one)
+        #expect(running.confirmingDispatchedOutcome(observedChange: false) == running)
+        #expect(DesktopActionOutcome.confirmedNoChange(route: .bridge)
+            .confirmingDispatchedOutcome(observedChange: false) == .confirmedNoChange(route: .bridge))
+    }
+
+    @Test
     func `dispatch confirmation transforms only unverified dispatches`() throws {
         let one = try self.unitCount(1)
         let unchanged: [DesktopActionOutcome] = [
@@ -53,7 +70,13 @@ struct DesktopActionOutcomeTransformTests {
                 route: .bridge,
                 delivery: self.originalDelivery,
                 unitCount: unitCount))
-            #expect(outcome.confirmingDispatchedOutcome(observedChange: false) == .confirmedNoChange(route: .bridge))
+            let unchangedReadback = outcome.confirmingDispatchedOutcome(observedChange: false)
+            if evidence == .operationStillRunning {
+                #expect(unchangedReadback == outcome)
+            } else {
+                #expect(unchangedReadback == .suspectedNoop(
+                    route: .bridge, delivery: self.originalDelivery, unitCount: unitCount))
+            }
         }
     }
 

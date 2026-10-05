@@ -2,6 +2,7 @@ import Foundation
 
 extension DesktopActionOutcome {
     /// Promotes an accepted but unverified dispatch after a caller completes an exact readback.
+    /// A negative readback retains dispatched accounting; a still-running operation remains unverified.
     /// All other states and an unavailable readback remain byte-for-byte unchanged.
     public func confirmingDispatchedOutcome(observedChange: Bool?) -> Self {
         guard self.state == .dispatchedUnverified,
@@ -16,7 +17,11 @@ extension DesktopActionOutcome {
                 delivery: delivery,
                 unitCount: self.dispatchState.unitCount)
         }
-        return .confirmedNoChange(route: self.route)
+        guard self.evidence != .operationStillRunning else { return self }
+        return .suspectedNoop(
+            route: self.route,
+            delivery: delivery,
+            unitCount: self.dispatchState.unitCount)
     }
 
     /// Reprojects one validated outcome through a different concrete delivery route without
