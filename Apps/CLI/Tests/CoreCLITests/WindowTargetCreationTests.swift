@@ -6,6 +6,41 @@ import Testing
 
 struct WindowTargetCreationTests {
     @Test
+    @MainActor
+    func `window list preflight accepts matching normalized PID aliases`() throws {
+        for alias in ["PID:12345", "pid:12345", "  PiD:12345  ", "PID:00012345"] {
+            var command = WindowCommand.WindowListSubcommand()
+            command.app = alias
+            command.pid = 12345
+            try command.validateBeforeRuntime()
+        }
+    }
+
+    @Test
+    @MainActor
+    func `window list preflight rejects mismatched and invalid PID aliases`() {
+        for alias in ["PID:54321", "PID:-1", "PID:0", "PID:abc", "PID:", "PID:2147483648", "Fixture"] {
+            var command = WindowCommand.WindowListSubcommand()
+            command.app = alias
+            command.pid = 12345
+            #expect(throws: (any Error).self) { try command.validateBeforeRuntime() }
+        }
+    }
+
+    @Test(arguments: [Int32(0), -1, .max])
+    @MainActor
+    func `window list keeps PID range checks with matching aliases`(pid: Int32) throws {
+        var command = WindowCommand.WindowListSubcommand()
+        command.app = "pid:\(pid)"
+        command.pid = pid
+        if pid > 0 {
+            try command.validateBeforeRuntime()
+        } else {
+            #expect(throws: (any Error).self) { try command.validateBeforeRuntime() }
+        }
+    }
+
+    @Test
     func `window CLI syntax preserves matching redundant PID channels`() throws {
         var options = WindowIdentificationOptions()
         options.app = "PID:12345"
@@ -13,6 +48,67 @@ struct WindowTargetCreationTests {
 
         try options.validate()
         #expect(try options.selector.normalizedApplicationTarget(policy: .windowCLI()) == "PID:12345")
+    }
+
+    @Test
+    func `window CLI PID aliases reach the compatibility resolver and target`() throws {
+        for application in ["PID:12345", "pid:12345", "PiD:12345", " \tpid:12345\n"] {
+            var options = WindowIdentificationOptions()
+            options.app = application
+            options.pid = 12345
+
+            try options.validate()
+            let normalizedApplication = application.trimmingCharacters(in: .whitespacesAndNewlines)
+            #expect(try options.resolveApplicationIdentifier() == normalizedApplication)
+            switch try options.toWindowTarget() {
+            case let .application(identifier):
+                #expect(identifier == normalizedApplication)
+            default:
+                Issue.record("Expected the resolved PID application target")
+            }
+            #expect(throws: (any Error).self) {
+                try options.validateMutation()
+            }
+        }
+    }
+
+    @Test
+    func `window CLI PID alias resolver preserves invalid and conflicting errors`() {
+        for application in ["pid:12345", " \tPiD:12345\n", "PID:12345"] {
+            var options = WindowIdentificationOptions()
+            options.app = application
+            options.pid = 54321
+            do {
+                _ = try options.resolveApplicationIdentifier()
+                Issue.record("Expected conflicting PID resolution error")
+            } catch {
+                #expect(error.localizedDescription.contains("Conflicting PIDs"))
+                #expect(error.localizedDescription.contains("12345"))
+                #expect(error.localizedDescription.contains("54321"))
+            }
+        }
+
+        for application in ["pid:invalid", " PiD:2147483648 "] {
+            var options = WindowIdentificationOptions()
+            options.app = application
+            options.pid = 12345
+            do {
+                _ = try options.resolveApplicationIdentifier()
+                Issue.record("Expected invalid PID resolution error")
+            } catch {
+                #expect(error.localizedDescription.contains("Invalid PID format in --app"))
+            }
+        }
+
+        var namedApplication = WindowIdentificationOptions()
+        namedApplication.app = "Fixture"
+        namedApplication.pid = 12345
+        do {
+            _ = try namedApplication.resolveApplicationIdentifier()
+            Issue.record("Expected named application and PID to remain exclusive")
+        } catch {
+            #expect(error.localizedDescription.contains("Provide the application either with --app or --pid, not both"))
+        }
     }
 
     @Test

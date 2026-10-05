@@ -3,6 +3,7 @@ import MCP
 import os.log
 import PeekabooAutomationKit
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
@@ -359,6 +360,37 @@ struct MCPAppToolOutcomeTests {
         #expect(meta["retry_safe"] == .bool(true))
         #expect(meta["mutation_dispatched"] == .bool(false))
         #expect(meta["refusal_reason"] == .string("target_unavailable"))
+    }
+
+    @Test(arguments: DesktopActionOutcomeFixtures.batchEvidenceCases)
+    @MainActor
+    func `public quit all preserves running accepted and response lost evidence`(
+        fixture: DesktopActionBatchEvidenceFixture) async throws
+    {
+        let attempts: [ScriptedQuitAllApplicationService.Attempt] = try fixture.outcomes.enumerated()
+            .map { index, outcome in
+                if fixture.failingIndexes.contains(index) {
+                    try .canonicalFailure(#require(DesktopActionFailure(
+                        outcome: outcome,
+                        message: "Owned batch fixture")))
+                } else {
+                    .success(outcome)
+                }
+            }
+        let service = ScriptedQuitAllApplicationService(attempts: attempts)
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: service,
+            executionPolicy: .foregroundAllowed)
+        let response = try await context.execute(
+            tool: AppTool(context: context),
+            arguments: ToolArguments(raw: ["action": "quit", "all": true]))
+        try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(fixture.expectedOutcome, in: response)
+        #expect(response.isError == !fixture.failingIndexes.isEmpty)
+        #expect(service.attemptCount == 2)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["quit_count"] == .double(Double(fixture.succeededCount)))
+        #expect(meta["failed"]?.arrayValue?.count == fixture.failingIndexes.count)
+        #expect(meta["cancelled"] == .bool(false))
     }
 
     @Test

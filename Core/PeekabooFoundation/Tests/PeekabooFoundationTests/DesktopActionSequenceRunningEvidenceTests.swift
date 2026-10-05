@@ -1,7 +1,26 @@
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 
 struct DesktopActionSequenceRunningEvidenceTests {
+    @Test(arguments: DesktopActionOutcomeFixtures.batchEvidenceCases)
+    func `sequence and batch preserve strongest reported evidence`(
+        fixture: DesktopActionBatchEvidenceFixture) throws
+    {
+        var sequence = DesktopActionSequenceAccumulator()
+        for outcome in fixture.outcomes {
+            sequence.record(.outcome(outcome))
+        }
+        #expect(sequence.successResolution().outcome == fixture.expectedOutcome)
+        let batch = try #require(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: fixture.outcomes,
+            succeededCount: fixture.succeededCount,
+            attemptedCount: fixture.outcomes.count))
+        #expect(batch == fixture.expectedOutcome)
+        #expect(batch.projection.requiresFreshObservation)
+        #expect(!batch.projection.retrySafe)
+    }
+
     @Test(arguments: [false, true])
     func `successful sequence retains an operation still running`(withConfirmedPrefix: Bool) throws {
         let delivery = DesktopActionOutcome.Delivery(mechanism: .nativeFramework, mode: .background)

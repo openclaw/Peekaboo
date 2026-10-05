@@ -399,7 +399,7 @@ struct PasteCommandTests {
         )
 
         #expect(plainResult.exitStatus == 0)
-        #expect(plainResult.stdout.contains("clipboard restoration failed"))
+        #expect(plainResult.stdout.contains("Clipboard restoration failed"))
         #expect(plainResult.stdout.contains("Do not retry the paste"))
     }
 

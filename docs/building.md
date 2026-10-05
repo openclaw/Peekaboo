@@ -79,6 +79,9 @@ themselves. Installing the published npm binary does not run source setup. The h
 and AXorcist submodule identities and HEADs against this checkout's gitlinks. Uncommitted local Commander edits remain
 visible to development builds; source-stamped release builds still require the existing clean-source gate.
 
+The `run` wrapper preserves ordinary command exit statuses and reports signal-terminated children using the shell
+convention (`128 + signal`, such as 143 for SIGTERM). Post-command mapping integrity checks and lock cleanup still run.
+
 AXorcist always declares remote Commander at exact `0.3.0`. Peekaboo's internal package graph already selects the live
 Commander submodule through explicit filesystem dependencies. The helper aligns the remote URL with that same canonical
 absolute directory using a `file://` URL; it neither changes a dependency requirement nor substitutes SwiftPM's version
@@ -144,6 +147,8 @@ installed SDK's Swift `.tbd` files at verification time, following re-exports tr
 and bundled `libswiftCompatibility*` libraries are excluded; undefined symbols without a two-level
 source library fail closed. Swift symbols imported from frameworks such as Foundation and SwiftUI are
 outside this audit. Generated export data is intentionally not checked in.
+
+Compatibility-library imports and executable-relative loader paths are checked independently for each Mach-O slice. A library needs the architectures that actually import it, not unrelated slices. `bash scripts/test-swift-runtime-libraries.sh` includes synthetic inspection-only slice fixtures and the existing real-runtime Span probe. Add `--inspection-only` for local inspection proof without executing that probe; hosted CI retains the full default check. Synthetic-runtime fixture executables are never run.
 
 The audit selects the oldest installed macOS SDK at or above the highest slice's minimum macOS version
 and older than macOS 27. It records the SDK version, build, full path, and export digest with each
