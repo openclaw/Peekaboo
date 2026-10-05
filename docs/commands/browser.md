@@ -81,6 +81,8 @@ Chrome's approval-mode listener intentionally returns 404 for `/json/version`; u
 Explicit `--browser-url` requires HTTP discovery. Enable remote debugging at `chrome://inspect/#remote-debugging`
 and approve the connection prompt; a pipe-only launch does not expose a TCP endpoint. The provider never automatically
 reopens a failed connection or switches to another Chrome instance.
+A refused first connection remains a failed attempt for ordinary tools too. Cached connection verification stops
+reporting success after its retained socket disconnects; neither case silently opens another approval request.
 
 A Bridge host-authentication error names the socket, peer PID when available, and failed check (kernel CDHash,
 Apple-anchored signature, signature/hash binding, or allowed Team ID). Relaunch the released signed host at that socket;

@@ -539,34 +539,76 @@ struct MCPAppToolOutcomeTests {
         try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(expected, in: response)
     }
 
-    @Test
+    @Test(arguments: [nil, .responseLost, .completionUnknown] as [DesktopActionOutcome.IndeterminateEvidence?])
     @MainActor
-    func `quit all preserves completed receipt when a later attempt cancels`() async throws {
+    func `quit all preserves completed receipt evidence when a later attempt cancels`(
+        evidence: DesktopActionOutcome.IndeterminateEvidence?) async throws
+    {
         let outcome = DesktopActionOutcome.confirmedChange(
             route: .bridge,
             delivery: .init(mechanism: .nativeFramework, mode: .background),
             unitCount: .one)
+        let prefix: ScriptedQuitAllApplicationService.Attempt = if let evidence {
+            .canonicalFailure(.indeterminate(
+                route: .bridge,
+                delivery: .init(mechanism: .nativeFramework, mode: .background),
+                evidence: evidence,
+                unitCount: .one,
+                message: "Synthetic quit response was not confirmed"))
+        } else {
+            .success(outcome)
+        }
         let service = ScriptedQuitAllApplicationService(attempts: [
-            .success(outcome),
-            .cancellation,
+            prefix,
+            .inFlightCancellation,
         ])
-        let context = await MCPToolTestHelpers.makeContext(applications: service)
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: service,
+            executionPolicy: .foregroundAllowed)
 
-        let response = try await AppTool(context: context).execute(arguments: ToolArguments(raw: [
-            "action": "quit",
-            "all": true,
-        ]))
+        let execution = Task { @MainActor in
+            try await context.execute(
+                tool: AppTool(context: context),
+                arguments: ToolArguments(raw: [
+                    "action": "quit",
+                    "all": true,
+                ]))
+        }
+        let response = try await execution.value
 
         #expect(response.isError)
         #expect(service.attemptCount == 2)
+        #expect(execution.isCancelled)
         let meta = try #require(response.meta?.objectValue)
         #expect(meta["cancelled"] == .bool(true))
-        #expect(meta["quit_count"] == .double(1))
+        #expect(meta["quit_count"] == .double(evidence == nil ? 1 : 0))
+        #expect(meta["delivery_mode"] == nil)
+        #expect(meta["delivery_mechanism"] == nil)
         let expected = DesktopActionOutcome.indeterminate(
             route: .bridge,
-            evidence: .completionUnknown,
+            evidence: evidence ?? .completionUnknown,
             unitCount: DesktopActionOutcome.DispatchUnitCount(2))
         try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(expected, in: response)
+    }
+
+    @Test
+    @MainActor
+    func `background-only public quit-all refuses before a cancellation sequence starts`() async throws {
+        let service = ScriptedQuitAllApplicationService(attempts: [.cancellation])
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: service,
+            executionPolicy: .backgroundOnly)
+        let response = try await context.execute(
+            tool: AppTool(context: context),
+            arguments: ToolArguments(raw: ["action": "quit", "all": true]))
+
+        #expect(response.isError)
+        #expect(service.attemptCount == 0)
+        try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(.refused(reason: .targetUnavailable), in: response)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["execution_policy"] == .string("background_only"))
+        #expect(meta["error_code"] == .string(MCPToolExecutionPolicy.refusalErrorCode))
     }
 
     @Test
@@ -782,13 +824,15 @@ private final class FalsePayloadQuitAllApplicationService: StubApplicationServic
 }
 
 @MainActor
-private final class ScriptedQuitAllApplicationService: StubApplicationService {
+final class ScriptedQuitAllApplicationService: StubApplicationService {
     enum Attempt {
         case canonicalFailure(DesktopActionFailure)
         case receiptlessFailure
         case cancellation
+        case inFlightCancellation
         case success(DesktopActionOutcome?)
         case successAndCancel(DesktopActionOutcome?)
+        case operation(@MainActor (ApplicationQuitRequest) async throws -> DesktopActionResult<Bool>)
     }
 
     private let targets = [
@@ -824,7 +868,7 @@ private final class ScriptedQuitAllApplicationService: StubApplicationService {
     }
 
     override func quitApplicationActionResult(
-        request _: ApplicationQuitRequest) async throws -> DesktopActionResult<Bool>
+        request: ApplicationQuitRequest) async throws -> DesktopActionResult<Bool>
     {
         self.attemptCount += 1
         guard !self.attempts.isEmpty else {
@@ -838,11 +882,16 @@ private final class ScriptedQuitAllApplicationService: StubApplicationService {
             throw PeekabooError.commandFailed("Legacy quit failed without a canonical receipt")
         case .cancellation:
             throw CancellationError()
+        case .inFlightCancellation:
+            withUnsafeCurrentTask { $0?.cancel() }
+            throw CancellationError()
         case let .success(outcome):
             return DesktopActionResult(payload: true, outcome: outcome)
         case let .successAndCancel(outcome):
             withUnsafeCurrentTask { $0?.cancel() }
             return DesktopActionResult(payload: true, outcome: outcome)
+        case let .operation(operation):
+            return try await operation(request)
         }
     }
 }

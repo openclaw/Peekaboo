@@ -180,6 +180,27 @@ assert.equal(validateArchiveEntries([
 
 const testDirectory = await mkdtemp(path.join(os.tmpdir(), 'peekaboo-terminal-archive-policy.'));
 try {
+  for (const count of [32, 33]) {
+    const chain = [
+      { path: 'Fixture.app/', type: 'directory' },
+      { path: 'Fixture.app/value', type: 'file', data: 'boundary' },
+      ...Array.from({ length: count }, (_, index) => ({
+        path: `Fixture.app/link-${index}`, type: 'symlink',
+        target: index + 1 === count ? 'value' : `link-${index + 1}`
+      }))
+    ];
+    if (count === 32) assert.equal(validateArchiveEntries(chain, 'Fixture.app').length, count + 2);
+    else assert.throws(() => validateArchiveEntries(chain, 'Fixture.app'), /symlink expansion limit/);
+    for (const [extension, bytes, validate] of [
+      ['zip', zipFixture(chain), validateZipArchive],
+      ['tar.gz', tarFixture(chain), validateTarGzArchive]
+    ]) {
+      const archive = path.join(testDirectory, `chain-${count}.${extension}`);
+      await writeFile(archive, bytes);
+      if (count === 32) assert.equal((await validate(archive, 'Fixture.app')).length, count + 2);
+      else await assert.rejects(validate(archive, 'Fixture.app'), /symlink expansion limit/);
+    }
+  }
   const composedEntries = [
     { path: 'Fixture.app/', type: 'directory' },
     { path: 'Fixture.app/alias', type: 'symlink', target: '.' },

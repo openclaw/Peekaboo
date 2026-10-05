@@ -89,6 +89,39 @@ if /usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$TEST_DIR/nested
 fi
 grep -q 'symlink escapes root' "$TEST_DIR/nested-absolute.err" || fail 'nested absolute diagnostic missing'
 
+physical_test_dir="$(cd "$TEST_DIR" && pwd -P)"
+for link_count in 32 33; do
+  chain="$physical_test_dir/chain-$link_count"
+  mkdir -p "$chain"
+  printf 'boundary\n' > "$chain/value"
+  for ((index = link_count; index >= 1; index--)); do
+    target="link-$((index + 1))"
+    [[ "$index" -ne "$link_count" ]] || target=value
+    ln -s "$target" "$chain/link-$index"
+  done
+  if [[ "$link_count" -eq 32 ]]; then
+    [[ "$(cat "$chain/link-1")" == boundary ]] || fail 'native 32-link chain was not readable'
+    /usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$chain" > "$TEST_DIR/chain-32.json"
+  else
+    /usr/bin/ruby -e 'begin; File.read(ARGV.fetch(0)); abort("native 33-link chain was accepted"); rescue Errno::ELOOP; end' "$chain/link-1"
+    if /usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$chain" > "$TEST_DIR/chain-33.json" 2> "$TEST_DIR/chain-33.err"; then
+      fail 'native-unreadable 33-link chain was accepted by the manifest'
+    fi
+    grep -q 'symlink expansion limit exceeded' "$TEST_DIR/chain-33.err" || fail 'chain limit diagnostic missing'
+  fi
+done
+printf 'test-artifact-tree-manifest: PASS native 32-link acceptance and 33-link refusal\n'
+
+mkdir -p "$TEST_DIR/prefix/artifact" "$TEST_DIR/prefix/other/deep" "$TEST_DIR/prefix/other/artifact"
+printf 'owned prefix outside artifact\n' > "$TEST_DIR/prefix/other/artifact/value"
+ln -s "$physical_test_dir/prefix/other/deep" "$TEST_DIR/prefix/trampoline"
+ln -s "$physical_test_dir/prefix/trampoline/../artifact/value" "$TEST_DIR/prefix/artifact/escape"
+[[ "$(cat "$TEST_DIR/prefix/artifact/escape")" == 'owned prefix outside artifact' ]] || fail 'native prefix escape fixture failed'
+if /usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$physical_test_dir/prefix/artifact" > "$TEST_DIR/prefix.json" 2> "$TEST_DIR/prefix.err"; then
+  fail 'absolute prefix alias escaped the physical artifact root'
+fi
+grep -q 'symlink escapes root' "$TEST_DIR/prefix.err" || fail 'absolute prefix escape diagnostic missing'
+
 mkdir -p "$TEST_DIR/cycle"
 ln -s second "$TEST_DIR/cycle/first"
 ln -s first "$TEST_DIR/cycle/second"

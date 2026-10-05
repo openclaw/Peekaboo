@@ -16,7 +16,7 @@ validate_link = lambda do |relative, target|
   absolute_target = target.start_with?('/') ? target : "#{root}/#{File.dirname(relative)}/#{target}"
   pending = absolute_target.split('/')
   resolved = '/'
-  expansions = 0
+  expansions = 1 # Count this link too; Darwin permits 32 total traversals.
   until pending.empty?
     component = pending.shift
     next if component.empty? || component == '.'
@@ -28,7 +28,7 @@ validate_link = lambda do |relative, target|
     begin
       if File.lstat(candidate).symlink?
         expansions += 1
-        abort("Artifact symlink expansion limit exceeded: #{relative}") if expansions > 40
+        abort("Artifact symlink expansion limit exceeded: #{relative}") if expansions > 32
         nested_target = File.readlink(candidate)
         resolved = '/' if nested_target.start_with?('/')
         pending.unshift(*nested_target.split('/'))

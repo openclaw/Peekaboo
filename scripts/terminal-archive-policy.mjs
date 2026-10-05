@@ -63,12 +63,13 @@ function validateSymlink(record, expectedRoot, label, allowSymlinks) {
 }
 
 function validateComposedSymlinks(records, expectedRoot, label) {
-  const links = new Map(records.filter((record) => record.type === 'symlink')
+  const symlinkRecords = records.filter((record) => record.type === 'symlink');
+  const links = new Map(symlinkRecords
     .map((record) => [normalizedCollisionKey(record.path), record.target]));
-  for (const record of records.filter((record) => record.type === 'symlink')) {
+  for (const record of symlinkRecords) {
     const pending = [...path.posix.dirname(record.path).split('/'), ...record.target.split('/')];
     const resolved = [];
-    let expansions = 0;
+    let expansions = 1; // Count this link too; Darwin permits 32 total traversals.
     while (pending.length > 0) {
       const component = pending.shift();
       if (component === '' || component === '.') continue;
@@ -80,7 +81,7 @@ function validateComposedSymlinks(records, expectedRoot, label) {
       resolved.push(component);
       const target = links.get(normalizedCollisionKey(resolved.join('/')));
       if (target !== undefined) {
-        if (++expansions > 40) fail(label, `exceeds the symlink expansion limit: ${record.path}`);
+        if (++expansions > 32) fail(label, `exceeds the symlink expansion limit: ${record.path}`);
         resolved.pop();
         pending.unshift(...target.split('/'));
       }
