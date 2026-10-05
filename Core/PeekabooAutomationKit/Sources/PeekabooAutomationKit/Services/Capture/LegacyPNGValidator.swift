@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import zlib
 
@@ -7,6 +8,12 @@ enum LegacyPNGValidator {
     private static let plte: UInt32 = 0x504C_5445
     private static let idat: UInt32 = 0x4944_4154
     private static let iend: UInt32 = 0x4945_4E44
+
+    static func hasCompletePixelData(_ image: CGImage) -> Bool {
+        guard let data = image.dataProvider?.data else { return false }
+        let (requiredBytes, overflow) = image.bytesPerRow.multipliedReportingOverflow(by: image.height)
+        return !overflow && requiredBytes > 0 && CFDataGetLength(data) >= requiredBytes
+    }
 
     static func hasValidStructureAndCRC(_ data: Data) -> Bool {
         data.withUnsafeBytes { bytes in

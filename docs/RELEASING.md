@@ -449,6 +449,8 @@ or ~32 MB npm tarball.
 - npm's published SRI integrity matches the exact local tarball.
 - `appcast.xml` is valid, strictly build-monotonic, and its newest item matches the app's build/minimum-system version,
   GitHub app zip URL, length, and Sparkle signature.
+  The generator XML-escapes metadata, including URL query separators; verification compares the decoded values with
+  the original artifact metadata. Do not pre-escape release or asset URLs before passing them to the generator.
 - The mounted DMG app tree is byte/mode/symlink-identical to the app zip and therefore carries the same source commit.
 - Extracted CLI, app, and mounted DMG report the new version; codesign, stapler, Gatekeeper, layout, background, and Applications-link verification pass.
 - A fresh temporary `npx @steipete/peekaboo@<version> --help` succeeds.

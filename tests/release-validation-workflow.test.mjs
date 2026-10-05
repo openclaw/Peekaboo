@@ -876,3 +876,12 @@ raise SystemExit(d.diagnose(Path.cwd(), results))
     if (mode === 'fail') assert.equal(report.debugger_exit_code, 19);
   }
 });
+
+test('hosted runtime inspection keeps the existing real-runtime execution check', () => {
+  const entry = macosWorkflow.split('      - name: Verify Swift runtime-library contracts\n')[1]?.split('\n      - name:')[0];
+  assert.ok(entry);
+  assert.match(entry, /run: bash scripts\/test-swift-runtime-libraries\.sh\s*$/);
+  assert.doesNotMatch(entry, /--inspection-only/);
+  const script = readFileSync(new URL('../scripts/test-swift-runtime-libraries.sh', import.meta.url), 'utf8');
+  assert.ok(script.includes('bash "$ROOT_DIR/scripts/test-swift-runtime-slice-rpaths.sh"'));
+});
