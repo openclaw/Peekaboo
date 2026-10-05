@@ -39,8 +39,8 @@ for broken_arch in arm64 x86_64; do
     "$TEST_DIR/broken" "$TEST_DIR" > "$TEST_DIR/result" 2>&1; then
     echo "Verifier accepted missing $broken_arch compatibility rpath" >&2; exit 1
   fi
-  if ! rg -F "$broken_arch" "$TEST_DIR/result" >/dev/null ||
-    ! rg -F 'no executable-relative LC_RPATH' "$TEST_DIR/result" >/dev/null; then
+  if ! grep -Fq -- "$broken_arch" "$TEST_DIR/result" ||
+    ! grep -Fq -- 'no executable-relative LC_RPATH' "$TEST_DIR/result"; then
     cat "$TEST_DIR/result" >&2; exit 1
   fi
 done
@@ -61,7 +61,7 @@ for importing_arch in arm64 x86_64; do
   if "$VERIFIER" --runtime-sdk-root "$TEST_DIR/SDK" "$destination/executable" "$destination" > "$TEST_DIR/result" 2>&1; then
     echo "Verifier accepted a library missing its importing $importing_arch slice" >&2; exit 1
   fi
-  if ! rg -F "library is missing $importing_arch" "$TEST_DIR/result" >/dev/null; then
+  if ! grep -Fq -- "library is missing $importing_arch" "$TEST_DIR/result"; then
     cat "$TEST_DIR/result" >&2; exit 1
   fi
 done
