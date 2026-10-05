@@ -9,24 +9,16 @@ import Foundation
 public enum FormattingUtilities {
     /// Format keyboard shortcut with proper symbols
     public static func formatKeyboardShortcut(_ keys: String) -> String {
-        keys.replacingOccurrences(of: "cmd", with: "⌘")
-            .replacingOccurrences(of: "command", with: "⌘")
-            .replacingOccurrences(of: "shift", with: "⇧")
-            .replacingOccurrences(of: "option", with: "⌥")
-            .replacingOccurrences(of: "opt", with: "⌥")
-            .replacingOccurrences(of: "alt", with: "⌥")
-            .replacingOccurrences(of: "control", with: "⌃")
-            .replacingOccurrences(of: "ctrl", with: "⌃")
-            .replacingOccurrences(of: "return", with: "↩")
-            .replacingOccurrences(of: "enter", with: "↩")
-            .replacingOccurrences(of: "escape", with: "⎋")
-            .replacingOccurrences(of: "esc", with: "⎋")
-            .replacingOccurrences(of: "tab", with: "⇥")
-            .replacingOccurrences(of: "delete", with: "⌫")
-            .replacingOccurrences(of: "backspace", with: "⌫")
-            .replacingOccurrences(of: ",", with: "")
-            .replacingOccurrences(of: "+", with: "")
-            .replacingOccurrences(of: " ", with: "")
+        let symbols = [
+            "cmd": "⌘", "command": "⌘", "shift": "⇧",
+            "option": "⌥", "opt": "⌥", "alt": "⌥", "control": "⌃", "ctrl": "⌃",
+            "return": "↩", "enter": "↩", "escape": "⎋", "esc": "⎋", "tab": "⇥",
+            "delete": "⌫", "backspace": "⌫", "del": "⌫",
+            "forwarddelete": "⌦", "forward_delete": "⌦",
+        ]
+        return keys.split(whereSeparator: { $0 == "," || $0 == "+" || $0.isWhitespace })
+            .map { symbols[$0.lowercased()] ?? String($0) }
+            .joined()
     }
 
     /// Format duration for display
