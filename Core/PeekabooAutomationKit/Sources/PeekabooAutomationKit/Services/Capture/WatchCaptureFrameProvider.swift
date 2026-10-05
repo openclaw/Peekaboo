@@ -1,11 +1,54 @@
 import CoreGraphics
 import Foundation
+import ImageIO
 import PeekabooFoundation
+import UniformTypeIdentifiers
 
 struct WatchCaptureFrame {
     let cgImage: CGImage?
     let metadata: CaptureMetadata
     let motionBoxes: [CGRect]?
+    private let sourcePNG: Data?
+
+    init(cgImage: CGImage?, metadata: CaptureMetadata, motionBoxes: [CGRect]?) {
+        self.cgImage = cgImage
+        self.metadata = metadata
+        self.motionBoxes = motionBoxes
+        self.sourcePNG = nil
+    }
+
+    init(
+        imageData: Data,
+        metadata: CaptureMetadata,
+        preservePNG: Bool = true,
+        transform: (CGImage) -> CGImage)
+    {
+        self.metadata = metadata
+        self.motionBoxes = nil
+        guard let source = CGImageSourceCreateWithData(imageData as CFData, nil),
+              let decoded = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else {
+            self.cgImage = nil
+            self.sourcePNG = nil
+            return
+        }
+        let image = transform(decoded)
+        self.cgImage = image
+        self.sourcePNG = preservePNG && image === decoded &&
+            imageData.count <= CaptureArtifactIntegrityValidator.maximumPNGBytes &&
+            CGImageSourceGetType(source) as String? == UTType.png.identifier &&
+            CGImageSourceGetCount(source) == 1 &&
+            CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete ? imageData : nil
+    }
+
+    func sourcePNG(for image: CGImage) -> Data? {
+        // Identity proves neither the resolution cap nor the saving path replaced the decoded pixels.
+        guard let cgImage, image === cgImage, let sourcePNG,
+              LegacyPNGValidator.hasValidStructureAndCRC(sourcePNG),
+              LegacyPNGValidator.hasCompletePixelData(image)
+        else { return nil }
+        return sourcePNG
+    }
 }
 
 @MainActor
@@ -92,15 +135,12 @@ struct WatchCaptureFrameProvider {
             }
         }
 
-        guard let image = WatchCaptureArtifactWriter.makeCGImage(from: result.imageData) else {
-            return (WatchCaptureFrame(cgImage: nil, metadata: result.metadata, motionBoxes: nil), warning)
-        }
-
         return (
             WatchCaptureFrame(
-                cgImage: self.capResolutionIfNeeded(image),
+                imageData: result.imageData,
                 metadata: result.metadata,
-                motionBoxes: nil),
+                preservePNG: !self.options.highlightChanges,
+                transform: self.capResolutionIfNeeded),
             warning)
     }
 
