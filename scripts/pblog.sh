@@ -21,6 +21,14 @@ PRIVATE=false
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        -n|--lines|-l|--last|-c|--category|-s|--search|-o|--output|--subsystem)
+            if [[ $# -lt 2 ]]; then
+                printf '%s requires a value\n' "$1" >&2
+                exit 2
+            fi
+            ;;
+    esac
+    case $1 in
         -n|--lines)
             LINES="$2"
             shift 2
@@ -144,7 +152,7 @@ else
             CMD+=(show --predicate "$PREDICATE" --debug --last "$TIME")
             ;;
         error)
-            PREDICATE="$PREDICATE AND eventType == \"error\""
+            PREDICATE="$PREDICATE AND logType == \"error\""
             CMD+=(show --predicate "$PREDICATE" --info --debug --last "$TIME")
             ;;
         *)
