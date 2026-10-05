@@ -200,7 +200,7 @@ struct CLIVerifiedActionResultTests {
         let noChange = DesktopActionOutcome.confirmedNoChange(route: .bridge)
         let idempotent = try #require(canonicalActionOutcomeAfterSuccessfulVerification(noChange))
         #expect(idempotent == noChange)
-        #expect(try canonicalActionOutcomeAfterSuccessfulVerification(noChange, observedChange: false) == noChange)
+        #expect(canonicalActionOutcomeAfterSuccessfulVerification(noChange, observedChange: false) == noChange)
         #expect(idempotent.dispatchState == DesktopActionOutcome.DispatchState.none)
         #expect(ActionOutcomeHumanRenderer.statusLine(
             for: idempotent,
