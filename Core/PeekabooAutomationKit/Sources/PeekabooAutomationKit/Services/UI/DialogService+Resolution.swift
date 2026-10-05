@@ -35,13 +35,25 @@ extension DialogService {
 
     func resolveFileDialogElementResolution(appName: String?) async throws
     -> FileDialogElementResolution {
-        if let appName,
-           let fileDialog = self.findActiveFileDialogElement(appName: appName)
-        {
-            return try await self.fileDialogElementResolution(
-                element: fileDialog,
-                dialogIdentifier: self.dialogIdentifier(for: fileDialog),
-                foundVia: "active_file_dialog")
+        if let appName {
+            // Reuse structural dialog discovery and its owning-window receipt.
+            // A sheet's AX window ID need not be its parent document's CG ID.
+            let selector = try DialogTargetSelector(applicationIdentifier: appName)
+            let candidates = try await self.targetedDialogCandidates(target: selector)
+            guard candidates.count == 1, let candidate = candidates.first else {
+                throw self.dialogCandidateRefusal(target: selector, candidates: candidates)
+            }
+            guard self.isFileDialogElement(candidate.dialog) else { throw DialogError.noFileDialog }
+            let current = try await self.revalidateDialogTarget(
+                target: candidate.target,
+                retainedWindow: candidate.window,
+                retainedDialog: candidate.dialog,
+                operation: "file dialog resolution")
+            return FileDialogElementResolution(
+                element: current.dialog,
+                dialogIdentifier: self.dialogIdentifier(for: current.dialog),
+                foundVia: "targeted_dialog",
+                target: current.target)
         }
 
         let resolved = try await self.resolveDialogElementResolution(windowTitle: nil, appName: appName)
