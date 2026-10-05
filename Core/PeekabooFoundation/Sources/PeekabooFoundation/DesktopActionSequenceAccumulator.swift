@@ -96,6 +96,7 @@ public struct DesktopActionSequenceAccumulator: Sendable {
     private var allReportedOutcomesAreConfirmed = true
     private var allReportedOutcomesAreSuspectedNoop = true
     private var hasReportedResponseLoss = false
+    private var hasReportedRunningOperation = false
     private var singleReportedOutcome: DesktopActionOutcome?
     private var dispatchedRoute = HomogeneousValue<DesktopActionOutcome.Route>()
     private var dispatchedDelivery = CompatibleDeliveryValue()
@@ -364,7 +365,7 @@ public struct DesktopActionSequenceAccumulator: Sendable {
                 .dispatchedUnverified(
                     route: route,
                     delivery: delivery,
-                    evidence: .deliveryAccepted,
+                    evidence: self.hasReportedRunningOperation ? .operationStillRunning : .deliveryAccepted,
                     unitCount: unitCount)
             } else {
                 nil
@@ -464,6 +465,8 @@ public struct DesktopActionSequenceAccumulator: Sendable {
         self.allReportedOutcomesAreSuspectedNoop = self.allReportedOutcomesAreSuspectedNoop &&
             outcome.state == .suspectedNoop
         self.hasReportedResponseLoss = self.hasReportedResponseLoss || outcome.evidence == .responseLost
+        self.hasReportedRunningOperation = self.hasReportedRunningOperation ||
+            outcome.evidence == .operationStillRunning
         self.allReportedOutcomesAreConfirmedNoChange = self.allReportedOutcomesAreConfirmedNoChange &&
             outcome.state == .confirmedNoChange
         let disposition: DesktopActionMutationDisposition = switch outcome.dispatchState {
