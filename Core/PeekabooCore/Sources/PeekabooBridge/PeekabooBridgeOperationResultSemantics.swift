@@ -23,6 +23,10 @@ extension PeekabooBridgeOperationResultSemantics {
         case let .browserExecute(payload):
             guard payload.isReadOnly else { return self.contract(for: request.operation) }
             return .init(completion: .readOnly, targetPolicy: .notApplicable)
+        case let .dialogHandleFile(payload) where payload.execution != nil:
+            return .init(
+                completion: .dispatchedUnverified(.init(mechanism: .composite, mode: .foreground)),
+                targetPolicy: .responseResolved)
         case let .click(payload):
             let delivery: DesktopActionOutcome.Delivery
             let targetPolicy: TargetPolicy
@@ -584,6 +588,9 @@ extension PeekabooBridgeOperationResultSemantics {
         completion: Completion) -> [DesktopActionOutcome.State]
     {
         guard completion.mutatesDesktop else { return [] }
+        if request.requiresExactFileDialogExecution {
+            return [.confirmedChange, .dispatchedUnverified]
+        }
         if request.requiresClipboardGuardedExactWindowHotkey || request
             .requiresPreparedClipboardGuardedExactWindowHotkey
         {
@@ -669,7 +676,10 @@ extension PeekabooBridgeOperationResultSemantics {
     }
 
     private static func successResponsePolicy(for request: PeekabooBridgeRequest) -> SuccessResponsePolicy {
-        switch request.operation {
+        if request.requiresExactFileDialogExecution {
+            return .ordinary
+        }
+        return switch request.operation {
         case .unhideApplication, .dialogClickButton, .backgroundDialogClickButton,
              .dialogEnterText, .dialogHandleFile, .dialogDismiss:
             .errorOnly
@@ -968,6 +978,15 @@ extension PeekabooBridgeOperationResultSemantics {
             ]
         case .exactDialogEnterText:
             return [rule(valueBackground, .oneOf([1, 2]))]
+        case let .dialogHandleFile(payload) where payload.execution != nil:
+            return [
+                rule(axForeground, .positive),
+                rule(valueForeground, .positive),
+                rule(nativeForeground, .positive),
+                rule(globalForeground, .positive),
+                rule(clipboardForeground, .positive),
+                rule(compositeForeground, .positive),
+            ]
         case .dialogHandleFile:
             return [rule(globalForeground, .variable), rule(clipboardForeground, .variable)]
         case .exactDialogClickButton, .exactDialogDismiss:

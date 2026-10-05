@@ -189,6 +189,9 @@ extension PeekabooBridgeClient {
     }
 
     private func requireNegotiatedInputCapabilities(for request: PeekabooBridgeRequest) throws {
+        if request.requiresExactFileDialogExecution {
+            try self.requireExactFileDialogExecution()
+        }
         if request.requiresPreparedClipboardGuardedExactWindowHotkey,
            !self.preparedClipboardGuardedExactWindowHotkeysEnabled
         {

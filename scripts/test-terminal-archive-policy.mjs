@@ -27,7 +27,7 @@ function zipFixture(entries) {
     const extra = entry.extra ?? Buffer.alloc(0);
     const data = Buffer.from(entry.type === 'symlink' ? entry.target : (entry.data ?? ''), 'utf8');
     const method = data.length === 0 ? 0 : 8;
-    const compressed = method === 0 ? data : deflateRawSync(data);
+    const compressed = Buffer.concat([method === 0 ? data : deflateRawSync(data), entry.trailingCompressedBytes ?? Buffer.alloc(0)]);
     const checksum = crc32(data);
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
@@ -207,6 +207,19 @@ try {
   assert.equal((await validateZipArchive(safeZip, 'Fixture.app')).at(-1).target, 'value');
   await assert.rejects(validateZipArchive(safeZip, 'Fixture.app', 'CLI ZIP', { allowSymlinks: false }),
     /forbidden symlink/);
+
+  for (const [name, suffix] of [
+    ['small', Buffer.from('unbound')],
+    ['multi-chunk', Buffer.alloc(192 * 1024, 0x61)],
+    ['second-stream', deflateRawSync(Buffer.from('second payload'))]
+  ]) {
+    const trailingZip = path.join(testDirectory, `trailing-deflate-${name}.zip`);
+    await writeFile(trailingZip, zipFixture([
+      { path: 'Fixture.app/', type: 'directory' },
+      { path: 'Fixture.app/value', type: 'file', data: 'payload', trailingCompressedBytes: suffix }
+    ]));
+    await assert.rejects(validateZipArchive(trailingZip, 'Fixture.app'), /unbound bytes after its DEFLATE stream/);
+  }
 
   for (const [name, entries, pattern] of [
     ['escaping.zip', [

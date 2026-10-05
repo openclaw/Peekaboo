@@ -300,6 +300,9 @@ Load release credentials through the maintainer 1Password workflow and satisfy t
   --proof-file /path/to/reviewed-release-proof.md
 ```
 
+ZIP validation requires each DEFLATE stream to consume its entire declared compressed range before extraction.
+Trailing bytes or a second compressed stream are refused even when the first payload's inflated size and CRC match.
+
 App ZIP creation uses `scripts/create-app-zip.sh` for both the notary submission and the final Sparkle archive. It omits
 resource forks, extended attributes, and quarantine metadata instead of emitting `__MACOSX`/AppleDouble entries, without
 modifying the source app's file bytes, modes, symlinks, signatures, or stapled ticket. The terminal artifact packager uses

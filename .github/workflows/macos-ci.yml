@@ -398,7 +398,7 @@ jobs:
           swift test --no-parallel \
             --filter 'BrowserToolTests|BrowserToolCapabilityIntegrationTests|RemoteBrowserMCPSessionTests|PeekabooServicesBrowserSessionProviderTests|AgentSystemPromptTests'
           swift test --no-parallel \
-            --filter 'BrowserMCPApprovalTransportTests|BrowserMCPConfigTests|BrowserMCPProviderConnectionTests|BrowserMCPSingleConnectionTests|BrowserMCPChannelEndpointResolverTests|BrowserMCPSessionManagerChannelRefusalTests|PeekabooBridgeBrowserRootEpochTests'
+            --filter 'BrowserMCPApplicationMetadataTests|BrowserMCPSessionManagerAuthorityValidationTests|BrowserMCPApprovalTransportTests|BrowserMCPConfigTests|BrowserMCPProviderConnectionTests|BrowserMCPSingleConnectionTests|BrowserMCPChannelEndpointResolverTests|BrowserMCPSessionManagerChannelRefusalTests|PeekabooBridgeBrowserRootEpochTests'
 
       - name: Run Foundation contracts
         working-directory: Core/PeekabooFoundation

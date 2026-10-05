@@ -1,0 +1,339 @@
+import ApplicationServices
+import AXorcist
+import Foundation
+import PeekabooFoundation
+import Testing
+@testable import PeekabooAutomationKit
+
+@MainActor
+struct DialogSavedFileVerificationTests {
+    enum InvalidParentObservation: CaseIterable, Sendable {
+        case missingParent, replacedParent, duplicateParent, incompleteInventory
+        case missingOwner, changedGeneration, wrongOwnerPID
+        case missingReceipt, changedWindowID, changedReceiptGeneration, changedReceiptBounds, changedBoundsSidecar
+    }
+
+    @Test
+    func `document read uses the fresh retained parent instead of a matching neighboring window`() throws {
+        let fixture = SavedFileVerificationFixture(parentDocument: "/stale/report.txt")
+        let freshParent = fixture.refreshedParent(document: "file:///owned/report%20draft.txt")
+        let neighbor = SavedFileVerificationFixture.element(950_002, document: "/unrelated/report draft.txt")
+        fixture.windows = [neighbor, freshParent]
+
+        let path = try fixture.service().documentPathForRetainedFileDialogParent(
+            target: fixture.target(),
+            retainedParentWindow: fixture.parent)
+
+        #expect(path == "/owned/report draft.txt")
+        #expect(fixture.receiptElements == [freshParent])
+        #expect(fixture.ownerElements == [freshParent])
+        #expect(fixture.applicationReadCount == 1)
+        #expect(fixture.inventoryReadCount == 1)
+    }
+
+    @Test
+    func `missing parent document does not borrow a neighboring document`() throws {
+        let fixture = SavedFileVerificationFixture()
+        let neighbor = SavedFileVerificationFixture.element(950_002, document: "/unrelated/report.txt")
+        fixture.windows = [neighbor, fixture.parent]
+
+        let path = try fixture.service().documentPathForRetainedFileDialogParent(
+            target: fixture.target(),
+            retainedParentWindow: fixture.parent)
+
+        #expect(path == nil)
+        #expect(fixture.receiptElements == [fixture.parent])
+        #expect(fixture.ownerElements == [fixture.parent])
+    }
+
+    @Test(arguments: InvalidParentObservation.allCases)
+    func `parent verification refuses incomplete or replaced identity`(observation: InvalidParentObservation) throws {
+        let fixture = SavedFileVerificationFixture(parentDocument: "/owned/report.txt")
+        let changedBounds = CGRect(x: 11, y: 20, width: 500, height: 400)
+        switch observation {
+        case .missingParent:
+            fixture.windows = []
+        case .replacedParent:
+            fixture.windows = [SavedFileVerificationFixture.element(950_002, document: "/owned/report.txt")]
+        case .duplicateParent:
+            fixture.windows = [fixture.parent, fixture.refreshedParent(document: "/owned/report.txt")]
+        case .incompleteInventory:
+            fixture.inventoryReadable = false
+        case .missingOwner:
+            fixture.application = nil
+        case .changedGeneration:
+            fixture.application = SavedFileVerificationFixture.application(generation: 9002)
+        case .wrongOwnerPID:
+            fixture.ownerPID = 43
+        case .missingReceipt:
+            fixture.receipt = nil
+        case .changedWindowID:
+            fixture.receipt = SavedFileVerificationFixture.receipt(windowID: 701)
+        case .changedReceiptGeneration:
+            fixture.receipt = SavedFileVerificationFixture.receipt(generation: 9002)
+        case .changedReceiptBounds:
+            fixture.receipt = SavedFileVerificationFixture.receipt(identityBounds: changedBounds)
+        case .changedBoundsSidecar:
+            fixture.receipt = SavedFileVerificationFixture.receipt(reportedBounds: changedBounds)
+        }
+
+        do {
+            _ = try fixture.service().documentPathForRetainedFileDialogParent(
+                target: fixture.target(),
+                retainedParentWindow: fixture.parent)
+            Issue.record("Expected changed or incomplete parent evidence to refuse")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .targetUnavailable)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+        }
+    }
+
+    @Test
+    func `typed verification uses the fresh parent document and original modification threshold`() async throws {
+        let directory = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("report.txt")
+        try Data("saved fixture".utf8).write(to: file, options: .withoutOverwriting)
+        let startedAt = Date().addingTimeInterval(-3600)
+        try FileManager.default.setAttributes(
+            [.modificationDate: startedAt.addingTimeInterval(1)],
+            ofItemAtPath: file.path)
+        let fixture = SavedFileVerificationFixture(parentDocument: "/stale/report.txt")
+        fixture.windows = [fixture.refreshedParent(document: file.absoluteString)]
+        let request = try fixture.request(startedAt: startedAt, timeout: 1)
+
+        let result = try await fixture.service().verifySavedFile(request)
+
+        #expect(result.path == file.path)
+        #expect(result.foundVia == "document_path")
+        #expect(fixture.inventoryReadCount == 1)
+    }
+
+    @Test
+    func `typed verification cannot use global fallback while legacy verification retains it`() async throws {
+        let name = "peekaboo-saved-file-\(UUID().uuidString)"
+        let file = URL(fileURLWithPath: "/private/tmp").appendingPathComponent(name + ".txt")
+        try Data("unrelated fallback fixture".utf8).write(to: file, options: .withoutOverwriting)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let fixture = SavedFileVerificationFixture()
+        let startedAt = Date().addingTimeInterval(-1)
+        let typedRequest = try fixture.request(expectedBaseName: name, startedAt: startedAt, timeout: 0)
+        let service = fixture.service()
+
+        do {
+            _ = try await service.verifySavedFile(typedRequest)
+            Issue.record("Expected typed verification to reject the unrelated global fallback file")
+        } catch let error as DialogError {
+            guard case let .fileVerificationFailed(expectedPath) = error else { throw error }
+            #expect(expectedPath == "(unknown directory; name prefix: \(name))")
+        }
+
+        let legacyRequest = try DialogService.SavedFileVerificationRequest(
+            appName: nil,
+            priorDocumentPath: nil,
+            expectedPath: nil,
+            expectedBaseName: name,
+            startedAt: startedAt,
+            timeout: 0,
+            retainedTarget: fixture.target())
+        let legacyResult = try await service.verifySavedFile(legacyRequest)
+
+        #expect(legacyResult.path == file.path)
+        #expect(legacyResult.foundVia == "fallback_search")
+        #expect(fixture.applicationReadCount == 0)
+        #expect(fixture.inventoryReadCount == 0)
+    }
+
+    @Test
+    func `verification gets a fresh timeout after a long running save action`() async throws {
+        let directory = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("saved-\(UUID().uuidString).txt")
+        try Data("explicit saved fixture".utf8).write(to: file, options: .withoutOverwriting)
+        let fixture = SavedFileVerificationFixture()
+        let request = try fixture.request(
+            expectedPath: file.path,
+            expectedBaseName: file.deletingPathExtension().lastPathComponent,
+            startedAt: Date().addingTimeInterval(-3600),
+            timeout: 1)
+
+        let result = try await fixture.service().verifySavedFile(request)
+
+        #expect(result.path == file.path)
+        #expect(result.foundVia == "expected_path")
+        #expect(fixture.inventoryReadCount == 1)
+    }
+
+    @Test
+    func `overwrite retry preserves the original parent and save start`() throws {
+        let fixture = SavedFileVerificationFixture(parentDocument: "/prior/report.txt")
+        let startedAt = Date(timeIntervalSince1970: 1234)
+        let request = try DialogService.SavedFileVerificationRequest(
+            appName: "Editor",
+            priorDocumentPath: "/prior/report.txt",
+            expectedPath: "/owned/report.txt",
+            expectedBaseName: "report",
+            startedAt: startedAt,
+            timeout: 5,
+            retainedTarget: fixture.target(),
+            retainedParentWindow: fixture.parent)
+        let refreshedTarget = try UIAutomationTarget.ExactWindow(
+            identity: request.retainedTarget.identity.withMinimizedState(true),
+            bounds: request.retainedTarget.bounds)
+
+        let retry = request.retryingOverwrite(with: refreshedTarget)
+
+        #expect(retry.appName == request.appName)
+        #expect(retry.priorDocumentPath == request.priorDocumentPath)
+        #expect(retry.expectedPath == request.expectedPath)
+        #expect(retry.expectedBaseName == request.expectedBaseName)
+        #expect(retry.startedAt == startedAt)
+        #expect(retry.timeout == request.timeout)
+        #expect(retry.retainedTarget.identity == refreshedTarget.identity)
+        #expect(retry.retainedTarget.bounds == refreshedTarget.bounds)
+        let retainedParent = try #require(retry.retainedParentWindow)
+        #expect(DialogService.sameElement(retainedParent, fixture.parent))
+    }
+
+    @Test
+    func `legacy request initializer defaults to no retained parent`() throws {
+        let fixture = SavedFileVerificationFixture()
+        let request = try DialogService.SavedFileVerificationRequest(
+            appName: nil,
+            priorDocumentPath: nil,
+            expectedPath: nil,
+            expectedBaseName: nil,
+            startedAt: Date(),
+            timeout: 5,
+            retainedTarget: fixture.target())
+
+        #expect(request.retainedParentWindow == nil)
+    }
+
+    private static func temporaryDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-saved-file-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        return directory
+    }
+}
+
+@MainActor
+private final class SavedFileVerificationFixture {
+    static let bounds = CGRect(x: 10, y: 20, width: 500, height: 400)
+    let parent: Element
+    var windows: [Element]
+    var application: ServiceApplicationInfo? = SavedFileVerificationFixture.application()
+    var receipt: ServiceWindowInfo? = SavedFileVerificationFixture.receipt()
+    var inventoryReadable = true
+    var ownerPID: Int32? = 42
+    var applicationReadCount = 0
+    var inventoryReadCount = 0
+    var ownerElements: [Element] = []
+    var receiptElements: [Element] = []
+
+    init(parentDocument: String = "") {
+        let parent = Self.element(950_001, document: parentDocument)
+        self.parent = parent
+        self.windows = [parent]
+    }
+
+    func service() -> DialogService {
+        var readers = DialogDiscoveryReaders()
+        readers.currentApplication = { pid in
+            #expect(pid == 42)
+            self.applicationReadCount += 1
+            return self.application
+        }
+        readers.windows = { pid in
+            #expect(pid == 42)
+            self.inventoryReadCount += 1
+            return (self.windows, self.inventoryReadable)
+        }
+        readers.ownerPID = { window in
+            self.ownerElements.append(window)
+            return self.ownerPID
+        }
+        readers.windowReceipt = { window, _, _ in
+            self.receiptElements.append(window)
+            return self.receipt
+        }
+        return DialogService(
+            applicationService: UnusedApplicationService(),
+            syntheticInputDriver: ClickRecordingSyntheticInputDriver(),
+            operationLaneCoordinator: DesktopOperationLaneCoordinator(),
+            discoveryReaders: readers,
+            focusService: DialogDiscoveryFocusRecorder())
+    }
+
+    func target() throws -> UIAutomationTarget.ExactWindow {
+        try UIAutomationTarget.ExactWindow(
+            identity: WindowMutationIdentity(
+                windowID: 700,
+                ownerProcessIdentifier: 42,
+                ownerProcessStartIdentity: 9001,
+                capturedBounds: Self.bounds),
+            bounds: Self.bounds)
+    }
+
+    func request(
+        expectedPath: String? = nil,
+        expectedBaseName: String? = "report",
+        startedAt: Date = Date(),
+        timeout: TimeInterval = 1) throws -> DialogService.SavedFileVerificationRequest
+    {
+        try DialogService.SavedFileVerificationRequest(
+            appName: nil,
+            priorDocumentPath: nil,
+            expectedPath: expectedPath,
+            expectedBaseName: expectedBaseName,
+            startedAt: startedAt,
+            timeout: timeout,
+            retainedTarget: self.target(),
+            retainedParentWindow: self.parent)
+    }
+
+    func refreshedParent(document: String) -> Element {
+        Self.element(raw: self.parent.underlyingElement, document: document)
+    }
+
+    static func application(generation: UInt64 = 9001) -> ServiceApplicationInfo {
+        ServiceApplicationInfo(
+            processIdentifier: 42,
+            processStartIdentity: generation,
+            bundleIdentifier: "example.saved-file-fixture",
+            name: "Editor")
+    }
+
+    static func receipt(
+        windowID: Int = 700,
+        generation: UInt64 = 9001,
+        identityBounds: CGRect? = nil,
+        reportedBounds: CGRect? = nil) -> ServiceWindowInfo
+    {
+        ServiceWindowInfo(
+            windowID: windowID,
+            title: "Report",
+            bounds: reportedBounds ?? self.bounds,
+            index: 0,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: windowID,
+                ownerProcessIdentifier: 42,
+                ownerProcessStartIdentity: generation,
+                capturedBounds: identityBounds ?? self.bounds))
+    }
+
+    static func element(_ identity: Int32, document: String) -> Element {
+        self.element(raw: AXUIElementCreateApplication(-identity), document: document)
+    }
+
+    private static func element(raw: AXUIElement, document: String) -> Element {
+        Element(
+            raw,
+            attributes: ["AXDocument": .string(document)],
+            children: [],
+            actions: [])
+    }
+}

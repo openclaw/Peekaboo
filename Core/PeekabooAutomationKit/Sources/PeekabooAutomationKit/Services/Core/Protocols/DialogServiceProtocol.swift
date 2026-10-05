@@ -21,6 +21,9 @@ public protocol DialogServiceProtocol: Sendable {
     /// requirement. Older providers default to false and retain protocol 1.28 foreground behavior.
     var supportsBackgroundExactDialogInput: Bool { get }
 
+    /// Whether this host retains the original selector and parent/sheet plan across foreground file execution.
+    var supportsExactFileDialogExecution: Bool { get }
+
     /// Find and return information about the active dialog
     /// - Parameter windowTitle: Optional specific window title to target
     /// - Returns: Information about the active dialog
@@ -87,6 +90,8 @@ public protocol DialogServiceProtocol: Sendable {
         ensureExpanded: Bool,
         appName: String?) async throws -> DialogActionResult
 
+    func handleFileDialog(_ request: DialogFileExecutionRequest) async throws -> DialogActionResult
+
     /// Dismiss the active dialog
     /// - Parameters:
     ///   - force: Use Escape key to force dismiss
@@ -129,6 +134,10 @@ extension DialogServiceProtocol {
     }
 
     public var supportsBackgroundExactDialogInput: Bool {
+        false
+    }
+
+    public var supportsExactFileDialogExecution: Bool {
         false
     }
 
@@ -202,6 +211,14 @@ extension DialogServiceProtocol {
         throw DesktopActionFailure.preDispatchRefusal(
             reason: .runtimeIncompatible,
             message: "This dialog service does not support exact host-executed forced dismissal.",
+            hint: "Update the selected runtime host before retrying.")
+    }
+
+    public func handleFileDialog(_ request: DialogFileExecutionRequest) async throws -> DialogActionResult {
+        throw DesktopActionFailure.preDispatchRefusal(
+            route: self.foregroundOutcomeRoute,
+            reason: .runtimeIncompatible,
+            message: "This dialog service does not support exact host-executed file dialogs.",
             hint: "Update the selected runtime host before retrying.")
     }
 

@@ -801,6 +801,11 @@ extension PeekabooBridgeServer {
             }
             return try Self.dialogMutationResponse(result)
         case let .dialogHandleFile(payload):
+            if let execution = payload.execution {
+                try self.validateExactFileDialogExecutionAccess(request)
+                let result = try await self.services.dialogs.handleFileDialog(execution)
+                return try Self.dialogMutationResponse(result)
+            }
             try Self.requireLegacyDialogMutationCompatibility(
                 operation: .dialogHandleFile,
                 replacement: "an explicit exact-target file-dialog workflow")
