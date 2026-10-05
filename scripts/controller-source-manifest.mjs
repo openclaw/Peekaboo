@@ -58,7 +58,7 @@ function readSource(relativePath) {
   const entry = spawnSync('/usr/bin/git', ['ls-tree', '-z', sourceCommit, '--', relativePath], {
     cwd: root, encoding: 'utf8'
   });
-  if (entry.status !== 0 || !/^100(?:644|755) blob [0-9a-f]{40}\t/.test(entry.stdout ?? '') ||
+  if (entry.status !== 0 || !/^100(?:644|755) blob (?:[0-9a-f]{40}|[0-9a-f]{64})\t/.test(entry.stdout ?? '') ||
       entry.stdout.split('\0').filter(Boolean).length !== 1) {
     throw new Error(`controller source is not a regular source blob: ${relativePath}`);
   }
