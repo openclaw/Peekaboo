@@ -22,7 +22,10 @@ struct DesktopActionSequenceCancellationEvidenceTests {
         #expect(!cancelled.outcome.projection.retrySafe)
 
         let interrupted = try #require(DesktopActionSequenceAccumulator.interruptedBatch(
-            completedOutcomes: [leaf], succeededCount: 0, attemptedCount: 1, plannedCount: 2,
+            completedOutcomes: [leaf],
+            succeededCount: 0,
+            attemptedCount: 1,
+            plannedCount: 2,
             inFlightAttemptMayHaveDispatched: true))
         let outcome = try #require(interrupted.outcome)
         #expect(outcome.evidence.rawValue == evidence.rawValue)
