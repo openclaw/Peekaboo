@@ -52,6 +52,9 @@ jobs:
       - name: Verify Homebrew release handoff
         run: node --test tests/homebrew-release-assets.test.mjs
 
+      - name: Verify log helper contracts
+        run: pnpm run test:log-scripts
+
       - name: Select Xcode 26.6 (if present) or fallback to default
         run: |
           set -euo pipefail
