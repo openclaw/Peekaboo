@@ -39,16 +39,16 @@ extension DialogService {
             // Reuse structural dialog discovery and its owning-window receipt.
             // A sheet's AX window ID need not be its parent document's CG ID.
             let selector = try DialogTargetSelector(applicationIdentifier: appName)
-            let candidates = try await self.targetedDialogCandidates(target: selector)
+            let candidates = try await self.targetedDialogCandidates(target: selector, membership: .filePanel)
             guard candidates.count == 1, let candidate = candidates.first else {
                 throw self.dialogCandidateRefusal(target: selector, candidates: candidates)
             }
-            guard self.isFileDialogElement(candidate.dialog) else { throw DialogError.noFileDialog }
             let current = try await self.revalidateDialogTarget(
                 target: candidate.target,
                 retainedWindow: candidate.window,
                 retainedDialog: candidate.dialog,
-                operation: "file dialog resolution")
+                operation: "file dialog resolution",
+                membership: .filePanel)
             return FileDialogElementResolution(
                 element: current.dialog,
                 dialogIdentifier: self.dialogIdentifier(for: current.dialog),

@@ -217,7 +217,15 @@ export function classifyNpmViewResult({ exitCode, stdout, stderr, expectedVersio
     if (observed !== expectedVersion) fail('npm returned an unexpected published version');
     return 'published';
   }
-  if (/E404|404 Not Found/.test(`${stdout}\n${stderr}`)) return 'absent';
+  const errorCodes = new Set([...stderr.matchAll(/^npm (?:error|ERR!) code ([A-Z][A-Z0-9]+)\s*$/gm)]
+    .map((match) => match[1]));
+  try {
+    const payload = JSON.parse(stdout);
+    if (typeof payload?.error?.code === 'string') errorCodes.add(payload.error.code);
+  } catch {
+    // Older npm clients may report only their stderr error-code line.
+  }
+  if (errorCodes.size === 1 && errorCodes.has('E404')) return 'absent';
   fail(`npm publication state probe failed with exit ${exitCode}`);
 }
 

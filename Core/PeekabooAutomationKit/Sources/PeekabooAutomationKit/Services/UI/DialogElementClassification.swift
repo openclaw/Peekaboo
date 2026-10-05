@@ -71,6 +71,12 @@ enum DialogElementClassifier {
             titleHints.contains { evidence.title.localizedCaseInsensitiveContains($0) }
     }
 
+    static func isTargetedFilePanel(_ evidence: DialogElementEvidence) -> Bool {
+        let title = evidence.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return self.hasFilePanelIdentifier(evidence.identifier) ||
+            self.titleHints.contains(title) || title == "save as" || title.hasPrefix("save as ")
+    }
+
     static func isObservationDialog(_ evidence: DialogElementEvidence) -> Bool {
         if self.hasFilePanelIdentifier(evidence.identifier) || self.isObservationFileDialogTitle(evidence.title) {
             return true
