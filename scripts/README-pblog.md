@@ -39,12 +39,17 @@ A unified log viewer for all Peekaboo applications and services.
 - `-d, --debug` - Show debug level logs
 - `-f, --follow` - Stream logs continuously
 - `-e, --errors` - Show only errors
+- Historical error queries match the native `logType` field; unrelated event types are not log severity.
 - `--subsystem NAME` - Filter by specific subsystem
 - `--json` - Output in JSON format
 
 Search, category, and subsystem values are literal text, not shell commands or predicate expressions. Quote values in your shell; the helper preserves apostrophes, quotes, backslashes, and trailing newlines when passing them to macOS unified logging. macOS can reject control characters in a predicate; the helper does not silently trim them into a different query. `--output FILE` saves the selected rows to a file; `--all` disables the default tail limit.
 
+Failed log queries return nonzero even when output is limited with `tail` or saved to a file. Passwordless-sudo refusals, invalid tail limits, and output-file errors also remain failures; partial output is not a success signal.
+
 ## Examples
+
+Value-taking options require a following argument. A final `--search`, `--lines`, or other value-taking option reports `<option> requires a value` on stderr and exits with status 2 before reading logs. Empty or dash-prefixed arguments are still supplied values, not missing arguments.
 
 ```bash
 # Debug element detection issues

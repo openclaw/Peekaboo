@@ -59,6 +59,12 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     typealias TargetReservation = @MainActor (BrowserMCPConnectionReceipt) throws -> Void
     typealias TargetRelease = @MainActor @Sendable () -> Void
 
+    enum OwnershipReconciliation: Sendable {
+        case retained(BrowserMCPExecutionSessionBinding)
+        case cleared
+        case pending
+    }
+
     private let serverName: String
     private let manager: any BrowserMCPManaging
     private let detectedBrowsers: BrowserDetector
@@ -192,6 +198,30 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         guard !inspection.wasCancelled else { throw CancellationError() }
         try Task.checkCancellation()
         return inspection.status
+    }
+
+    /// Reconciles provider ownership, not fresh browser authority. Failure cleanup must not restart a stuck metadata
+    /// read.
+    func reconcileTargetOwnership(releaseTarget: TargetRelease) async -> OwnershipReconciliation {
+        do {
+            return try await self.withExecutionGate {
+                if !self.connectionCleanupPending,
+                   let receipt = self.connectionReceipt,
+                   let epoch = self.providerSessionEpoch,
+                   self.manager.hasServer(name: self.serverName),
+                   await self.manager.isServerConnected(name: self.serverName)
+                {
+                    return .retained(BrowserMCPExecutionSessionBinding(
+                        connectionReceipt: receipt,
+                        providerSessionEpoch: epoch))
+                }
+                guard await self.clearConnection() else { return .pending }
+                releaseTarget()
+                return .cleared
+            }
+        } catch {
+            return .pending
+        }
     }
 
     private func inspectStatusUnlocked(channel: BrowserMCPChannel?) async -> BrowserMCPStatusInspection {

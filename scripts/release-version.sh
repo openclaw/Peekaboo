@@ -2,34 +2,31 @@
 
 peekaboo_release_build_number() {
   local version=${1:?'version required'}
-  local core prerelease major minor patch suffix prerelease_label prerelease_number
-  core=${version%%-*}
-  prerelease=
-  if [[ "$version" == *-* ]]; then
-    prerelease=${version#*-}
-  fi
-  IFS=. read -r major minor patch <<<"$core"
-  if [[ ! "$major" =~ ^[0-9]+$ || ! "$minor" =~ ^[0-9]+$ || ! "$patch" =~ ^[0-9]+$ ]]; then
-    printf 'ERROR: Version must be numeric semver: %s\n' "$version" >&2
+  local prerelease major minor patch suffix prerelease_label prerelease_number
+  # Parse the complete supported version, so extra identifiers cannot alias a
+  # different prerelease's build number. Retain beta2/beta-2 legacy spellings.
+  if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([A-Za-z]+)([.-]?([1-9][0-9]*))?)?$ ]]; then
+    printf 'ERROR: Version must be numeric semver with a supported prerelease: %s\n' "$version" >&2
     return 1
   fi
-  if ((10#$minor > 99 || 10#$patch > 99)); then
-    printf 'ERROR: Minor and patch versions must be <= 99: %s\n' "$version" >&2
+  major=${BASH_REMATCH[1]}
+  minor=${BASH_REMATCH[2]}
+  patch=${BASH_REMATCH[3]}
+  prerelease=${BASH_REMATCH[4]}
+  prerelease_label=${BASH_REMATCH[5]}
+  prerelease_number=${BASH_REMATCH[7]:-1}
+  # Check lengths before evaluating shell arithmetic, which otherwise wraps
+  # oversized decimal strings. This bound leaves room for every suffix.
+  if [[ ${#major} -gt 13 || ${#minor} -gt 2 || ${#patch} -gt 2 ]] ||
+    ((10#$major > 9223372036853)); then
+    printf 'ERROR: Version components exceed the build number range: %s\n' "$version" >&2
     return 1
   fi
 
   suffix=99
   if [[ -n "$prerelease" ]]; then
-    prerelease_label=${prerelease%%.*}
-    prerelease_label=${prerelease_label%%-*}
-    prerelease_label=${prerelease_label%%[0-9]*}
     prerelease_label="$(printf '%s' "$prerelease_label" | /usr/bin/tr '[:upper:]' '[:lower:]')"
-    if [[ "$prerelease" =~ ([0-9]+)$ ]]; then
-      prerelease_number=${BASH_REMATCH[1]}
-    else
-      prerelease_number=1
-    fi
-    if ((10#$prerelease_number < 1 || 10#$prerelease_number > 29)); then
+    if [[ ${#prerelease_number} -gt 2 ]] || ((10#$prerelease_number > 29)); then
       printf 'ERROR: Prerelease number must be 1..29: %s\n' "$version" >&2
       return 1
     fi

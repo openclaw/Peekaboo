@@ -782,6 +782,120 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
     }
 }
 
+extension BrowserMCPSessionManagerAuthorityValidationTests {
+    @Test
+    func `public metadata deadline does not restart a blocked discovery read`() async throws {
+        let manager = AuthorityBrowserMCPManager()
+        try await Self.withMetadataBlock { fixture in
+            let attempts = OrderedConnectionAttempts()
+            let session = Self.metadataSession(
+                manager: manager,
+                detector: { _ in
+                    fixture.blockIfArmed()
+                    return [Self.browser(bundleIdentifier: "com.google.Chrome")]
+                },
+                attempts: { attempts.next() })
+            let pool = BrowserMCPAuthenticatedSessionPool { _ in
+                Self.metadataSession(manager: AuthorityBrowserMCPManager())
+            }
+            let service = BrowserMCPService(sessionManager: session, authenticatedSessionPool: pool)
+            fixture.arm()
+            let task = Task { try await service.connectWithOutcome(channel: .stable, browserURL: nil) }
+            try #require(await fixture.waitUntilEntered())
+            await #expect(throws: DesktopActionFailure.self) { _ = try await task.value }
+            #expect(!fixture.didRelease)
+            #expect(manager.addServerCount == 0)
+            fixture.release()
+            try await fixture.drain()
+            #expect(try await service.connect(channel: .stable).isConnected)
+            #expect(manager.addServerCount == 1)
+            await service.disconnect()
+        }
+    }
+
+    @Test
+    func `public metadata cancellation releases an unused reservation before getter release`() async throws {
+        let manager = AuthorityBrowserMCPManager()
+        try await Self.withMetadataBlock { fixture in
+            let reads = AuthorityCounter()
+            let session = Self.metadataSession(manager: manager, liveBundle: { _ in
+                reads.increment()
+                if reads.value == 2 {
+                    fixture.blockIfArmed()
+                }
+                return "com.google.Chrome"
+            })
+            let pool = BrowserMCPAuthenticatedSessionPool { _ in
+                Self.metadataSession(manager: AuthorityBrowserMCPManager())
+            }
+            let peer = BrowserMCPAuthenticatedSessionPool.SessionID()
+            _ = try #require(pool.manager(for: peer))
+            let processReceipt = BrowserMCPConnectionReceipt(
+                channel: .stable,
+                processIdentifier: 50,
+                processStartIdentity: 2050,
+                bundleIdentifier: "com.google.Chrome")
+            let service = BrowserMCPService(sessionManager: session, authenticatedSessionPool: pool)
+            fixture.arm()
+            let task = Task { try await service.connectWithOutcome(channel: .stable, browserURL: nil) }
+            try #require(await fixture.waitUntilEntered())
+            #expect(throws: BrowserMCPConnectionError.targetLocked) { try pool.bind(peer, to: processReceipt) }
+            task.cancel()
+            await #expect(throws: DesktopActionFailure.self) { _ = try await task.value }
+            #expect(!fixture.didRelease)
+            #expect(manager.addServerCount == 0)
+            try pool.bind(peer, to: processReceipt)
+            pool.unbind(peer)
+            fixture.release()
+            try await fixture.drain()
+            #expect(manager.addServerCount == 0)
+            #expect(try await service.connect(channel: .stable).isConnected)
+            #expect(manager.addServerCount == 1)
+            await service.disconnect()
+        }
+    }
+
+    @Test
+    func `public metadata cancellation retains the connected provider and reservation`() async throws {
+        let manager = AuthorityBrowserMCPManager()
+        try await Self.withMetadataBlock { fixture in
+            let session = Self.metadataSession(manager: manager, liveBundle: { _ in
+                fixture.blockIfArmed()
+                return "com.google.Chrome"
+            })
+            let pool = BrowserMCPAuthenticatedSessionPool { _ in
+                Self.metadataSession(manager: AuthorityBrowserMCPManager())
+            }
+            let peer = BrowserMCPAuthenticatedSessionPool.SessionID()
+            _ = try #require(pool.manager(for: peer))
+            let service = BrowserMCPService(sessionManager: session, authenticatedSessionPool: pool)
+            let connected = try await service.connect(channel: .stable)
+            let receipt = try #require(connected.connectionReceipt)
+            fixture.arm()
+            let task = Task { try await service.connectWithOutcome(channel: .stable, browserURL: nil) }
+            try #require(await fixture.waitUntilEntered())
+            task.cancel()
+            await #expect(throws: DesktopActionFailure.self) { _ = try await task.value }
+            #expect(!fixture.didRelease)
+            #expect(manager.addServerCount == 1)
+            #expect(manager.removeServerCount == 0)
+            #expect(throws: BrowserMCPConnectionError.targetLocked) { try pool.bind(peer, to: receipt) }
+            fixture.release()
+            try await fixture.drain()
+            let recovered = await service.status(channel: .stable)
+            #expect(recovered.connectionReceipt == connected.connectionReceipt)
+            #expect(recovered.providerSessionEpoch == connected.providerSessionEpoch)
+            manager.executedTools.removeAll()
+            _ = try await service.executeSequence(
+                [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: [:])],
+                channel: .stable,
+                expectedConnectionReceipt: receipt)
+            #expect(manager.executedTools == ["take_snapshot"])
+            await service.disconnect()
+        }
+    }
+}
+
 @MainActor
 private final class DeadlineBrowserMCPManager: BrowserMCPManaging {
     var connected = false

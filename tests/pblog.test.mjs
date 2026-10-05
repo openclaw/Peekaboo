@@ -21,6 +21,7 @@ exit "\${PBLOG_TEST_EXIT:-0}"
   writeFileSync(path.join(directory, 'sudo'), `#!/bin/bash
 printf '%s\\0' "$@" > "$PBLOG_TEST_SUDO_ARGS"
 [[ "$1" == -n && "$2" == log ]] || exit 99
+[[ "$PBLOG_TEST_SUDO_EXIT" == 0 ]] || exit "$PBLOG_TEST_SUDO_EXIT"
 shift 2
 exec log "$@"
 `, { mode: 0o755 });
@@ -39,6 +40,7 @@ exec log "$@"
         PBLOG_TEST_ARGS: argsPath,
         PBLOG_TEST_SUDO_ARGS: sudoArgsPath,
         PBLOG_TEST_EXIT: '0',
+        PBLOG_TEST_SUDO_EXIT: '0',
         ...environment,
       },
     }),
@@ -66,7 +68,7 @@ test('historical debug and error queries preserve flags and mock-only sudo', (t)
   success(f.run(['--all', '--debug', '--subsystem', 'boo.test']));
   assert.deepEqual(f.args(), ['show', '--predicate', 'subsystem == "boo.test"', '--debug', '--last', '5m']);
   success(f.run(['--private', '--all', '--errors', '--subsystem', 'boo.test']));
-  const expected = ['show', '--predicate', 'subsystem == "boo.test" AND eventType == "error"', '--info', '--debug', '--last', '5m'];
+  const expected = ['show', '--predicate', 'subsystem == "boo.test" AND logType == "error"', '--info', '--debug', '--last', '5m'];
   assert.deepEqual(f.args(), expected);
   assert.deepEqual(f.sudoArgs(), ['-n', 'log', ...expected]);
 });
@@ -91,9 +93,78 @@ for (const outputFile of [false, true]) {
   }
 }
 
-test('unpiped log exit status is preserved', (t) => {
-  const result = fixture(t).run(['--all'], { PBLOG_TEST_EXIT: '7' });
+for (const outputFile of [false, true]) {
+  for (const all of [false, true]) {
+    for (const privateMode of [false, true]) {
+      test(`log failure survives ${outputFile ? 'file' : 'stdout'} / ${all ? 'all' : 'tail'} / ${privateMode ? 'private' : 'normal'}`, (t) => {
+        const f = fixture(t);
+        const output = path.join(f.directory, 'failed.log');
+        const args = [...(all ? ['--all'] : ['--lines', '2']), ...(outputFile ? ['--output', output] : []), ...(privateMode ? ['--private'] : [])];
+        const result = f.run(args, { PBLOG_TEST_EXIT: '7' });
+        assert.equal(result.error, undefined);
+        assert.equal(result.signal, null);
+        assert.equal(result.status, 7);
+        assert.equal(result.stderr, '');
+        assert.equal(outputFile ? readFileSync(output, 'utf8') : result.stdout, all ? 'first\nsecond\nthird\n' : 'second\nthird\n');
+      });
+    }
+    test(`mock sudo refusal survives ${outputFile ? 'file' : 'stdout'} / ${all ? 'all' : 'tail'}`, (t) => {
+      const f = fixture(t);
+      const result = f.run(['--private', ...(all ? ['--all'] : ['--lines', '2']), ...(outputFile ? ['--output', path.join(f.directory, 'denied.log')] : [])], { PBLOG_TEST_SUDO_EXIT: '9' });
+      assert.equal(result.error, undefined);
+      assert.equal(result.signal, null);
+      assert.equal(result.status, 9);
+      assert.deepEqual(f.args(), []);
+      assert.equal(result.stdout, '');
+    });
+  }
+}
+
+test('output redirection and tail failures remain failures', (t) => {
+  const f = fixture(t);
+  for (const args of [['--output', path.join(f.directory, 'log', 'not-a-directory')], ['--lines', 'not-a-count']]) {
+    const result = f.run(args);
+    assert.equal(result.error, undefined);
+    assert.equal(result.signal, null);
+    assert.notEqual(result.status, 0);
+    assert.notEqual(result.stderr, '');
+  }
+});
+
+const valueOptions = ['-n', '--lines', '-l', '--last', '-c', '--category', '-s', '--search', '-o', '--output', '--subsystem'];
+for (const option of valueOptions) {
+  test(`missing value for ${option}`, (t) => {
+    const f = fixture(t);
+    const result = f.run([option]);
+    assert.equal(result.error, undefined, 'The parser must terminate before the subprocess timeout');
+    assert.equal(result.signal, null);
+    assert.equal(result.status, 2);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, `${option} requires a value\n`);
+    assert.deepEqual(f.args(), []);
+    assert.deepEqual(f.sudoArgs(), []);
+  });
+
+  test(`supplied values for ${option} preserve parsing before help`, (t) => {
+    const f = fixture(t);
+    for (const value of ['fixture', '', '-literal']) {
+      const result = f.run([option, value, '--help']);
+      success(result);
+      assert.match(result.stdout, /^Usage: pblog.sh/);
+      assert.deepEqual(f.args(), []);
+      assert.deepEqual(f.sudoArgs(), []);
+    }
+  });
+}
+
+test('a trailing missing value fails after preceding valid options, before private log access', (t) => {
+  const f = fixture(t);
+  const result = f.run(['--private', '--debug', '--last', '5m', '--search', 'literal text', '--output']);
   assert.equal(result.error, undefined);
   assert.equal(result.signal, null);
-  assert.equal(result.status, 7);
+  assert.equal(result.status, 2);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, '--output requires a value\n');
+  assert.deepEqual(f.args(), []);
+  assert.deepEqual(f.sudoArgs(), []);
 });
