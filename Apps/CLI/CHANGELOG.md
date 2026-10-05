@@ -7,10 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Preserve literal log-helper search and filter text without shell re-parsing, including quotes, backslashes and trailing newlines; retain output, streaming and private-mode arguments. Thanks @rudycelekli! #934.
+- Preserve conventional shell exit statuses when a wrapped source-build command is terminated by a signal, while retaining mapping integrity checks and lock cleanup. Thanks @rudycelekli! #932.
+- Avoid redundant PNG encoding for unchanged live capture frames, preserving original bytes and metadata while retaining transformed-frame encoding, actual-byte caps, and artifact validation.
 - Show eligible visualizer overlays from a hidden companion app without unhiding or activating it, accepting input, or changing background-input suppression.
+- Fix the Playground log wrapper's moved script path and clarify repository-root examples, preserving arguments and exit status. Thanks @rudycelekli! #933.
 - Fix signed Bridge typing receipts after already-empty clears and already-satisfied caret moves, preserving zero-dispatch no-ops and strict key, delivery and dispatch-count validation.
+- Preserve accepted dispatch evidence and retry-unsafe status after unchanged readback instead of reporting a no-dispatch no-op or a safe retry; positively observed changes still confirm the action. Thanks @rudycelekli! #942.
 - Share native and Bridge literal-replacement eligibility without changing confirmation policy, and clarify typing-unit versus native-event counts.
+- Clarify `type --clear` help and generated learning guidance to distinguish eligible native Accessibility clearing from keyboard routes, without changing delivery, targeting, or success rules.
+- Preserve fractional timeout durations in command and dialog diagnostics instead of truncating them to whole seconds, without changing deadlines or error codes. Thanks @rudycelekli! #946.
+- Escape update-feed URLs and metadata as XML while preserving decoded values and literal replacement characters, including multi-parameter URLs. Thanks @rudycelekli! #935.
 - Correct the visualizer log helper's receiver subsystem and include info/debug output while preserving explicit predicates, without changing logging settings or rendering behavior.
+- Bound npm MCP wrapper shutdown: cancel pending restarts, allow five seconds for the owned server to exit after SIGTERM, then terminate that same child if necessary. Thanks @rudycelekli! #947.
 
 ## 4.8.0 - 2026-10-03
 
