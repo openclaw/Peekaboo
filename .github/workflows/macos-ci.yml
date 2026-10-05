@@ -42,6 +42,9 @@ jobs:
           node --no-warnings scripts/test-chrome-devtools-mcp-contract.mjs
           node --no-warnings scripts/test-browser-provider-connection.mjs
 
+      - name: Verify MCP wrapper
+        run: pnpm run test:mcp-wrapper
+
       - name: Docs lint
         run: |
           node scripts/docs-lint.mjs
