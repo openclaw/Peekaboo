@@ -3114,6 +3114,144 @@ struct BrowserMCPSessionManagerTests {
         #expect(root.rootExecuteCount == 0)
         #expect(agent.remoteBrowserClients.isEmpty)
         #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+        let prompt = AgentSystemPrompt.generate(availableToolNames: Set(tools.map(\.name)))
+        #expect(!prompt.contains("**Browser Automation**"))
+        #expect(!prompt.contains("**Calculations**"))
+        #expect(prompt.contains("immutable background-only authority"))
+        #expect(prompt.utf8.count * 2 < AgentSystemPrompt.generate().utf8.count)
+    }
+
+    @Test(arguments: [false, true])
+    func `catalog-aware Agent prompt matches final execution tools without reacquiring browser`(
+        streaming: Bool) async throws
+    {
+        let directory = try AgentTestStorage.sessionDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let root = AgentRemoteBrowserRoot()
+        let provider = AgentRemoteBrowserStatusProvider(supportsStreaming: streaming)
+        let model = LanguageModel.custom(provider: provider)
+        let agent = try AuthorityTestSupport.agent(
+            services: Self.services(browser: root),
+            defaultModel: model,
+            sessionManager: AgentSessionManager(sessionDirectory: directory))
+        let sessionID = UUID().uuidString
+        let generation = try agent.beginAgentSessionExecution(for: sessionID)
+        let system = ModelMessage(
+            id: "catalog-system",
+            role: .system,
+            content: [.text("Stale unfiltered recipes")],
+            timestamp: Date(timeIntervalSince1970: 1234),
+            metadata: MessageMetadata(customData: ["preserve": "system identity"]))
+        let context = PeekabooAgentService.SessionContext(
+            id: sessionID,
+            isPersistent: false,
+            messages: [system, .user("Inspect synthetic browser status")],
+            createdAt: Date(),
+            executionStart: Date(),
+            metadata: SessionMetadata(),
+            modelIdentity: .init(
+                displayName: "catalog-fixture", selection: nil, endpointIdentity: nil, providerIdentity: nil),
+            storedToolExecutionAuthority: .backgroundOnly,
+            toolExecutionAuthority: .backgroundOnly,
+            provider: provider,
+            executionGeneration: generation)
+        let result: AgentExecutionResult = if streaming {
+            try await agent.executeWithStreaming(
+                context: context, model: model, maxSteps: 2, enhancementOptions: .minimal)
+        } else {
+            try await agent.executeWithoutStreaming(
+                context: context, model: model, maxSteps: 2, enhancementOptions: .minimal)
+        }
+
+        #expect(provider.catalogRequests.count == 2)
+        for request in provider.catalogRequests {
+            #expect(request.toolNames.contains("browser"))
+            #expect(!request.toolNames.contains("shell"))
+            #expect(!request.toolNames.contains("move"))
+            let observedSystem = try #require(request.systemMessage)
+            #expect(observedSystem.id == system.id)
+            #expect(observedSystem.timestamp == system.timestamp)
+            #expect(observedSystem.metadata == system.metadata)
+            #expect(observedSystem.content == [.text(AgentSystemPrompt.generate(
+                for: model,
+                executionAuthority: .backgroundOnly,
+                availableToolNames: request.toolNames))])
+        }
+        #expect(result.messages.first == provider.catalogRequests.first?.systemMessage)
+        #expect(context.messages.first == system)
+        #expect(root.openCount == 1)
+        let child = try #require(root.children.first)
+        #expect(child.statusCount == 1)
+        #expect(child.endCount == 1)
+        #expect(root.rootExecuteCount == 0)
+        #expect(agent.remoteBrowserClients.isEmpty)
+        #expect(agent.agentSessionExecutionGenerations[sessionID] == nil)
+    }
+
+    @Test(arguments: [false, true])
+    func `catalog-aware Agent prompt is retained in the initial failure checkpoint`(streaming: Bool) async throws {
+        let directory = try AgentTestStorage.sessionDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let manager = try AgentSessionManager(sessionDirectory: directory)
+        let root = AgentRemoteBrowserRoot()
+        let provider = AgentRemoteBrowserStatusProvider(supportsStreaming: streaming, failFirstRequest: true)
+        let model = LanguageModel.custom(provider: provider)
+        let agent = try AuthorityTestSupport.agent(
+            services: Self.services(browser: root), defaultModel: model, sessionManager: manager)
+        let sessionID = UUID().uuidString
+        let messages: [ModelMessage] = [.system("Stale foreground recipes"), .user("Synthetic task")]
+        let now = Date()
+        try manager.saveSession(AgentSession(
+            id: sessionID,
+            modelName: "catalog-fixture",
+            toolExecutionPolicy: .foregroundAllowed,
+            messages: messages,
+            metadata: SessionMetadata(),
+            createdAt: now,
+            updatedAt: now))
+        let generation = try agent.beginAgentSessionExecution(for: sessionID)
+        let context = PeekabooAgentService.SessionContext(
+            id: sessionID,
+            isPersistent: true,
+            messages: messages,
+            createdAt: now,
+            executionStart: now,
+            metadata: SessionMetadata(),
+            modelIdentity: .init(
+                displayName: "catalog-fixture", selection: nil, endpointIdentity: nil, providerIdentity: nil),
+            storedToolExecutionAuthority: .init(basePolicy: .foregroundAllowed),
+            toolExecutionAuthority: .backgroundOnly,
+            provider: provider,
+            executionGeneration: generation)
+
+        await #expect(throws: AgentCatalogProviderFailure.self) {
+            if streaming {
+                _ = try await agent.executeWithStreaming(
+                    context: context, model: model, maxSteps: 2, enhancementOptions: .minimal)
+            } else {
+                _ = try await agent.executeWithoutStreaming(
+                    context: context, model: model, maxSteps: 2, enhancementOptions: .minimal)
+            }
+        }
+
+        #expect(provider.catalogRequests.count == 1)
+        let request = try #require(provider.catalogRequests.first)
+        let saved = try #require(try await manager.loadSession(id: sessionID))
+        #expect(saved.messages.first == request.systemMessage)
+        #expect(saved.messages.first?.content == [.text(AgentSystemPrompt.generate(
+            for: model, executionAuthority: .backgroundOnly, availableToolNames: request.toolNames))])
+        #expect(saved.messages.first?.id == messages.first?.id)
+        #expect(saved.messages.last == messages.last)
+        #expect(saved.metadata.customData["status"] == "failed")
+        #expect(saved.effectiveToolExecutionPolicy == .foregroundAllowed)
+        #expect(agent.agentSessionExecutionGenerations[sessionID] == nil)
+        #expect(root.openCount == 1)
+        let child = try #require(root.children.first)
+        #expect(child.statusCount == 0)
+        #expect(child.endCount == 0)
+        try await agent.deleteSession(id: sessionID)
+        #expect(child.endCount == 1)
+        #expect(agent.remoteBrowserClients.isEmpty)
     }
 
     @Test
@@ -5836,25 +5974,38 @@ private final class AgentClaimRecordingRemoteBrowserTransport: RemoteBrowserMCPS
     }
 }
 
+private enum AgentCatalogProviderFailure: Error {
+    case rejected
+}
+
 private final class AgentRemoteBrowserStatusProvider: ModelProvider, @unchecked Sendable {
+    struct CatalogRequest: Sendable {
+        let toolNames: Set<String>
+        let systemMessage: ModelMessage?
+    }
+
     let modelId = "agent-remote-browser-status"
     let baseURL: String? = nil
     let apiKey: String? = nil
     let capabilities: ModelCapabilities
     let terminalResponseBarrier: SequenceBarrier?
     let requestedToolCall: AgentToolCall
+    let failFirstRequest: Bool
     private let lock = NSLock()
     private var requests = 0
     private var observedPasteParameters: [[String]] = []
     private var observedSystemPrompts: [String] = []
+    private var observedCatalogRequests: [CatalogRequest] = []
 
     init(
         supportsStreaming: Bool,
         terminalResponseBarrier: SequenceBarrier? = nil,
-        requestedToolCall: AgentToolCall? = nil)
+        requestedToolCall: AgentToolCall? = nil,
+        failFirstRequest: Bool = false)
     {
         self.capabilities = ModelCapabilities(supportsStreaming: supportsStreaming)
         self.terminalResponseBarrier = terminalResponseBarrier
+        self.failFirstRequest = failFirstRequest
         self.requestedToolCall = requestedToolCall ?? AgentToolCall(
             id: "remote-browser-status",
             name: "browser",
@@ -5873,8 +6024,15 @@ private final class AgentRemoteBrowserStatusProvider: ModelProvider, @unchecked 
         self.lock.withLock { self.observedSystemPrompts }
     }
 
+    var catalogRequests: [CatalogRequest] {
+        self.lock.withLock { self.observedCatalogRequests }
+    }
+
     func generateText(request: ProviderRequest) async throws -> ProviderResponse {
         let requestIndex = self.lock.withLock {
+            self.observedCatalogRequests.append(CatalogRequest(
+                toolNames: Set(request.tools?.map(\.name) ?? []),
+                systemMessage: request.messages.first { $0.role == .system }))
             self.observedPasteParameters.append(request.tools?.first { $0.name == "paste" }?
                 .parameters.properties.keys.sorted() ?? [])
             self.observedSystemPrompts
@@ -5888,6 +6046,9 @@ private final class AgentRemoteBrowserStatusProvider: ModelProvider, @unchecked 
             return self.requests
         }
         if requestIndex == 0 {
+            if self.failFirstRequest {
+                throw AgentCatalogProviderFailure.rejected
+            }
             return ProviderResponse(
                 text: "",
                 finishReason: .toolCalls,

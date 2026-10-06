@@ -1,7 +1,136 @@
+import Tachikoma
 import Testing
 @testable import PeekabooAgentRuntime
 
 struct AgentSystemPromptTests {
+    @Test(arguments: [Set<String>(), Set(["permissions"]), Set(["permissions", "sleep", "done", "need_info"])])
+    func `sparse catalogs shrink recipes without dropping authority or evidence constraints`(_ names: Set<String>) {
+        let prompt = AgentSystemPrompt.generate(availableToolNames: names)
+        let comprehensive = AgentSystemPrompt.generate()
+        #expect(prompt.utf8.count * 2 < comprehensive.utf8.count)
+        for safety in [
+            "immutable background-only authority",
+            "Space switch/follow, persistent clipboard writes",
+            "retry/routing workarounds",
+            "Tool availability never broadens execution authority",
+            "not delivered, do not describe",
+            "missing text or elements do not prove absence",
+            "report that the state is unverified",
+            "two-phase contract",
+            "first structurally valid",
+            "Repeat the exact same target and predicates",
+            "predicates are structured JSON objects",
+            "at most one desktop-mutating tool call in each model response",
+            "does not change a `dispatched_unverified` receipt",
+            "Ask the user before destructive or externally visible actions",
+        ] {
+            #expect(prompt.contains(safety), "Sparse prompt lost safety guidance: \(safety)")
+        }
+        for recipe in [
+            "**Calculations**", "**Window Management Strategy**", "**Browser Automation**", "**Dialog Interaction**",
+            "Use `inspect_ui`", "Use `see`", "Use `browser`", "Use `select_text`", "Prefer `set_value`",
+            "Keyboard shortcuts", "Background-only Agent typing", "Background `drag`",
+        ] {
+            #expect(!prompt.contains(recipe), "Sparse prompt advertises an unavailable recipe: \(recipe)")
+        }
+        #expect(prompt.contains("the `sleep` tool") == names.contains("sleep"))
+        #expect(prompt.contains("use `need_info`") == names.contains("need_info"))
+    }
+
+    @Test
+    func `nil catalog remains comprehensive while empty catalog explicitly has no tools`() {
+        #expect(AgentSystemPrompt.generate() == AgentSystemPrompt.generate(availableToolNames: nil))
+        let empty = AgentSystemPrompt.generate(availableToolNames: [])
+        #expect(empty.contains("No tools are available in this invocation"))
+        #expect(!empty.contains("**Tool Usage Guidelines**"))
+        #expect(AgentSystemPrompt.generate().contains("**Calculations**"))
+    }
+
+    @Test
+    func `native catalog retains only admitted observation and input recipes`() {
+        let prompt = AgentSystemPrompt.generate(availableToolNames: [
+            "inspect_ui", "verify_state", "press", "type", "drag", "need_info",
+        ])
+        #expect(prompt.contains("Use `inspect_ui`"))
+        #expect(prompt.contains("Prefer `verify_state`"))
+        #expect(prompt.contains(AgentBackgroundCapabilityContract.receiptPinnedPress))
+        #expect(prompt.contains(AgentBackgroundCapabilityContract.snapshotPinnedType))
+        #expect(prompt.contains(AgentBackgroundCapabilityContract.rawPressObservation))
+        #expect(prompt.contains("Background `drag` requires a capable host"))
+        #expect(!prompt.contains("Use `see`"))
+        #expect(!prompt.contains("Use `browser`"))
+        #expect(!prompt.contains("Prefer `set_value`"))
+        #expect(!prompt.contains("Calculator"))
+        #expect(!prompt.contains("**Dialog Interaction**"))
+    }
+
+    @Test
+    func `catalog order does not change prompt and browser-only guidance does not invent native tools`() {
+        let first = AgentSystemPrompt.generate(availableToolNames: Set(["browser", "permissions"]))
+        let second = AgentSystemPrompt.generate(availableToolNames: Set(["permissions", "browser"]))
+        #expect(first == second)
+        #expect(first.contains("**Browser Automation**"))
+        #expect(first.contains("Do not guess hidden page"))
+        #expect(first.contains("Never use a fallback to bypass a foreground-consent refusal"))
+        #expect(!first.contains("Use `inspect_ui`"))
+        #expect(!first.contains("Use `see`"))
+        #expect(!first.contains("**Window Management Strategy**"))
+        let foreground = AgentSystemPrompt.generate(
+            executionPolicy: .foregroundAllowed,
+            availableToolNames: ["browser"])
+        #expect(foreground.contains("Trusted browser pointer, form-fill, focused-keyboard, and upload actions"))
+        #expect(!foreground.contains(#""action": "open", "name": "Safari""#))
+    }
+
+    @Test(arguments: [MCPToolExecutionPolicy.backgroundOnly, .foregroundAllowed, .unrestricted])
+    func `sparse catalogs preserve their explicit authority ceiling`(_ policy: MCPToolExecutionPolicy) {
+        let prompt = AgentSystemPrompt.generate(executionPolicy: policy, availableToolNames: ["permissions"])
+        #expect(prompt.contains("immutable background-only authority") == (policy == .backgroundOnly))
+        #expect(prompt.contains("but not Shell authority") == (policy == .foregroundAllowed))
+        #expect(prompt.contains("unrestricted tool authority") == (policy == .unrestricted))
+        #expect(!prompt.contains(#""foreground": true"#))
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func `temporary clipboard recipe requires both fresh authority and exposed paste`(granted: Bool, exposed: Bool) {
+        let names: Set<String> = exposed ? ["paste"] : []
+        let prompt = AgentSystemPrompt.generate(
+            executionAuthority: .init(temporaryClipboardPasteGranted: granted),
+            availableToolNames: names)
+        #expect(prompt.contains("explicit temporary-clipboard permission") == (granted && exposed))
+        #expect(prompt.contains("immutable background-only authority"))
+        if granted, exposed {
+            #expect(prompt.contains("restores only while still owned"))
+            #expect(prompt.contains("unverified and retry-unsafe"))
+            #expect(prompt.contains("not inherited by nested Agent execution"))
+        }
+    }
+
+    @Test
+    func `model preamble only recommends supplied screenshot routes`() {
+        let absent = AgentSystemPrompt.generate(for: .openai(.gpt5), availableToolNames: ["permissions"])
+        #expect(absent.contains("**Preamble Messages for GPT-5**"))
+        #expect(!absent.contains("call `see`"))
+        #expect(!absent.contains("prefer `browser`"))
+        #expect(!absent.contains("Never claim you cannot capture the screen"))
+        let visual = AgentSystemPrompt.generate(for: .openai(.gpt5), availableToolNames: ["see"])
+        #expect(visual.contains("For desktop or native app screenshots, call `see`"))
+    }
+
+    @Test(arguments: [MCPToolExecutionPolicy.backgroundOnly, .foregroundAllowed])
+    func `drag guidance preserves bounded background delivery and unverified effect`(_ policy: MCPToolExecutionPolicy) {
+        let prompt = AgentSystemPrompt.generate(executionPolicy: policy, availableToolNames: ["drag"])
+        #expect(prompt.contains("one explicit fresh exact-window snapshot"))
+        #expect(prompt.contains("bounded linear"))
+        #expect(prompt.contains("wholly inside that window"))
+        #expect(prompt.contains("Cross-window/application drops, modifiers, human movement"))
+        #expect(prompt.contains("unverified and retry-unsafe, not proof of the drop"))
+        #expect(prompt.contains("Never fall back to foreground after a refusal"))
+        #expect(!prompt.contains("move and drag remain unavailable"))
+        #expect(!prompt.contains("Do not emit move or drag calls"))
+        #expect(!prompt.contains("use the human motion profile"))
+    }
+
     /// Forbidden tokens that must not appear in the generated system prompt.
     /// These correspond to tools or arguments that do not exist in the current
     /// agent tool schema, so mentioning them would mislead the model.
@@ -47,6 +176,21 @@ struct AgentSystemPromptTests {
         guard #available(macOS 14.0, *) else { return }
         let prompt = AgentSystemPrompt.generate()
         #expect(prompt.contains("`menu` tool"), "Prompt should reference the real `menu` tool.")
+    }
+
+    @Test(arguments: [MCPToolExecutionPolicy.backgroundOnly, .foregroundAllowed, .unrestricted])
+    func `menu guidance preserves exact background click without granting foreground authority`(
+        policy: MCPToolExecutionPolicy)
+    {
+        let prompt = AgentSystemPrompt.generate(executionPolicy: policy, availableToolNames: ["menu"])
+        #expect(prompt.contains("action \"list\" or \"click\""))
+        #expect(prompt
+            .contains("Background click requires an exact app name, bundle ID, or PID and the full menu path"))
+        #expect(!prompt.contains("menu mutations require foreground authority"))
+        #expect(prompt.contains("Foreground menu expansion is unavailable") == (policy == .backgroundOnly))
+        #expect(prompt.contains("never promote a refused background click") == (policy == .backgroundOnly))
+        let unavailable = AgentSystemPrompt.generate(executionPolicy: policy, availableToolNames: [])
+        #expect(!unavailable.contains("Application menus →"))
     }
 
     @Test
@@ -212,7 +356,8 @@ struct AgentSystemPromptTests {
         guard #available(macOS 14.0, *) else { return }
         let prompt = AgentSystemPrompt.generate()
 
-        #expect(prompt.contains("snapshot-pinned typing and raw press"))
+        #expect(prompt.contains(AgentBackgroundCapabilityContract.snapshotPinnedType))
+        #expect(prompt.contains(AgentBackgroundCapabilityContract.receiptPinnedPress))
         #expect(prompt.contains("Targetless, app/PID-only, window-selector-only"))
         #expect(prompt.contains("persistent clipboard"))
         #expect(prompt.contains("setup/fronting"))

@@ -77,6 +77,10 @@ read_when:
   background-only session cannot be broadened on resume, and editing session JSON cannot authorize foreground work.
   Each continuation regenerates its system prompt for the current invocation ceiling, so a stored foreground-capable
   session resumed without the flag does not keep foreground examples or guidance.
+- Each execution tailors actionable system-prompt guidance to its acquired, filtered tool catalog. Disabled tools no
+  longer contribute recipes; authority, outcome-evidence and fresh-observation rules remain unconditional. Both
+  streaming and nonstreaming execution preserve message identity/history and use the same prompt in failure checkpoints.
+  `peekaboo learn` similarly describes its filtered catalog. Tool availability never grants additional authority.
 - Background-only Agent typing requires an explicit fresh exact non-dialog snapshot; an optional element ID must come
   from that snapshot. Snapshot typing cannot include competing app/PID/window selectors. Direct-text paste
   remains available through a generation-pinned app/PID/window authorization with a canonical background result.
