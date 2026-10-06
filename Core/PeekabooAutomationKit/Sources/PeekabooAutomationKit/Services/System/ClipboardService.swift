@@ -607,12 +607,12 @@ ClipboardReadAccessProviding {
         // Slot boards are named, not General; native clipboard read admission is not required.
         let items = self.snapshotItems(from: slotPasteboard)
         guard !items.isEmpty else { throw ClipboardServiceError.slotNotFound(trimmedSlot) }
-        restoredItems = items
         let totalSize = items.flatMap(\.self).reduce(0) { $0 + $1.data.count }
         guard totalSize <= self.sizeLimit else {
             throw ClipboardServiceError.sizeExceeded(current: totalSize, limit: self.sizeLimit)
         }
-        let objects = try Self.pasteboardItems(from: items)
+        restoredItems = items.map(Self.withPlainTextCompanion)
+        let objects = try Self.pasteboardItems(from: restoredItems)
         self.pasteboard.clearContents()
         didDispatch = true
         guard self.pasteboard.writeObjects(objects) else {
@@ -623,6 +623,17 @@ ClipboardReadAccessProviding {
     }
 
     // MARK: - Helpers
+
+    private static func withPlainTextCompanion(_ representations: [ClipboardRepresentation])
+    -> [ClipboardRepresentation] {
+        guard !representations.contains(where: { $0.utiIdentifier == NSPasteboard.PasteboardType.string.rawValue }),
+              let plain = representations.first(where: isPlainTextRepresentation),
+              let text = String(data: plain.data, encoding: .utf8)
+        else { return representations }
+        return representations + [ClipboardRepresentation(
+            utiIdentifier: NSPasteboard.PasteboardType.string.rawValue,
+            data: Data(text.utf8))]
+    }
 
     private func snapshotItems(from pasteboard: NSPasteboard) -> [[ClipboardRepresentation]] {
         let items = (pasteboard.pasteboardItems ?? []).compactMap { item -> [ClipboardRepresentation]? in

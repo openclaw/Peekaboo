@@ -111,6 +111,41 @@ final class ClipboardSlotFidelityTests: XCTestCase {
         }
     }
 
+    func testPlainTextOnlyRestoreKeepsTheExistingStringCompanion() throws {
+        try self.checkPlainTextRestore("plain-text only")
+    }
+
+    func testPlainTextCRLFRestoreKeepsRawBytesAndNormalizedDefaultReadback() throws {
+        try self.checkPlainTextRestore("first\r\nsecond\rthird")
+    }
+
+    private func checkPlainTextRestore(_ text: String) throws {
+        try self.withOwnedBoards { board, slot in
+            let plain = NSPasteboard.PasteboardType("public.plain-text")
+            let payload = Data(text.utf8)
+            let item = NSPasteboardItem()
+            XCTAssertTrue(item.setData(payload, forType: plain))
+            XCTAssertTrue(board.writeObjects([item]))
+            let writer = ClipboardService(pasteboard: board)
+            try writer.save(slot: "proof")
+            XCTAssertNil(slot.string(forType: .string))
+            writer.clear()
+            let reader = ClipboardService(pasteboard: board)
+
+            let restored = try reader.restoreActionResult(slot: "proof")
+
+            XCTAssertEqual(restored.outcome?.state, .confirmedChange)
+            XCTAssertEqual(restored.payload.data, payload)
+            XCTAssertEqual(restored.payload.textPreview, text)
+            XCTAssertEqual(board.data(forType: plain), payload)
+            XCTAssertEqual(board.string(forType: .string), text)
+            let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
+                .replacingOccurrences(of: "\r", with: "\n")
+            XCTAssertEqual(try reader.get(prefer: nil)?.data, Data(normalized.utf8))
+            XCTAssertTrue(slot.types?.isEmpty != false)
+        }
+    }
+
     private func withOwnedBoards(_ operation: (NSPasteboard, NSPasteboard) throws -> Void) throws {
         let board = NSPasteboard.withUniqueName()
         let slot = NSPasteboard(name: .init("\(board.name.rawValue).boo.peekaboo.clipboard.slot.proof"))
