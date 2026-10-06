@@ -3,16 +3,15 @@ import PeekabooCore
 
 extension RuntimeHostResolver {
     static func remoteDialogCapabilities(
-        for handshake: PeekabooBridgeHandshakeResponse
-    ) -> RemoteDialogCapabilities {
+        for handshake: PeekabooBridgeHandshakeResponse) -> RemoteDialogCapabilities
+    {
         let exactInput =
             handshake.negotiatedVersion >= PeekabooBridgeConstants.exactDialogInputExecutionVersion &&
             handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.exactDialogInputExecution) == true
         let exactForceDismiss =
             handshake.negotiatedVersion >= PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion &&
             handshake.hostCapabilities?.contains(
-                PeekabooBridgeHostCapability.exactForcedDialogDismissExecution
-            ) == true
+                PeekabooBridgeHostCapability.exactForcedDialogDismissExecution) == true
         let legacyInputFocusPolicy =
             handshake.negotiatedVersion >= PeekabooBridgeConstants.dialogInputFocusPolicyVersion &&
             handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.dialogInputFocusPolicy) == true
@@ -21,12 +20,10 @@ extension RuntimeHostResolver {
             handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true
         return RemoteDialogCapabilities(
             systemAlertDiscovery: handshake.hostCapabilities?.contains(
-                PeekabooBridgeHostCapability.systemAlertDialogDiscovery
-            ) == true,
+                PeekabooBridgeHostCapability.systemAlertDialogDiscovery) == true,
             backgroundButtonClick: BridgeCapabilityPolicy.supportsOperation(
                 .backgroundDialogClickButton,
-                for: handshake
-            ),
+                for: handshake),
             targetedList: BridgeCapabilityPolicy.supportsOperation(.targetedDialogListElements, for: handshake),
             prepareAction: BridgeCapabilityPolicy.supportsOperation(.prepareDialogAction, for: handshake),
             exactClick: BridgeCapabilityPolicy.supportsOperation(.exactDialogClickButton, for: handshake),
@@ -38,7 +35,11 @@ extension RuntimeHostResolver {
             exactForceDismiss: exactForceDismiss &&
                 BridgeCapabilityPolicy.supportsOperation(.exactDialogForceDismiss, for: handshake),
             legacyInputFocusPolicy: legacyInputFocusPolicy &&
-                BridgeCapabilityPolicy.supportsOperation(.dialogEnterText, for: handshake)
-        )
+                BridgeCapabilityPolicy.supportsOperation(.dialogEnterText, for: handshake),
+            exactFileExecution: usesAttestedReceipts &&
+                handshake.negotiatedVersion >= PeekabooBridgeConstants.exactFileDialogExecutionVersion &&
+                handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.exactFileDialogExecution) == true &&
+                handshake.supportedOperations.contains(.dialogHandleFile) &&
+                handshake.enabledOperations?.contains(.dialogHandleFile) == true)
     }
 }

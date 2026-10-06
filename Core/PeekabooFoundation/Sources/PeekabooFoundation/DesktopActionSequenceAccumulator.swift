@@ -96,6 +96,7 @@ public struct DesktopActionSequenceAccumulator: Sendable {
     private var allReportedOutcomesAreConfirmed = true
     private var allReportedOutcomesAreSuspectedNoop = true
     private var hasReportedResponseLoss = false
+    private var hasReportedRunningOperation = false
     private var singleReportedOutcome: DesktopActionOutcome?
     private var dispatchedRoute = HomogeneousValue<DesktopActionOutcome.Route>()
     private var dispatchedDelivery = CompatibleDeliveryValue()
@@ -258,7 +259,7 @@ public struct DesktopActionSequenceAccumulator: Sendable {
                 outcome: .indeterminate(
                     route: completedOutcome?.route ?? fallbackRoute,
                     delivery: nil,
-                    evidence: .completionUnknown,
+                    evidence: sequence.hasReportedResponseLoss ? .responseLost : .completionUnknown,
                     unitCount: sequence.mutationDisposition.unitCount),
                 fallbackEffect: .unverifiable)
         }
@@ -364,7 +365,7 @@ public struct DesktopActionSequenceAccumulator: Sendable {
                 .dispatchedUnverified(
                     route: route,
                     delivery: delivery,
-                    evidence: .deliveryAccepted,
+                    evidence: self.hasReportedRunningOperation ? .operationStillRunning : .deliveryAccepted,
                     unitCount: unitCount)
             } else {
                 nil
@@ -444,7 +445,7 @@ public struct DesktopActionSequenceAccumulator: Sendable {
         return .indeterminate(
             route: self.dispatchedRoute.value ?? fallbackRoute,
             delivery: self.dispatchedRoute.value == nil ? nil : self.dispatchedDelivery.value,
-            evidence: .completionUnknown,
+            evidence: self.hasReportedResponseLoss ? .responseLost : .completionUnknown,
             unitCount: self.mutationDisposition.unitCount,
             message: message,
             hint: hint,
@@ -464,6 +465,8 @@ public struct DesktopActionSequenceAccumulator: Sendable {
         self.allReportedOutcomesAreSuspectedNoop = self.allReportedOutcomesAreSuspectedNoop &&
             outcome.state == .suspectedNoop
         self.hasReportedResponseLoss = self.hasReportedResponseLoss || outcome.evidence == .responseLost
+        self.hasReportedRunningOperation = self.hasReportedRunningOperation ||
+            outcome.evidence == .operationStillRunning
         self.allReportedOutcomesAreConfirmedNoChange = self.allReportedOutcomesAreConfirmedNoChange &&
             outcome.state == .confirmedNoChange
         let disposition: DesktopActionMutationDisposition = switch outcome.dispatchState {

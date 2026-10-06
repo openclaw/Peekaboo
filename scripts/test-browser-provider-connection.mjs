@@ -127,3 +127,6 @@ try {
   await stdioFixture.close();
 }
 console.log('test-browser-provider-connection: ok (single socket, no HTTP discovery, no reconnect or redirects, refusal retained, MCP stdio)');
+
+// Keep provider lifecycle regressions in the existing safe-suite and macOS CI entrypoint.
+await import('../tests/browser-provider-lifecycle.test.mjs');

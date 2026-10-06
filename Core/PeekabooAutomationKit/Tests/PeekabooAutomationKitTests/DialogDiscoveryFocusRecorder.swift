@@ -32,11 +32,39 @@ final class DialogDiscoveryFocusRecorder: DialogFocusManaging {
         self.focusCalls += 1
     }
 
+    func focusFileDialogWindowWithOwnedLane(
+        target: UIAutomationTarget.ExactWindow,
+        window: Element,
+        dialog: Element,
+        options: FocusManagementService.FocusOptions,
+        onDispatch: @escaping (FocusDispatchRecord) -> Void) async throws
+    {
+        self.record(options)
+    }
+
+    func requireFileDialogWindowFocusWithOwnedLane(
+        target: UIAutomationTarget.ExactWindow,
+        window: Element,
+        dialog: Element,
+        timeout: TimeInterval) async throws
+    {
+        self.focusCalls += 1
+    }
+
     func requireDialogDispatchFocus(
         target: UIAutomationTarget.ExactWindow,
         retainedWindow: Element,
         dialog: Element,
         field: Element) throws
+    {
+        self.focusCalls += 1
+    }
+
+    func requireFileDialogDispatchFocus(
+        target: UIAutomationTarget.ExactWindow,
+        window: Element,
+        dialog: Element,
+        field: Element?) throws
     {
         self.focusCalls += 1
     }

@@ -1196,6 +1196,7 @@ public final class PeekabooBridgeServer {
             }
         }
         try self.validateProcessGenerationBoundElementMutationAccess(request, peer: peer)
+        try self.validateExactFileDialogExecutionAccess(request)
         if PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
            op == .exactDialogEnterText,
            !self.services.dialogs.supportsBackgroundExactDialogInput
@@ -1249,6 +1250,9 @@ public final class PeekabooBridgeServer {
     static func requiredPermissions(
         for request: PeekabooBridgeRequest) -> Set<PeekabooBridgePermissionKind>
     {
+        if request.requiresExactFileDialogExecution {
+            return [.accessibility, .postEvent]
+        }
         if PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
            request.operation == .exactDialogEnterText
         {
@@ -1365,6 +1369,9 @@ private func protocolHostCapabilities(
     if supportedVersions.upperBound >= PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion {
         capabilities.insert(PeekabooBridgeHostCapability.exactForcedDialogDismissExecution)
         capabilities.insert(PeekabooBridgeHostCapability.dialogInputFocusPolicy)
+    }
+    if supportedVersions.upperBound >= PeekabooBridgeConstants.exactFileDialogExecutionVersion {
+        capabilities.insert(PeekabooBridgeHostCapability.exactFileDialogExecution)
     }
     if supportedVersions.upperBound >= PeekabooBridgeConstants.plannerInventoryTransportVersion {
         capabilities.insert(PeekabooBridgeHostCapability.plannerInventoryTransport)

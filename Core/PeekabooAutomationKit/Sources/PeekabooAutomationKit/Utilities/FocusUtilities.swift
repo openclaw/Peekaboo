@@ -692,7 +692,8 @@ public final class FocusManagementService {
     func focusDialogWindowWithOwnedLane(
         target: UIAutomationTarget.ExactWindow,
         dialog: Element,
-        options: FocusOptions = FocusOptions()) async throws
+        options: FocusOptions = FocusOptions(),
+        onDispatch: ((FocusDispatchRecord) -> Void)? = nil) async throws
     {
         try await self.focusWindowWithOwnedLane(
             windowID: CGWindowID(target.identity.windowID),
@@ -704,7 +705,83 @@ public final class FocusManagementService {
                     dialog: dialog),
                 expectedIdentity: target.identity,
                 dispatchGuard: nil,
-                onDispatch: nil))
+                onDispatch: onDispatch))
+    }
+
+    func focusFileDialogWindowWithOwnedLane(
+        target: UIAutomationTarget.ExactWindow,
+        window: Element,
+        dialog: Element,
+        options: FocusOptions,
+        onDispatch: @escaping (FocusDispatchRecord) -> Void) async throws
+    {
+        let windowID = CGWindowID(target.identity.windowID)
+        let guardOwnership = FocusDispatchGuard {
+            guard let current = self.windowIdentityService.findWindow(byID: windowID, messagingTimeout: 0.1),
+                  DialogService.sameElement(current.element, window),
+                  DialogService.rawElementPresence(dialog, in: current.element) == .present
+            else { throw FocusError.focusVerificationFailed(windowID) }
+        }
+        try guardOwnership.validate(.unspecified)
+        let attached = DialogService.sameElement(window, dialog) ? nil : AttachedDialogFocusReceipt(
+            parentIdentity: target.identity, parentBounds: target.bounds, dialog: dialog)
+        try await self.focusWindowWithOwnedLane(
+            windowID: windowID,
+            options: options,
+            context: FocusWindowDispatchContext(
+                attachedDialog: attached,
+                expectedIdentity: target.identity,
+                dispatchGuard: guardOwnership,
+                onDispatch: onDispatch))
+    }
+
+    func requireFileDialogWindowFocusWithOwnedLane(
+        target: UIAutomationTarget.ExactWindow,
+        window: Element,
+        dialog: Element,
+        timeout: TimeInterval) async throws
+    {
+        if DialogService.sameElement(window, dialog) {
+            let windowID = CGWindowID(target.identity.windowID)
+            guard let current = self.windowIdentityService.findWindow(byID: windowID, messagingTimeout: 0.1),
+                  DialogService.sameElement(current.element, window)
+            else { throw FocusError.focusVerificationFailed(windowID) }
+            try await self.verifyWindowFocus(
+                current.element,
+                windowID: windowID,
+                timeout: timeout,
+                attachedDialog: nil,
+                expectedIdentity: target.identity)
+        } else {
+            try await self.requireDialogWindowFocusWithOwnedLane(target: target, dialog: dialog, timeout: timeout)
+        }
+    }
+
+    /// File operations already own the parent/panel plan. Recheck it synchronously at each input boundary.
+    func requireFileDialogDispatchFocus(
+        target: UIAutomationTarget.ExactWindow,
+        window: Element,
+        dialog: Element,
+        field: Element?) throws
+    {
+        let windowID = CGWindowID(target.identity.windowID)
+        guard SystemIdentityResolver.validateWindowMutationIdentity(target.identity, expectedBounds: target.bounds),
+              let current = self.windowIdentityService.findWindow(byID: windowID, messagingTimeout: 0.1),
+              DialogService.sameElement(current.element, window),
+              let app = NSRunningApplication(processIdentifier: target.identity.ownerProcessIdentifier),
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier,
+              let focused = self.focusedWindow(for: app, timeout: 0.1),
+              focused.pid() == app.processIdentifier,
+              DialogService.sameElement(focused, dialog),
+              DialogService.rawElementPresence(dialog, in: window) == .present
+        else { throw FocusError.focusVerificationFailed(windowID) }
+        if let field {
+            guard let focusedField = self.focusedElement(for: app, timeout: 0.1),
+                  focusedField.pid() == app.processIdentifier,
+                  DialogService.sameElement(focusedField, field),
+                  DialogService.rawElementPresence(field, in: dialog) == .present
+            else { throw FocusError.focusVerificationFailed(windowID) }
+        }
     }
 
     /// Verify an already-focused exact dialog without activating, raising, or changing Spaces.

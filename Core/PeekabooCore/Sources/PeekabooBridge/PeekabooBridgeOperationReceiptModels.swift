@@ -1325,6 +1325,10 @@ extension PeekabooBridgeOperationReceiptSemantics {
             try self.validateDialogTargetReceipt(result, selector: payload.target)
         case let .exactDialogForceDismiss(payload):
             try self.validateDialogTargetReceipt(result, selector: payload.target)
+        case let .dialogHandleFile(payload):
+            if let execution = payload.execution {
+                try self.validateDialogTargetReceipt(result, selector: execution.target)
+            }
         default:
             break
         }
