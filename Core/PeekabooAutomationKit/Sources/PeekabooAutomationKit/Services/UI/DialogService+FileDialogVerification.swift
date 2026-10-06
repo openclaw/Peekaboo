@@ -115,8 +115,10 @@ extension DialogService {
             details["overwrite_confirmed"] = "true"
         }
         if let expectedPath {
-            details["saved_path_matches_expected"] = String(verification.path == expectedPath)
-            if verification.path != expectedPath {
+            let matchesExpected = Self.canonicalSavedFileURL(URL(fileURLWithPath: verification.path)) ==
+                Self.canonicalSavedFileURL(URL(fileURLWithPath: expectedPath))
+            details["saved_path_matches_expected"] = String(matchesExpected)
+            if !matchesExpected {
                 details["saved_path_expected"] = expectedPath
             }
         }
@@ -132,16 +134,10 @@ extension DialogService {
         details: inout [String: String]) throws
     {
         guard let expectedPath else { return }
-        let expectedDirectory = URL(fileURLWithPath: expectedPath)
-            .deletingLastPathComponent()
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-            .path
-        let actualDirectory = URL(fileURLWithPath: actualSavedPath)
-            .deletingLastPathComponent()
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-            .path
+        let expectedDirectory = Self.canonicalSavedFileURL(
+            URL(fileURLWithPath: expectedPath).deletingLastPathComponent()).path
+        let actualDirectory = Self.canonicalSavedFileURL(
+            URL(fileURLWithPath: actualSavedPath).deletingLastPathComponent()).path
 
         details["saved_path_expected_directory"] = expectedDirectory
         details["saved_path_directory"] = actualDirectory
@@ -155,14 +151,16 @@ extension DialogService {
         }
     }
 
+    private static func canonicalSavedFileURL(_ url: URL) -> URL {
+        url.standardizedFileURL.resolvingSymlinksInPath()
+    }
+
     func expectedSavedPath(path: String?, filename: String?) -> String? {
         guard let filename else { return nil }
         guard let path else { return nil }
 
         let expandedPath = (path as NSString).expandingTildeInPath
-        let baseURL = URL(fileURLWithPath: expandedPath)
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
+        let baseURL = Self.canonicalSavedFileURL(URL(fileURLWithPath: expandedPath))
 
         if baseURL.lastPathComponent == filename {
             return baseURL.path

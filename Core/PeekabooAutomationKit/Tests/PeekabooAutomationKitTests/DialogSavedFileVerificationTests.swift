@@ -316,6 +316,147 @@ struct DialogSavedFileVerificationTests {
         #expect(request.retainedParentWindow == nil)
     }
 
+    @Test(arguments: [false, true])
+    func `saved path diagnostics recognize temporary directory aliases in either direction`(
+        actualUsesAlias: Bool) throws
+    {
+        let filename = "peekaboo-path-equivalence-\(UUID().uuidString).txt"
+        let file = URL(fileURLWithPath: "/private/tmp").appendingPathComponent(filename)
+        try Data("saved fixture".utf8).write(to: file, options: .withoutOverwriting)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let actualPath = actualUsesAlias ? "/tmp/\(filename)" : file.path
+        let expectedPath = actualUsesAlias ? file.path : "/tmp/\(filename)"
+        let fixture = SavedFileVerificationFixture()
+        let completed = try DialogService.CompletedSavedFileVerification(
+            verification: .init(path: actualPath, foundVia: "document_path"),
+            overwriteConfirmed: false,
+            target: fixture.target())
+        var details: [String: String] = [:]
+
+        try fixture.service().recordSavedFileVerification(completed, expectedPath: expectedPath, details: &details)
+
+        #expect(details["saved_path"] == actualPath)
+        #expect(details["saved_path_matches_expected"] == "true")
+        #expect(details["saved_path_expected"] == nil)
+        #expect(details["saved_path_matches_expected_directory"] == "true")
+        #expect(details["saved_path_directory"] == details["saved_path_expected_directory"])
+    }
+
+    @Test
+    func `saved path diagnostics normalize directory symlinks and dot segments`() throws {
+        let directory = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let actualDirectory = directory.appendingPathComponent("actual", isDirectory: true)
+        let alias = directory.appendingPathComponent("alias", isDirectory: true)
+        try FileManager.default.createDirectory(at: actualDirectory, withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: actualDirectory)
+        let file = actualDirectory.appendingPathComponent("report draft.txt")
+        try Data("saved fixture".utf8).write(to: file, options: .withoutOverwriting)
+        let actualPath = alias.path + "/./report draft.txt"
+        let fixture = SavedFileVerificationFixture()
+        let completed = try DialogService.CompletedSavedFileVerification(
+            verification: .init(path: actualPath, foundVia: "document_path"),
+            overwriteConfirmed: false,
+            target: fixture.target())
+        var details: [String: String] = [:]
+
+        try fixture.service().recordSavedFileVerification(completed, expectedPath: file.path, details: &details)
+
+        #expect(details["saved_path"] == actualPath)
+        #expect(details["saved_path_matches_expected"] == "true")
+        #expect(details["saved_path_expected"] == nil)
+        #expect(details["saved_path_matches_expected_directory"] == "true")
+        #expect(details["saved_path_directory"] == details["saved_path_expected_directory"])
+    }
+
+    @Test
+    func `different saved filenames in the requested directory remain diagnostic only`() throws {
+        let directory = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let actualPath = directory.appendingPathComponent("report.rtf").path
+        let expectedPath = directory.appendingPathComponent("report.txt").path
+        let fixture = SavedFileVerificationFixture()
+        let completed = try DialogService.CompletedSavedFileVerification(
+            verification: .init(path: actualPath, foundVia: "document_path"),
+            overwriteConfirmed: false,
+            target: fixture.target())
+        var details: [String: String] = [:]
+
+        try fixture.service().recordSavedFileVerification(completed, expectedPath: expectedPath, details: &details)
+
+        #expect(details["saved_path"] == actualPath)
+        #expect(details["saved_path_matches_expected"] == "false")
+        #expect(details["saved_path_expected"] == expectedPath)
+        #expect(details["saved_path_matches_expected_directory"] == "true")
+    }
+
+    @Test(arguments: [false, true])
+    func `different saved directories still refuse even when a file symlink reaches the expected file`(
+        actualIsFileSymlink: Bool) throws
+    {
+        let directory = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let actualDirectory = directory.appendingPathComponent("actual", isDirectory: true)
+        let expectedDirectory = directory.appendingPathComponent("expected", isDirectory: true)
+        for child in [actualDirectory, expectedDirectory] {
+            try FileManager.default.createDirectory(at: child, withIntermediateDirectories: false)
+        }
+        let expectedFile = expectedDirectory.appendingPathComponent("report.txt")
+        let actualFile = actualDirectory.appendingPathComponent("report.txt")
+        try Data("expected fixture".utf8).write(to: expectedFile, options: .withoutOverwriting)
+        if actualIsFileSymlink {
+            try FileManager.default.createSymbolicLink(at: actualFile, withDestinationURL: expectedFile)
+        } else {
+            try Data("actual fixture".utf8).write(to: actualFile, options: .withoutOverwriting)
+        }
+        let actualPath = actualDirectory.path + "/./report.txt"
+        let fixture = SavedFileVerificationFixture()
+        let completed = try DialogService.CompletedSavedFileVerification(
+            verification: .init(path: actualPath, foundVia: "document_path"),
+            overwriteConfirmed: false,
+            target: fixture.target())
+        var details: [String: String] = [:]
+        let canonicalActualDirectory = actualDirectory.standardizedFileURL.resolvingSymlinksInPath().path
+        let canonicalExpectedDirectory = expectedDirectory.standardizedFileURL.resolvingSymlinksInPath().path
+
+        do {
+            try fixture.service().recordSavedFileVerification(
+                completed, expectedPath: expectedFile.path, details: &details)
+            Issue.record("Expected the saved-file directory contract to reject another parent directory")
+        } catch let error as DialogError {
+            guard case let .fileSavedToUnexpectedDirectory(expected, actual, path) = error else { throw error }
+            #expect(expected == canonicalExpectedDirectory)
+            #expect(actual == canonicalActualDirectory)
+            #expect(path == actualPath)
+        }
+
+        #expect(details["saved_path"] == actualPath)
+        #expect(details["saved_path_matches_expected"] == String(actualIsFileSymlink))
+        #expect(details["saved_path_expected"] == (actualIsFileSymlink ? nil : expectedFile.path))
+        #expect(details["saved_path_matches_expected_directory"] == "false")
+        #expect(details["saved_path_expected_directory"] == canonicalExpectedDirectory)
+        #expect(details["saved_path_directory"] == canonicalActualDirectory)
+    }
+
+    @Test
+    func `saved path recording without an expected path preserves its existing diagnostics`() throws {
+        let fixture = SavedFileVerificationFixture()
+        let completed = try DialogService.CompletedSavedFileVerification(
+            verification: .init(path: "/tmp/./report.txt", foundVia: "document_path"),
+            overwriteConfirmed: false,
+            target: fixture.target())
+        var details: [String: String] = [:]
+
+        try fixture.service().recordSavedFileVerification(completed, expectedPath: nil, details: &details)
+
+        #expect(details == [
+            "saved_path": "/tmp/./report.txt",
+            "saved_path_exists": "true",
+            "saved_path_verified": "true",
+            "saved_path_found_via": "document_path",
+        ])
+    }
+
     private static func temporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-saved-file-\(UUID().uuidString)", isDirectory: true)
