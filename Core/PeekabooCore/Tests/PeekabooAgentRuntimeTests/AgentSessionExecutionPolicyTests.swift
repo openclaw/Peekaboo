@@ -14,6 +14,72 @@ struct AgentSessionExecutionPolicyTests {
     }
 
     @Test
+    func `catalog prompt refresh preserves first system identity and every other history message`() throws {
+        let firstSystem = ModelMessage(
+            id: "retained-system-id",
+            role: .system,
+            content: [.text("stale foreground instructions"), .text("superseded recipe")],
+            timestamp: Date(timeIntervalSince1970: 1234),
+            channel: .commentary,
+            metadata: MessageMetadata(
+                conversationId: "retained-conversation",
+                turnId: "retained-turn",
+                customData: ["marker": "retain"]))
+        let history: [ModelMessage] = [
+            .user("Earlier user input"),
+            firstSystem,
+            .system("Separate system policy must remain"),
+            .assistant("Prior assistant response"),
+            ModelMessage(role: .tool, content: [.text("Prior tool evidence")]),
+            .user("Current user input"),
+        ]
+        let updated = PeekabooAgentService.updatingSystemPrompt(
+            in: history,
+            for: .ollama(.llama33),
+            executionAuthority: .backgroundOnly,
+            availableToolNames: ["permissions"])
+
+        #expect(updated.count == history.count)
+        let system = try #require(updated.first { $0.role == .system })
+        #expect(system.id == firstSystem.id)
+        #expect(system.timestamp == firstSystem.timestamp)
+        #expect(system.channel == firstSystem.channel)
+        #expect(system.metadata == firstSystem.metadata)
+        #expect(system.content == [.text(AgentSystemPrompt.generate(
+            for: .ollama(.llama33),
+            executionAuthority: .backgroundOnly,
+            availableToolNames: ["permissions"]))])
+        for index in history.indices where index != 1 {
+            #expect(updated[index] == history[index])
+        }
+        #expect(history[1] == firstSystem)
+        #expect(PeekabooAgentService.updatingSystemPrompt(
+            in: updated,
+            for: .ollama(.llama33),
+            executionAuthority: .backgroundOnly,
+            availableToolNames: ["permissions"]) == updated)
+    }
+
+    @Test(arguments: [false, true])
+    func `catalog prompt inserts one missing system message without replacing user history`(emptyHistory: Bool) {
+        let history: [ModelMessage] = emptyHistory ? [] : [.user("Original task"), .assistant("Prior answer")]
+        let updated = PeekabooAgentService.updatingSystemPrompt(
+            in: history,
+            for: .ollama(.llama33),
+            executionAuthority: .backgroundOnly,
+            availableToolNames: [])
+        #expect(updated.count == history.count + 1)
+        #expect(updated.first?.role == .system)
+        #expect(Array(updated.dropFirst()) == history)
+        #expect(updated.first?.content == [.text(AgentSystemPrompt.generate(availableToolNames: []))])
+        #expect(PeekabooAgentService.updatingSystemPrompt(
+            in: updated,
+            for: .ollama(.llama33),
+            executionAuthority: .backgroundOnly,
+            availableToolNames: []) == updated)
+    }
+
+    @Test
     @MainActor
     func `temporary clipboard saved maximum is additive and never an invocation grant`() async throws {
         let directory = FileManager.default.temporaryDirectory
@@ -212,10 +278,19 @@ struct AgentSessionExecutionPolicyTests {
             userMessage: "background turn",
             model: .ollama(.llama33),
             toolExecutionAuthority: .backgroundOnly)
+        let executionMessages = PeekabooAgentService.updatingSystemPrompt(
+            in: context.messages,
+            for: .ollama(.llama33),
+            executionAuthority: context.toolExecutionAuthority,
+            availableToolNames: ["permissions"])
+        #expect(executionMessages.first?.id == session.messages.first?.id)
+        #expect(executionMessages.first?.content == [.text(AgentSystemPrompt.generate(
+            availableToolNames: ["permissions"]))])
+        #expect(executionMessages.last?.content == [.text("background turn")])
         try service.saveExecutionSession(
             context: context,
             model: .ollama(.llama33),
-            finalMessages: context.messages + [ModelMessage.assistant("done")],
+            finalMessages: executionMessages + [ModelMessage.assistant("done")],
             endTime: Date(),
             toolCallCount: 0,
             usage: nil,
@@ -225,6 +300,7 @@ struct AgentSessionExecutionPolicyTests {
         #expect(context.toolExecutionAuthority == .backgroundOnly)
         #expect(context.storedToolExecutionAuthority.basePolicy == .foregroundAllowed)
         #expect(loaded.effectiveToolExecutionPolicy == .foregroundAllowed)
+        #expect(loaded.messages.first == executionMessages.first)
         #expect(try PeekabooAgentService.resolveToolExecutionAuthority(
             for: loaded,
             requested: .init(basePolicy: .foregroundAllowed)).basePolicy == .foregroundAllowed)

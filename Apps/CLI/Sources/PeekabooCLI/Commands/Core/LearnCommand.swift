@@ -28,8 +28,8 @@ struct LearnCommand {
     @MainActor
     mutating func run(using runtime: CommandRuntime) async throws {
         self.runtime = runtime
-        let systemPrompt = AgentSystemPrompt.generate()
         let tools = Self.toolDefinitions(using: runtime.services)
+        let systemPrompt = AgentSystemPrompt.generate(availableToolNames: Set(tools.map(\.name)))
         self.outputComprehensiveGuide(systemPrompt: systemPrompt, tools: tools)
     }
 
