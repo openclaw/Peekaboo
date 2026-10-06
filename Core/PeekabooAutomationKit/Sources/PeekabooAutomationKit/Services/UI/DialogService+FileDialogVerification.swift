@@ -18,6 +18,39 @@ extension DialogService {
         let startedAt: Date
         let timeout: TimeInterval
         let retainedTarget: UIAutomationTarget.ExactWindow
+        let retainedParentWindow: Element?
+
+        init(
+            appName: String?,
+            priorDocumentPath: String?,
+            expectedPath: String?,
+            expectedBaseName: String?,
+            startedAt: Date,
+            timeout: TimeInterval,
+            retainedTarget: UIAutomationTarget.ExactWindow,
+            retainedParentWindow: Element? = nil)
+        {
+            self.appName = appName
+            self.priorDocumentPath = priorDocumentPath
+            self.expectedPath = expectedPath
+            self.expectedBaseName = expectedBaseName
+            self.startedAt = startedAt
+            self.timeout = timeout
+            self.retainedTarget = retainedTarget
+            self.retainedParentWindow = retainedParentWindow
+        }
+
+        func retryingOverwrite(with target: UIAutomationTarget.ExactWindow) -> Self {
+            Self(
+                appName: self.appName,
+                priorDocumentPath: self.priorDocumentPath,
+                expectedPath: self.expectedPath,
+                expectedBaseName: self.expectedBaseName,
+                startedAt: self.startedAt,
+                timeout: self.timeout,
+                retainedTarget: target,
+                retainedParentWindow: self.retainedParentWindow)
+        }
     }
 
     struct CompletedSavedFileVerification {
@@ -49,7 +82,8 @@ extension DialogService {
         } catch let error as DialogError {
             guard case .fileVerificationFailed = error else { throw error }
             guard let replaceResult = try await self.clickReplaceIfPresent(
-                retainedTarget: request.retainedTarget)
+                retainedTarget: request.retainedTarget,
+                retainedParentWindow: request.retainedParentWindow)
             else {
                 throw error
             }
@@ -59,14 +93,7 @@ extension DialogService {
             if let outcome = replaceResult.outcome {
                 actionSequence.record(.outcome(outcome))
             }
-            let retryRequest = SavedFileVerificationRequest(
-                appName: request.appName,
-                priorDocumentPath: request.priorDocumentPath,
-                expectedPath: request.expectedPath,
-                expectedBaseName: request.expectedBaseName,
-                startedAt: Date(),
-                timeout: request.timeout,
-                retainedTarget: replaceTarget)
+            let retryRequest = request.retryingOverwrite(with: replaceTarget)
             return try await CompletedSavedFileVerification(
                 verification: self.verifySavedFile(retryRequest),
                 overwriteConfirmed: true,
@@ -88,8 +115,10 @@ extension DialogService {
             details["overwrite_confirmed"] = "true"
         }
         if let expectedPath {
-            details["saved_path_matches_expected"] = String(verification.path == expectedPath)
-            if verification.path != expectedPath {
+            let matchesExpected = Self.canonicalSavedFileURL(URL(fileURLWithPath: verification.path)) ==
+                Self.canonicalSavedFileURL(URL(fileURLWithPath: expectedPath))
+            details["saved_path_matches_expected"] = String(matchesExpected)
+            if !matchesExpected {
                 details["saved_path_expected"] = expectedPath
             }
         }
@@ -105,16 +134,10 @@ extension DialogService {
         details: inout [String: String]) throws
     {
         guard let expectedPath else { return }
-        let expectedDirectory = URL(fileURLWithPath: expectedPath)
-            .deletingLastPathComponent()
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-            .path
-        let actualDirectory = URL(fileURLWithPath: actualSavedPath)
-            .deletingLastPathComponent()
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-            .path
+        let expectedDirectory = Self.canonicalSavedFileURL(
+            URL(fileURLWithPath: expectedPath).deletingLastPathComponent()).path
+        let actualDirectory = Self.canonicalSavedFileURL(
+            URL(fileURLWithPath: actualSavedPath).deletingLastPathComponent()).path
 
         details["saved_path_expected_directory"] = expectedDirectory
         details["saved_path_directory"] = actualDirectory
@@ -128,14 +151,16 @@ extension DialogService {
         }
     }
 
+    private static func canonicalSavedFileURL(_ url: URL) -> URL {
+        url.standardizedFileURL.resolvingSymlinksInPath()
+    }
+
     func expectedSavedPath(path: String?, filename: String?) -> String? {
         guard let filename else { return nil }
         guard let path else { return nil }
 
         let expandedPath = (path as NSString).expandingTildeInPath
-        let baseURL = URL(fileURLWithPath: expandedPath)
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
+        let baseURL = Self.canonicalSavedFileURL(URL(fileURLWithPath: expandedPath))
 
         if baseURL.lastPathComponent == filename {
             return baseURL.path
@@ -155,7 +180,8 @@ extension DialogService {
     }
 
     func verifySavedFile(_ request: SavedFileVerificationRequest) async throws -> SavedFileVerification {
-        let deadline = request.startedAt.addingTimeInterval(request.timeout)
+        // Planning may outlast this timeout; startedAt only bounds the saved file's freshness.
+        let deadline = Date().addingTimeInterval(request.timeout)
         let fileManager = FileManager.default
 
         let expectedURL = request.expectedPath.map { URL(fileURLWithPath: $0) }
@@ -165,9 +191,17 @@ extension DialogService {
         var lastDirectoryScan: Date?
 
         while Date() < deadline {
-            if let appName = request.appName,
-               let current = self.documentPathForApp(appName: appName)
-            {
+            try Task.checkCancellation()
+            let documentPath: String? = if let retainedParentWindow = request.retainedParentWindow {
+                // Save may close or rebuild the parent. Missing post-action metadata must not prevent
+                // independent filesystem verification; the strict helper still rejects another window.
+                try? self.documentPathForRetainedFileDialogParent(
+                    target: request.retainedTarget,
+                    retainedParentWindow: retainedParentWindow)
+            } else {
+                self.documentPathForApp(appName: request.appName)
+            }
+            if let current = documentPath {
                 let matchesName: Bool = if let expectedBaseName = request.expectedBaseName {
                     URL(fileURLWithPath: current)
                         .deletingPathExtension()
@@ -220,7 +254,8 @@ extension DialogService {
             try await Task.sleep(nanoseconds: 125_000_000)
         }
 
-        if let expectedBaseName = request.expectedBaseName,
+        if request.retainedParentWindow == nil,
+           let expectedBaseName = request.expectedBaseName,
            let fallback = self.fallbackFindRecentlyWrittenFile(
                filenamePrefix: expectedBaseName,
                startedAt: request.startedAt)
@@ -239,10 +274,41 @@ extension DialogService {
         throw DialogError.fileVerificationFailed(expectedPath: expectedDescription)
     }
 
-    func clickReplaceIfPresent(
-        retainedTarget: UIAutomationTarget.ExactWindow) async throws -> DialogActionResult?
+    func documentPathForRetainedFileDialogParent(
+        target: UIAutomationTarget.ExactWindow,
+        retainedParentWindow: Element) throws -> String?
     {
-        let candidates = try await self.overwriteConfirmationCandidates(retainedTarget: retainedTarget)
+        let processIdentifier = target.identity.ownerProcessIdentifier
+        guard let owner = self.discoveryReaders.currentApplication(processIdentifier),
+              owner.processIdentity == target.identity.processIdentity
+        else {
+            throw self.targetUnavailable("File-dialog owner changed before saved-file verification.")
+        }
+        // Read a fresh wrapper for the same raw parent, not attributes cached before Save.
+        let windows = self.discoveryReaders.windows(processIdentifier)
+        let retainedWindows = windows.elements.filter { Self.sameElement($0, retainedParentWindow) }
+        guard windows.readable,
+              retainedWindows.count == 1,
+              let window = retainedWindows.first,
+              self.discoveryReaders.ownerPID(window) == processIdentifier,
+              let receipt = self.discoveryReaders.windowReceipt(window, owner, 0),
+              receipt.mutationIdentity?.hasSameStableReceipt(as: target.identity) == true,
+              receipt.bounds == target.bounds
+        else {
+            throw self.targetUnavailable("File-dialog parent changed before saved-file verification.")
+        }
+
+        return self.normalizeDocumentAttributeToPath(
+            window.attribute(Attribute<String>(AXAttributeNames.kAXDocumentAttribute)))
+    }
+
+    func clickReplaceIfPresent(
+        retainedTarget: UIAutomationTarget.ExactWindow,
+        retainedParentWindow: Element? = nil) async throws -> DialogActionResult?
+    {
+        let candidates = try await self.overwriteConfirmationCandidates(
+            retainedTarget: retainedTarget,
+            retainedParentWindow: retainedParentWindow)
         guard let selected = try Self.pinnedOverwriteConfirmation(
             candidates,
             retainedTarget: retainedTarget)
@@ -251,7 +317,8 @@ extension DialogService {
         }
 
         let refreshedCandidates = try await self.overwriteConfirmationCandidates(
-            retainedTarget: retainedTarget)
+            retainedTarget: retainedTarget,
+            retainedParentWindow: retainedParentWindow)
         guard let refreshed = try Self.pinnedOverwriteConfirmation(
             refreshedCandidates,
             retainedTarget: retainedTarget),
@@ -319,9 +386,12 @@ extension DialogService {
     }
 
     private func overwriteConfirmationCandidates(
-        retainedTarget: UIAutomationTarget.ExactWindow) async throws -> [OverwriteConfirmationCandidate]
+        retainedTarget: UIAutomationTarget.ExactWindow,
+        retainedParentWindow: Element?) async throws -> [OverwriteConfirmationCandidate]
     {
-        let observation = try await self.retainedFileDialogWindowObservation(target: retainedTarget)
+        let observation = try await self.retainedFileDialogWindowObservation(
+            target: retainedTarget,
+            retainedParentWindow: retainedParentWindow)
         let dialogs = try await self.freshDialogElements(
             in: observation.window,
             owner: retainedTarget.identity.processIdentity)
@@ -350,7 +420,8 @@ extension DialogService {
     }
 
     private func retainedFileDialogWindowObservation(
-        target: UIAutomationTarget.ExactWindow) async throws -> RetainedFileDialogWindowObservation
+        target: UIAutomationTarget.ExactWindow,
+        retainedParentWindow: Element?) async throws -> RetainedFileDialogWindowObservation
     {
         let processIdentifier = target.identity.ownerProcessIdentifier
         let application = try await self.applicationService.findApplication(
@@ -371,7 +442,8 @@ extension DialogService {
               let handle = self.windowIdentityService.findWindow(
                   byID: CGWindowID(target.identity.windowID),
                   messagingTimeout: self.targetedDialogSearchTimeout),
-              handle.element.pid() == processIdentifier
+              handle.element.pid() == processIdentifier,
+              retainedParentWindow.map({ Self.sameElement(handle.element, $0) }) ?? true
         else {
             throw self.targetUnavailable(
                 "File-dialog exact window receipt changed before overwrite confirmation.")

@@ -253,7 +253,7 @@ public struct DialogForegroundFocusPolicy: Sendable, Codable, Equatable {
             bringToCurrentSpace: container.decode(Bool.self, forKey: .bringToCurrentSpace))
     }
 
-    fileprivate func validate(operation: String) throws {
+    func validate(operation: String) throws {
         guard self.timeout.isFinite, self.timeout > 0 else {
             throw PeekabooError.invalidInput("\(operation) focus timeout must be greater than zero")
         }

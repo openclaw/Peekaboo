@@ -142,6 +142,8 @@ Provider-backed `agent` and `analyze` calls require configuration at server star
 
 ### npm wrapper shutdown
 
+Importing `PeekabooMCPWrapper` from `peekaboo-mcp.js` does not start a server. Eval, print-eval and stdin consumers remain imports even if an ordinary program argument names the wrapper or a symlink to it. Missing/non-directory entry metadata is treated as non-main; unrelated filesystem errors still propagate. Direct and symlinked script entrypoints retain startup behavior, including on the supported Node 22 baseline.
+
 The npm `peekaboo-mcp` launcher owns its Swift server child and restarts it after crashes. On SIGINT or SIGTERM,
 it cancels pending restart backoff, sends SIGTERM to that child, and allows five seconds for exit before sending
 SIGKILL to the same still-owned child. Repeated shutdown requests do not restart or extend this deadline.

@@ -62,14 +62,15 @@ extension ApplicationResolvable {
 
     /// Validates when both app and pid parameters are provided
     private func validateAndResolveBothParameters(app: String, pid: Int32) throws -> String {
-        // Case 1: Check if app is already in PID format
-        if app.hasPrefix("PID:") {
-            let appPidString = String(app.dropFirst(4))
+        // Match the normalization used by the shared window CLI selector grammar.
+        let normalizedApp = app.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalizedApp.uppercased().hasPrefix("PID:") {
+            let appPidString = String(normalizedApp.dropFirst("PID:".count))
             if let appPid = Int32(appPidString) {
                 // Both specify PID - they must match
                 if appPid == pid {
                     // Redundant but consistent - this is OK
-                    return app
+                    return normalizedApp
                 } else {
                     throw PeekabooError.invalidInput(
                         "Conflicting PIDs: --app specifies PID \(appPid) but --pid is \(pid)"

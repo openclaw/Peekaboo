@@ -5,6 +5,13 @@ import PeekabooFoundation
 
 @MainActor
 extension DialogService {
+    private struct FileDialogOptions {
+        let path: String?
+        let filename: String?
+        let actionButton: String?
+        let ensureExpanded: Bool
+    }
+
     public func handleFileDialog(
         path: String?,
         filename: String?,
@@ -12,15 +19,41 @@ extension DialogService {
         ensureExpanded: Bool = false,
         appName: String?) async throws -> DialogActionResult
     {
+        try await self.executeFileDialog(
+            options: .init(
+                path: path,
+                filename: filename,
+                actionButton: actionButton,
+                ensureExpanded: ensureExpanded),
+            appName: appName,
+            request: nil)
+    }
+
+    public func handleFileDialog(_ request: DialogFileExecutionRequest) async throws -> DialogActionResult {
+        try await self.executeFileDialog(
+            options: .init(
+                path: request.path,
+                filename: request.filename,
+                actionButton: request.actionButton,
+                ensureExpanded: request.ensureExpanded),
+            appName: nil,
+            request: request)
+    }
+
+    private func executeFileDialog(
+        options: FileDialogOptions,
+        appName: String?,
+        request: DialogFileExecutionRequest?) async throws -> DialogActionResult
+    {
         try await self.runDialogOperation(scope: .global, access: .write) {
             self.logger.info("Handling file dialog")
-            if let path {
+            if let path = options.path {
                 self.logger.debug("Path: \(path)")
             }
-            if let filename {
+            if let filename = options.filename {
                 self.logger.debug("Filename: \(filename)")
             }
-            if let actionButton {
+            if let actionButton = options.actionButton {
                 self.logger.debug("Action button: \(actionButton)")
             } else {
                 self.logger.debug("Action button: (default/OKButton)")
@@ -30,7 +63,13 @@ extension DialogService {
             var failureTarget: UIAutomationTarget.ExactWindow?
             do {
                 let saveStartTime = Date()
-                var resolution = try await self.resolveFileDialogElementResolution(appName: appName)
+                var resolution = if let request {
+                    try await self.resolveFileDialogElementResolution(target: request.target, revalidate: false)
+                } else {
+                    try await self.resolveFileDialogElementResolution(appName: appName)
+                }
+                let execution = try request.map { try FileExecution(request: $0, resolution: resolution) }
+                let appName = execution.map { "PID:\($0.target.identity.ownerProcessIdentifier)" } ?? appName
                 var retainedTarget = resolution.target
                 failureTarget = retainedTarget
                 var dialog = resolution.element
@@ -39,19 +78,26 @@ extension DialogService {
                     "found_via": resolution.foundVia,
                 ]) { _, new in new }
 
-                if let outcome = try await self.ensureDialogFocus(dialog: dialog, appName: appName) {
+                if let outcome = try await self.ensureFileDialogFocus(
+                    dialog: dialog, appName: appName, execution: execution)
+                {
                     actionSequence.record(.outcome(outcome))
                 }
 
-                if ensureExpanded {
-                    if let outcome = try await self.ensureFileDialogExpandedIfNeeded(dialog: dialog) {
+                if options.ensureExpanded {
+                    let expansion = try await self.ensureFileDialogExpandedIfNeeded(
+                        dialog: dialog,
+                        execution: execution)
+                    if let outcome = expansion {
                         actionSequence.record(.outcome(outcome))
                     }
                     // Expanding can rebuild the AX tree; re-resolve.
-                    resolution = try await self.resolveFileDialogElementResolution(appName: appName)
-                    retainedTarget = try Self.refreshFileDialogTargetAfterVerifiedExpansion(
+                    resolution = try await self.resolveFileDialogElementResolution(
+                        appName: appName, execution: execution, allowExpansion: expansion != nil)
+                    retainedTarget = try Self.fileDialogTargetAfterNavigation(
                         resolution.target,
-                        retained: retainedTarget)
+                        retained: retainedTarget,
+                        disposition: expansion != nil ? .refreshAfterExpansion : .unchanged)
                     failureTarget = retainedTarget
                     dialog = resolution.element
                     details["dialog_identifier"] = resolution.dialogIdentifier
@@ -59,12 +105,13 @@ extension DialogService {
                     details["ensure_expanded"] = "true"
                 }
 
-                if let filePath = path {
+                if let filePath = options.path {
                     let navigation = try await self.navigateToPath(
                         filePath,
                         in: dialog,
-                        ensureExpanded: ensureExpanded,
-                        appName: appName)
+                        ensureExpanded: options.ensureExpanded,
+                        appName: appName,
+                        execution: execution)
                     details["path"] = filePath
                     details["path_navigation_method"] = navigation.method
                     if let outcome = navigation.outcome {
@@ -75,7 +122,10 @@ extension DialogService {
                     // active
                     // file dialog after navigation so subsequent actions (filename + action button) target fresh AX
                     // handles.
-                    resolution = try await self.resolveFileDialogElementResolution(appName: appName)
+                    resolution = try await self.resolveFileDialogElementResolution(
+                        appName: appName,
+                        execution: execution,
+                        allowExpansion: navigation.targetDisposition == .refreshAfterExpansion)
                     retainedTarget = try Self.fileDialogTargetAfterNavigation(
                         resolution.target,
                         retained: retainedTarget,
@@ -86,43 +136,38 @@ extension DialogService {
                     details["found_via"] = resolution.foundVia
                 }
 
-                if let fileName = filename {
-                    if let outcome = try self.updateFilename(fileName, in: dialog) {
+                if let fileName = options.filename {
+                    if let outcome = try await self.updateFilename(fileName, in: dialog, execution: execution) {
                         actionSequence.record(.outcome(outcome))
                     }
                     details["filename"] = fileName
                 }
 
-                let shouldCapturePriorDocumentPath = actionButton == nil ||
-                    self.isSaveLikeAction(actionButton ?? "")
+                let priorDocumentPath = try self.priorDocumentPathForFileAction(
+                    options: options,
+                    target: retainedTarget,
+                    execution: execution,
+                    appName: appName)
 
-                let priorDocumentPath: String? = if shouldCapturePriorDocumentPath {
-                    self.documentPathForApp(appName: appName)
+                // Typed execution retains its panel; controls are read afresh and focus/ownership checked at dispatch.
+                // The legacy path has no retained raw panel and must resolve it again.
+                resolution = if let execution {
+                    execution.resolution
                 } else {
-                    nil
+                    try await self.resolveFileDialogElementResolution(appName: appName)
                 }
-
-                // The file panel can swap sheets (e.g. Go to Folder) or rebuild its button tree after typing.
-                // Re-resolve the active file dialog right before clicking to avoid stale AX element handles.
-                resolution = try await self.resolveFileDialogElementResolution(appName: appName)
                 try Self.requireSameFileDialogTarget(resolution.target, retained: retainedTarget)
                 dialog = resolution.element
                 details["dialog_identifier"] = resolution.dialogIdentifier
                 details["found_via"] = resolution.foundVia
 
-                let requestedButton = actionButton?.trimmingCharacters(in: .whitespacesAndNewlines)
-                let normalizedRequested = requestedButton.map(self.normalizedDialogButtonTitle)
-                let resolvedActionButton: String = if normalizedRequested == "default" || requestedButton == nil {
-                    "default"
-                } else {
-                    requestedButton ?? "default"
-                }
-
+                let resolvedActionButton = self.fileDialogActionButton(options.actionButton)
                 let clickResult = try await self.clickButton(
                     in: dialog,
                     buttonText: resolvedActionButton,
                     allowFallbackToDefaultAction: true,
-                    allowGlobalFallback: true)
+                    allowGlobalFallback: true,
+                    execution: execution)
                 if let outcome = clickResult.outcome {
                     actionSequence.record(.outcome(outcome))
                 }
@@ -133,8 +178,10 @@ extension DialogService {
 
                 let clickedTitle = clickResult.details["button"] ?? resolvedActionButton
                 if self.isSaveLikeAction(clickedTitle) {
-                    let expectedPath = self.expectedSavedPath(path: path, filename: filename)
-                    let expectedBaseName = self.expectedSavedBaseName(filename: filename, expectedPath: expectedPath)
+                    let expectedPath = self.expectedSavedPath(path: options.path, filename: options.filename)
+                    let expectedBaseName = self.expectedSavedBaseName(
+                        filename: options.filename,
+                        expectedPath: expectedPath)
                     let completed = try await self.verifySavedFileAfterAction(
                         request: .init(
                             appName: appName,
@@ -143,7 +190,8 @@ extension DialogService {
                             expectedBaseName: expectedBaseName,
                             startedAt: saveStartTime,
                             timeout: 5.0,
-                            retainedTarget: retainedTarget),
+                            retainedTarget: retainedTarget,
+                            retainedParentWindow: execution?.window),
                         actionSequence: &actionSequence)
                     retainedTarget = completed.target
                     failureTarget = retainedTarget
@@ -153,18 +201,11 @@ extension DialogService {
                         details: &details)
                 }
 
-                let result = DialogActionResult(
-                    success: true,
-                    action: .handleFileDialog,
+                return try self.completedFileDialogResult(
                     details: details,
-                    outcome: actionSequence.successResolution().outcome,
-                    targetReceipt: retainedTarget.actionTargetReceipt,
-                    targetWindowIdentity: retainedTarget.identity,
-                    targetWindowBounds: retainedTarget.bounds,
-                    focusedElement: nil)
-
-                self.logger.info("\(AgentDisplayTokens.Status.success) Successfully handled file dialog")
-                return result
+                    actionSequence: actionSequence,
+                    target: retainedTarget,
+                    execution: execution)
             } catch {
                 throw Self.preservingFileDialogFailure(
                     error,
@@ -172,6 +213,54 @@ extension DialogService {
                     target: failureTarget)
             }
         }
+    }
+
+    private func priorDocumentPathForFileAction(
+        options: FileDialogOptions,
+        target: UIAutomationTarget.ExactWindow,
+        execution: FileExecution?,
+        appName: String?) throws -> String?
+    {
+        guard options.actionButton == nil || self.isSaveLikeAction(options.actionButton ?? "") else {
+            return nil
+        }
+        if let execution {
+            return try self.documentPathForRetainedFileDialogParent(
+                target: target,
+                retainedParentWindow: execution.window)
+        }
+        return self.documentPathForApp(appName: appName)
+    }
+
+    private func fileDialogActionButton(_ actionButton: String?) -> String {
+        let requestedButton = actionButton?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedRequested = requestedButton.map(self.normalizedDialogButtonTitle)
+        return if normalizedRequested == "default" || requestedButton == nil {
+            "default"
+        } else {
+            requestedButton ?? "default"
+        }
+    }
+
+    private func completedFileDialogResult(
+        details: [String: String],
+        actionSequence: DesktopActionSequenceAccumulator,
+        target: UIAutomationTarget.ExactWindow,
+        execution: FileExecution?) throws -> DialogActionResult
+    {
+        let result = try DialogActionResult(
+            success: true,
+            action: .handleFileDialog,
+            details: details,
+            outcome: actionSequence.successResolution().outcome,
+            targetReceipt: target.actionTargetReceipt,
+            targetWindowIdentity: target.identity,
+            targetWindowBounds: target.bounds,
+            focusedElement: nil,
+            resolvedTarget: execution?.resolvedTarget())
+
+        self.logger.info("\(AgentDisplayTokens.Status.success) Successfully handled file dialog")
+        return result
     }
 
     private static func requireSameFileDialogTarget(

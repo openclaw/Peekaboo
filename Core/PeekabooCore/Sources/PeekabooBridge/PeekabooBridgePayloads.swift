@@ -648,6 +648,69 @@ public struct PeekabooBridgeDialogHandleFileRequest: Codable, Sendable {
     public let actionButton: String?
     public let ensureExpanded: Bool?
     public let appName: String?
+    public let execution: DialogFileExecutionRequest?
+
+    public init(
+        path: String?,
+        filename: String?,
+        actionButton: String?,
+        ensureExpanded: Bool?,
+        appName: String?)
+    {
+        self.path = path
+        self.filename = filename
+        self.actionButton = actionButton
+        self.ensureExpanded = ensureExpanded
+        self.appName = appName
+        self.execution = nil
+    }
+
+    public init(execution: DialogFileExecutionRequest) {
+        self.path = nil
+        self.filename = nil
+        self.actionButton = nil
+        self.ensureExpanded = nil
+        self.appName = nil
+        self.execution = execution
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case path, filename, actionButton, ensureExpanded, appName, execution
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if container.contains(.execution) {
+            let legacyKeys: [CodingKeys] = [.path, .filename, .actionButton, .ensureExpanded, .appName]
+            guard !legacyKeys.contains(where: container.contains) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .execution,
+                    in: container,
+                    debugDescription: "Typed file execution cannot be combined with legacy file fields")
+            }
+            try self.init(execution: container.decode(DialogFileExecutionRequest.self, forKey: .execution))
+        } else {
+            try self.init(
+                path: container.decodeIfPresent(String.self, forKey: .path),
+                filename: container.decodeIfPresent(String.self, forKey: .filename),
+                actionButton: container.decodeIfPresent(String.self, forKey: .actionButton),
+                ensureExpanded: container.decodeIfPresent(Bool.self, forKey: .ensureExpanded),
+                appName: container.decodeIfPresent(String.self, forKey: .appName))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        if let execution {
+            try container.encode(execution, forKey: .execution)
+        } else {
+            try container.encodeIfPresent(self.path, forKey: .path)
+            try container.encodeIfPresent(self.filename, forKey: .filename)
+            try container.encodeIfPresent(self.actionButton, forKey: .actionButton)
+            try container.encodeIfPresent(self.ensureExpanded, forKey: .ensureExpanded)
+            try container.encodeIfPresent(self.appName, forKey: .appName)
+        }
+    }
 }
 
 public struct PeekabooBridgeDialogDismissRequest: Codable, Sendable {

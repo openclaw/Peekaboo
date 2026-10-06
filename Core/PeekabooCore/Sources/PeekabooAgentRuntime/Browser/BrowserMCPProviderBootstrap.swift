@@ -51,9 +51,13 @@ enum BrowserMCPProviderBootstrap {
             throw new Error('Peekaboo: unaudited Chrome DevTools MCP browser transport');
           }
           const before = 'const connectOptions = {';
-          const after = "if (this.#browser) throw new Error('Peekaboo: Chrome disconnected; reconnect explicitly');\\n" +
+          const after = "if (this.#peekabooConnectionAttempted) throw new Error(" +
+            "'Peekaboo: Chrome connection was already attempted; reconnect explicitly');\\n" +
+            'this.#peekabooConnectionAttempted = true;\\n' +
             before;
-          return {...result, source: source.toString('utf8').replace(before, after)};
+          return {...result, source: source.toString('utf8')
+            .replace('#browser;', '#browser;\\n    #peekabooConnectionAttempted = false;')
+            .replace(before, after)};
         }
         if (url !== target) return result;
         const source = Buffer.from(result.source);
@@ -80,13 +84,15 @@ enum BrowserMCPProviderBootstrap {
       const server = await createServer.call(this, args, options);
       if (args.wsEndpoint) {
         let connection;
+        let browserConnection;
         server.server.registerTool('peekaboo_browser_connect', {
           description: 'Verify the exact persistent browser connection for the Peekaboo owner.',
           inputSchema: {},
-        }, () => {
+        }, async () => {
           // Cache failure too: no tool invocation may silently reopen Chrome's approval UI.
           connection ??= (async () => {
             const browser = await options.browserManager.ensureBrowser();
+            browserConnection = browser;
             const session = await browser.target().createCDPSession();
             try {
               const version = await session.send('Browser.getVersion');
@@ -99,7 +105,13 @@ enum BrowserMCPProviderBootstrap {
           })().catch(error => ({isError: true, content: [{type: 'text',
             text: 'Chrome connection failed: ' + String(error.cause?.message ?? error.message).slice(0, 512),
           }]}));
-          return connection;
+          const result = await connection;
+          if (browserConnection && !browserConnection.connected) {
+            return {isError: true, content: [{type: 'text',
+              text: 'Chrome connection failed: Chrome disconnected; reconnect explicitly',
+            }]};
+          }
+          return result;
         });
       }
       return server;

@@ -44,6 +44,14 @@ function fixture(t) {
   return root;
 }
 
+test('normal macOS CI and safe tests run release build-number contracts', () => {
+  const entry = macosWorkflow.split('      - name: Verify release build-number contracts\n')[1]?.split('\n      - name:')[0];
+  assert.ok(entry);
+  assert.match(entry, /run: bash scripts\/test-release-version\.sh/);
+  const packageJSON = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.match(packageJSON.scripts['test:safe'], /scripts\/test-release-version\.sh/);
+});
+
 test('normal macOS CI runs the complete serial Tachikoma suite in an independent hosted job', () => {
   const entry = tachikomaStep();
   const command = scriptFromStep('Run Tachikoma package tests', entry);
@@ -875,4 +883,14 @@ raise SystemExit(d.diagnose(Path.cwd(), results))
     assert.equal(report.outcome, mode === 'fail' ? 'debugger-failed' : mode);
     if (mode === 'fail') assert.equal(report.debugger_exit_code, 19);
   }
+});
+
+test('hosted runtime inspection keeps the existing real-runtime execution check', () => {
+  const entry = macosWorkflow.split('      - name: Verify Swift runtime-library contracts\n')[1]?.split('\n      - name:')[0];
+  assert.ok(entry);
+  assert.match(entry, /run: bash scripts\/test-swift-runtime-libraries\.sh\s*$/);
+  assert.doesNotMatch(entry, /--inspection-only/);
+  const script = readFileSync(new URL('../scripts/test-swift-runtime-libraries.sh', import.meta.url), 'utf8');
+  assert.ok(script.includes('bash "$ROOT_DIR/scripts/test-swift-runtime-slice-rpaths.sh"'));
+  assert.match(script, /unset MAC_RELEASE_CODESIGN_IDENTITY MAC_RELEASE_CODESIGN_TEAM_ID SIGN_IDENTITY/);
 });

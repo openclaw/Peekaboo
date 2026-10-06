@@ -156,6 +156,12 @@ extension PeekabooBridgeServer {
             permissions: permissions,
             enabledOperations: &enabledOps,
             permissionTags: &permissionTags)
+        Self.applyExactFileDialogPermissionContract(
+            supportsAttestedOperationReceipts: supportsAttestedOperationReceipts,
+            advertisedOperations: advertisedOps,
+            permissions: permissions,
+            enabledOperations: &enabledOps,
+            permissionTags: &permissionTags)
         let requestAwareTargetedClickVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 9)
         if negotiated < requestAwareTargetedClickVersion,
            advertisedOps.contains(.targetedClick)
@@ -178,6 +184,13 @@ extension PeekabooBridgeServer {
             """)
 
         var advertisedCapabilities = self.hostCapabilities
+        if !supportsAttestedOperationReceipts ||
+            negotiated < PeekabooBridgeConstants.exactFileDialogExecutionVersion ||
+            !self.services.dialogs.supportsExactFileDialogExecution ||
+            !advertisedOps.contains(.dialogHandleFile) || !enabledOps.contains(.dialogHandleFile)
+        {
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.exactFileDialogExecution)
+        }
         if !supportsBrowserConnectionHandoff {
             advertisedCapabilities.remove(PeekabooBridgeHostCapability.browserConnectionHandoff)
         }
@@ -361,6 +374,8 @@ extension PeekabooBridgeServer {
                             PeekabooBridgeHostCapability.backgroundCoordinateScroll),
                         compositeTypeDelivery: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.compositeTypeDelivery),
+                        exactFileDialogExecution: advertisedCapabilities.contains(
+                            PeekabooBridgeHostCapability.exactFileDialogExecution),
                         clipboardGuardedExactWindowHotkeys: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.clipboardGuardedExactWindowHotkeys),
                         preparedClipboardGuardedExactWindowHotkeys: advertisedCapabilities.contains(
@@ -411,6 +426,24 @@ extension PeekabooBridgeServer {
                 : nil,
             operationSessionAttestation: operationSessionAttestation)
         return .handshake(response)
+    }
+
+    private static func applyExactFileDialogPermissionContract(
+        supportsAttestedOperationReceipts: Bool,
+        advertisedOperations: [PeekabooBridgeOperation],
+        permissions: PermissionsStatus,
+        enabledOperations: inout Set<PeekabooBridgeOperation>,
+        permissionTags: inout [String: [PeekabooBridgePermissionKind]])
+    {
+        guard supportsAttestedOperationReceipts, advertisedOperations.contains(.dialogHandleFile) else { return }
+        let requiredPermissions: Set<PeekabooBridgePermissionKind> = [.accessibility, .postEvent]
+        permissionTags[PeekabooBridgeOperation.dialogHandleFile.rawValue] = requiredPermissions
+            .sorted { $0.rawValue < $1.rawValue }
+        if requiredPermissions.isSubset(of: self.grantedPermissions(from: permissions)) {
+            enabledOperations.insert(.dialogHandleFile)
+        } else {
+            enabledOperations.remove(.dialogHandleFile)
+        }
     }
 
     private static func applyExactDialogInputPermissionContract(
@@ -511,6 +544,12 @@ extension PeekabooBridgeServer {
            !self.services.dialogs.supportsBackgroundExactDialogInput
         {
             compatible.remove(.exactDialogEnterText)
+        }
+        if usesAttestedOperationReceipts,
+           negotiated < PeekabooBridgeConstants.exactFileDialogExecutionVersion ||
+           !self.services.dialogs.supportsExactFileDialogExecution
+        {
+            compatible.remove(.dialogHandleFile)
         }
         return compatible
     }
@@ -657,8 +696,14 @@ extension PeekabooBridgeServer {
         var operations = self.effectiveAllowedOperations(permissions: permissions)
         let operation = request.operation
         let advertisedOperations = self.allowedOperationsToAdvertise()
-        if PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
-           operation == .exactDialogEnterText
+        if request.requiresExactFileDialogExecution {
+            if !self.services.dialogs.supportsExactFileDialogExecution ||
+                !permissions.accessibility || !permissions.postEvent
+            {
+                operations.remove(operation)
+            }
+        } else if PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
+                  operation == .exactDialogEnterText
         {
             if advertisedOperations.contains(operation),
                self.services.dialogs.supportsBackgroundExactDialogInput,

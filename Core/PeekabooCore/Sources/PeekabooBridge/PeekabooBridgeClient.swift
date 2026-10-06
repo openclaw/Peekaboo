@@ -52,6 +52,7 @@ public actor PeekabooBridgeClient {
     var exactDialogInputExecutionEnabled = false
     var exactDialogForceDismissExecutionEnabled = false
     var dialogInputFocusPolicyEnabled = false
+    var exactFileDialogExecutionEnabled = false
     var applicationMutationInventoryTransportEnabled = false
     var windowMutationInventoryTransportEnabled = false
     private var inputCapabilities = PeekabooBridgeClientInputCapabilities()
@@ -852,6 +853,7 @@ public actor PeekabooBridgeClient {
         let exactInputAdvertised = handshake.supportedOperations.contains(.exactDialogEnterText)
         let exactForceDismissAdvertised = handshake.supportedOperations.contains(.exactDialogForceDismiss)
         let legacyInputAdvertised = handshake.supportedOperations.contains(.dialogEnterText)
+        let exactFileAdvertised = handshake.supportedOperations.contains(.dialogHandleFile)
         return PeekabooBridgeClientHandshakeCandidate(
             response: handshake,
             actionProjectionEnabled:
@@ -876,6 +878,13 @@ public actor PeekabooBridgeClient {
                 (handshake.enabledOperations?.contains(.dialogEnterText) ?? legacyInputAdvertised) &&
                 handshake.hostCapabilities?.contains(
                     PeekabooBridgeHostCapability.dialogInputFocusPolicy) == true,
+            exactFileDialogExecutionEnabled:
+            handshake.negotiatedVersion >= PeekabooBridgeConstants.exactFileDialogExecutionVersion &&
+                authentication.sessionAttestation != nil &&
+                exactFileAdvertised &&
+                handshake.enabledOperations?.contains(.dialogHandleFile) == true &&
+                handshake.hostCapabilities?.contains(
+                    PeekabooBridgeHostCapability.exactFileDialogExecution) == true,
             applicationMutationInventoryTransportEnabled:
             handshake.negotiatedVersion >= PeekabooBridgeConstants.plannerInventoryTransportVersion &&
                 handshake.hostCapabilities?.contains(
@@ -1239,6 +1248,7 @@ public actor PeekabooBridgeClient {
         self.exactDialogInputExecutionEnabled = candidate.exactDialogInputExecutionEnabled
         self.exactDialogForceDismissExecutionEnabled = candidate.exactDialogForceDismissExecutionEnabled
         self.dialogInputFocusPolicyEnabled = candidate.dialogInputFocusPolicyEnabled
+        self.exactFileDialogExecutionEnabled = candidate.exactFileDialogExecutionEnabled
         self.applicationMutationInventoryTransportEnabled =
             candidate.applicationMutationInventoryTransportEnabled
         self.windowMutationInventoryTransportEnabled = candidate.windowMutationInventoryTransportEnabled
@@ -1557,6 +1567,7 @@ private struct PeekabooBridgeClientHandshakeCandidate: Sendable {
     let exactDialogInputExecutionEnabled: Bool
     let exactDialogForceDismissExecutionEnabled: Bool
     let dialogInputFocusPolicyEnabled: Bool
+    let exactFileDialogExecutionEnabled: Bool
     let applicationMutationInventoryTransportEnabled: Bool
     let windowMutationInventoryTransportEnabled: Bool
     let inputCapabilities: PeekabooBridgeClientInputCapabilities

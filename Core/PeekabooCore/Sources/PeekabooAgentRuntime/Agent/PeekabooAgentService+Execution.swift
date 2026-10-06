@@ -329,6 +329,11 @@ extension PeekabooAgentService {
             await self.endEphemeralBrowserClientIfNeeded(context)
             throw PeekabooError.invalidInput("The session has no verified model provider; refusing to execute it.")
         }
+        let initialMessages = Self.updatingSystemPrompt(
+            in: context.messages,
+            for: model,
+            executionAuthority: context.toolExecutionAuthority,
+            availableToolNames: Set(tools.map(\.name)))
 
         let configuration = StreamingLoopConfiguration(
             model: model,
@@ -341,14 +346,14 @@ extension PeekabooAgentService {
             executionAuthority: context.toolExecutionAuthority)
 
         var latestCheckpoint = self.makeLoopOutcome(
-            state: StreamingLoopState(messages: context.messages),
+            state: StreamingLoopState(messages: initialMessages),
             reachedStepLimit: false)
         let outcome: StreamingLoopOutcome
         do {
             outcome = try await self.runStreamingLoop(
                 configuration: configuration,
                 maxSteps: maxSteps,
-                initialMessages: context.messages,
+                initialMessages: initialMessages,
                 queueMode: queueMode)
             { latestCheckpoint = $0 }
         } catch {
@@ -433,6 +438,11 @@ extension PeekabooAgentService {
             await self.endEphemeralBrowserClientIfNeeded(context)
             throw PeekabooError.invalidInput("The session has no verified model provider; refusing to execute it.")
         }
+        let initialMessages = Self.updatingSystemPrompt(
+            in: context.messages,
+            for: model,
+            executionAuthority: context.toolExecutionAuthority,
+            availableToolNames: Set(tools.map(\.name)))
 
         let configuration = StreamingLoopConfiguration(
             model: model,
@@ -444,14 +454,14 @@ extension PeekabooAgentService {
             executionAuthority: context.toolExecutionAuthority)
 
         var latestCheckpoint = self.makeLoopOutcome(
-            state: StreamingLoopState(messages: context.messages),
+            state: StreamingLoopState(messages: initialMessages),
             reachedStepLimit: false)
         let outcome: StreamingLoopOutcome
         do {
             outcome = try await self.runGenerationLoop(
                 configuration: configuration,
                 maxSteps: maxSteps,
-                initialMessages: context.messages)
+                initialMessages: initialMessages)
             { latestCheckpoint = $0 }
         } catch {
             let wasCancelled = self.isAgentCancellation(error)

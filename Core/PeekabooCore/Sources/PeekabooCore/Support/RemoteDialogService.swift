@@ -16,6 +16,7 @@ public struct RemoteDialogCapabilities: Sendable {
     public let backgroundExactInput: Bool
     public let exactForceDismiss: Bool
     public let legacyInputFocusPolicy: Bool
+    public let exactFileExecution: Bool
 
     public init(
         systemAlertDiscovery: Bool = false,
@@ -27,7 +28,8 @@ public struct RemoteDialogCapabilities: Sendable {
         exactInput: Bool = false,
         backgroundExactInput: Bool = false,
         exactForceDismiss: Bool = false,
-        legacyInputFocusPolicy: Bool = false)
+        legacyInputFocusPolicy: Bool = false,
+        exactFileExecution: Bool = false)
     {
         self.systemAlertDiscovery = systemAlertDiscovery
         self.backgroundButtonClick = backgroundButtonClick
@@ -39,6 +41,7 @@ public struct RemoteDialogCapabilities: Sendable {
         self.backgroundExactInput = backgroundExactInput
         self.exactForceDismiss = exactForceDismiss
         self.legacyInputFocusPolicy = legacyInputFocusPolicy
+        self.exactFileExecution = exactFileExecution
     }
 }
 
@@ -47,6 +50,7 @@ public final class RemoteDialogService: DialogServiceProtocol {
     public let foregroundOutcomeRoute = DesktopActionOutcome.Route.bridge
     public let supportsSystemAlertDiscovery: Bool
     public let supportsBackgroundExactDialogInput: Bool
+    public let supportsExactFileDialogExecution: Bool
 
     private let client: PeekabooBridgeClient
     private let supportsBackgroundButtonClick: Bool
@@ -77,6 +81,7 @@ public final class RemoteDialogService: DialogServiceProtocol {
         self.supportsExactDismiss = capabilities.exactDismiss
         self.supportsExactInput = capabilities.exactInput
         self.supportsBackgroundExactDialogInput = capabilities.backgroundExactInput
+        self.supportsExactFileDialogExecution = capabilities.exactFileExecution
         self.supportsExactForceDismiss = capabilities.exactForceDismiss
         self.supportsLegacyInputFocusPolicy = capabilities.legacyInputFocusPolicy
     }
@@ -178,6 +183,15 @@ public final class RemoteDialogService: DialogServiceProtocol {
                 minimumProtocol: "1.28")
         }
         return try await self.client.dialogEnterText(request)
+    }
+
+    public func handleFileDialog(_ request: DialogFileExecutionRequest) async throws -> DialogActionResult {
+        guard self.supportsExactFileDialogExecution else {
+            throw Self.capabilityRefusal(
+                "Remote host cannot preserve exact file-dialog execution; no input was sent.",
+                minimumProtocol: "1.43")
+        }
+        return try await self.client.dialogHandleFile(request)
     }
 
     public func handleFileDialog(
