@@ -25,7 +25,8 @@ struct MenuBarScopedPreparationTests {
         let evidence = try #require(selected.candidate.value.selectionEvidence)
         fixture.windows.append(fixture.window(id: 701, pid: 11))
         await #expect(throws: DesktopActionFailure.self) {
-            try await fixture.service.clickMenuBarItemActionResult(named: "Fixture")
+            try await fixture.service.clickMenuBarItemActionResult(request: .init(
+                named: "Fixture", expectedLeafEvidence: evidence))
         }
         fixture.windows = [fixture.window(id: 701, pid: 10)]
         await #expect(throws: DesktopActionFailure.self) {
@@ -60,6 +61,16 @@ struct MenuBarScopedPreparationTests {
         fixture.snapshotsError = MenuExtraAXReader.incomplete
         await #expect(throws: PeekabooError.self) {
             try await fixture.service.prepareMenuBarItem(fixture.request())
+        }
+        #expect(fixture.windowReads == 0 && fixture.submissions == 0)
+    }
+
+    @Test(arguments: ["Fixture App", "App", "dev.fixture", "dev."])
+    func `scoped item matching never uses application labels`(query: String) async throws {
+        let fixture = Fixture()
+        fixture.snapshots = [fixture.snapshot(identifier: "native.clock")]
+        await #expect(throws: PeekabooError.self) {
+            try await fixture.service.prepareMenuBarItem(fixture.request(name: query))
         }
         #expect(fixture.windowReads == 0 && fixture.submissions == 0)
     }

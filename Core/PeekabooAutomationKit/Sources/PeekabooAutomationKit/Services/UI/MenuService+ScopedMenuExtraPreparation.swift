@@ -52,8 +52,8 @@ extension MenuService {
                 value: snapshot,
                 index: index,
                 displayName: item.title ?? "Menu bar item",
-                matchFields: MenuBarItemSelector.matchFields(for: item) +
-                    [snapshot.help, snapshot.description].compactMap(sanitizedMenuText),
+                matchFields: [snapshot.title, snapshot.help, snapshot.description, snapshot.identifier]
+                    .compactMap(sanitizedMenuText),
                 stableIdentity: DeterministicDesktopLeafSelector.stableIdentity([
                     String(owner.processIdentifier), String(owner.processStartIdentity),
                     item.title, snapshot.identifier, snapshot.role, snapshot.subrole,

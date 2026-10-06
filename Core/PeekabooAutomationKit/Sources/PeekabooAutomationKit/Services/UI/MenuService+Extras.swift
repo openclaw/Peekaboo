@@ -30,12 +30,15 @@ extension MenuService {
 
     public func clickMenuExtraActionResult(title: String) async throws -> UIAutomationActionResult<Void> {
         try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
-            let result = try await self.clickMenuBarItemActionResultWithOwnedLane(named: title)
-            return UIAutomationActionResult(
+            let target = try await self.clickMenuExtraWithOwnedLane(title: title)
+            return try UIAutomationActionResult(
                 payload: (),
-                outcome: result.outcome,
-                targetIdentity: result.targetIdentity,
-                selectedLeafEvidence: result.selectedLeafEvidence)
+                outcome: .dispatchedUnverified(
+                    delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                    evidence: .deliveryAccepted,
+                    unitCount: .one),
+                targetIdentity: DesktopTargetIdentity(processIdentity: target.snapshot.processIdentity),
+                selectedLeafEvidence: [target.evidence])
         }
     }
 
@@ -343,6 +346,24 @@ extension MenuService {
     func clickMenuBarItemActionResultWithOwnedLane(
         named name: String) async throws -> UIAutomationActionResult<ClickResult>
     {
+        try await Self.withNamedMenuExtraLookupFallback {
+            let target = try await self.clickMenuExtraWithOwnedLane(title: name)
+            return try UIAutomationActionResult(
+                payload: ClickResult(elementDescription: "Menu bar item: \(name)", location: nil),
+                outcome: .dispatchedUnverified(
+                    delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                    evidence: .deliveryAccepted,
+                    unitCount: .one),
+                targetIdentity: DesktopTargetIdentity(processIdentity: target.snapshot.processIdentity),
+                selectedLeafEvidence: [target.evidence])
+        } fallback: {
+            try await self.clickDisplayedMenuBarItemWithOwnedLane(named: name)
+        }
+    }
+
+    private func clickDisplayedMenuBarItemWithOwnedLane(
+        named name: String) async throws -> UIAutomationActionResult<ClickResult>
+    {
         let selection = try await self.displayedMenuBarSelection(named: name)
         guard let evidence = selection.candidate.value.selectionEvidence else {
             throw DesktopActionFailure.preDispatchRefusal(
@@ -545,7 +566,7 @@ extension MenuService {
         }
     }
 
-    private func hiddenMenuExtraMessage(title: String) -> String {
+    func hiddenMenuExtraMessage(title: String) -> String {
         "Menu bar item '\(title)' is outside the active displays. It may be hidden by a menu bar manager."
     }
 

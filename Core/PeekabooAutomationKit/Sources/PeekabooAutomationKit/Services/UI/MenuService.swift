@@ -21,6 +21,7 @@ public final class MenuService: MenuServiceProtocol, MenuServiceGenerationPinned
     let feedbackClient: any AutomationFeedbackClient
     let operationLaneCoordinator: DesktopOperationLaneCoordinator
     let menuExtraReaders: MenuExtraDiscoveryReaders
+    let legacyMenuExtraAccess: LegacyMenuExtraNativeAccess
 
     // Traversal limits to avoid unbounded menu walks
     let traversalLimits: MenuTraversalLimits
@@ -54,7 +55,8 @@ public final class MenuService: MenuServiceProtocol, MenuServiceGenerationPinned
         partialMatchEnabled: Bool = true,
         cacheTTL: TimeInterval = 2.0,
         operationLaneCoordinator: DesktopOperationLaneCoordinator,
-        menuExtraReaders: MenuExtraDiscoveryReaders = .init())
+        menuExtraReaders: MenuExtraDiscoveryReaders = .init(),
+        legacyMenuExtraAccess: LegacyMenuExtraNativeAccess = .init())
     {
         self.applicationService = applicationService ?? ApplicationService()
         self.traversalLimits = MenuTraversalLimits.from(policy: traversalPolicy)
@@ -64,6 +66,7 @@ public final class MenuService: MenuServiceProtocol, MenuServiceGenerationPinned
         self.cacheTTL = cacheTTL
         self.operationLaneCoordinator = operationLaneCoordinator
         self.menuExtraReaders = menuExtraReaders
+        self.legacyMenuExtraAccess = legacyMenuExtraAccess
         self.connectFeedbackIfNeeded()
     }
 
