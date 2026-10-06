@@ -16,6 +16,7 @@
 - Reject symlinked or nonregular controller sources and catalogs when producing source receipts, while preserving regular executable files and frozen-commit receipts. Thanks @rudycelekli! #957.
 - Bound ZIP data descriptors before allocating or reading their untrusted gap, preserving valid descriptor checks while avoiding malformed-archive memory amplification. Thanks @rudycelekli! #967.
 - Resolve composed symlink targets before accepting artifact trees and archives, refusing root escapes and native-unreadable chains beyond 32 traversals while preserving contained framework and dangling links. Thanks @rudycelekli! #954.
+- Reject archive entries nested beneath regular files as well as symlinks, independent of entry order, before extraction. Thanks @rudycelekli! #955.
 - Avoid redundant PNG encoding for unchanged live capture frames, preserving original bytes and metadata while retaining transformed-frame encoding, actual-byte caps, and artifact validation.
 - Tailor Agent and learn guidance to the available tool catalog, removing irrelevant recipes while preserving execution authority, observation requirements and session history.
 - Show eligible visualizer overlays from a hidden companion app without unhiding or activating it, accepting input, or changing background-input suppression.
