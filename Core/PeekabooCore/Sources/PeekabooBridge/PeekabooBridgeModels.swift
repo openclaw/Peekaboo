@@ -408,6 +408,7 @@ public enum PeekabooBridgeHostCapability {
     public static let exactDialogInputExecution = "exactDialogInputExecution"
     public static let exactForcedDialogDismissExecution = "exactForcedDialogDismissExecution"
     public static let dialogInputFocusPolicy = "dialogInputFocusPolicy"
+    public static let exactFileDialogExecution = "exactFileDialogExecution"
     public static let attestedOperationReceipts = "attestedOperationReceipts"
     public static let plannerInventoryTransport = "plannerInventoryTransport"
     public static let exactWindowHeldPointerLifecycle = "exactWindowHeldPointerLifecycle"

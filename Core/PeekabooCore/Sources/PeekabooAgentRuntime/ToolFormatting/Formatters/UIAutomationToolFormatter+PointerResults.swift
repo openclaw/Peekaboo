@@ -271,7 +271,7 @@ extension UIAutomationToolFormatter {
             return value
         }
         if let value = dictionary[key] as? Double {
-            return Int(value)
+            return ToolResultExtractor.integer(value)
         }
         return nil
     }

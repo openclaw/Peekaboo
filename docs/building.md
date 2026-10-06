@@ -148,6 +148,8 @@ and bundled `libswiftCompatibility*` libraries are excluded; undefined symbols w
 source library fail closed. Swift symbols imported from frameworks such as Foundation and SwiftUI are
 outside this audit. Generated export data is intentionally not checked in.
 
+Compatibility-library imports and executable-relative loader paths are checked independently for each Mach-O slice. A library needs the architectures that actually import it, not unrelated slices. `bash scripts/test-swift-runtime-libraries.sh` includes synthetic inspection-only slice fixtures and the existing real-runtime Span probe. Add `--inspection-only` for local inspection proof without executing that probe; hosted CI retains the full default check. Synthetic-runtime fixture executables are never run.
+
 The audit selects the oldest installed macOS SDK at or above the highest slice's minimum macOS version
 and older than macOS 27. It records the SDK version, build, full path, and export digest with each
 successful audit. Hosts may legitimately select different SDKs: an older eligible SDK is stricter and

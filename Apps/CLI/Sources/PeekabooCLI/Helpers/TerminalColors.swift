@@ -26,6 +26,8 @@ public enum TerminalColor {
 
 /// Update the terminal title using VibeTunnel or ANSI escape sequences
 public func updateTerminalTitle(_ title: String) {
+    let title = sanitizedTerminalTitle(title)
+
     // Try VibeTunnel first
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -48,6 +50,13 @@ public func updateTerminalTitle(_ title: String) {
     fflush(stdout)
 }
 
+/// OSC title text cannot contain control characters that terminate or escape the title sequence.
+func sanitizedTerminalTitle(_ title: String) -> String {
+    String(String.UnicodeScalarView(title.unicodeScalars.filter {
+        !(0...0x1F).contains($0.value) && !(0x7F...0x9F).contains($0.value)
+    }))
+}
+
 enum TerminalTitleProcessWaitError: Error {
     case timedOut
 }
@@ -57,8 +66,8 @@ enum TerminalTitleProcessWaitError: Error {
 /// Foundation's `waitUntilExit()` can block forever if a wedged `vt` is first on PATH.
 nonisolated func waitForTerminalTitleProcessExit(
     _ process: Process,
-    timeoutSeconds: TimeInterval = 2
-) throws {
+    timeoutSeconds: TimeInterval = 2) throws
+{
     do {
         try waitForProcessExit(process, timeoutSeconds: timeoutSeconds)
     } catch ProcessWaitError.timedOut {

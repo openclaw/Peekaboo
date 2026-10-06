@@ -12,48 +12,58 @@ struct LearnCommand {
     static let foregroundDragExample =
         "peekaboo drag --from <id|x,y> --to <id|x,y> --foreground"
 
-    @RuntimeStorage private var runtime: CommandRuntime?
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
     @MainActor
     mutating func run(using runtime: CommandRuntime) async throws {
-        self.runtime = runtime
-        let systemPrompt = AgentSystemPrompt.generate()
         let tools = Self.toolDefinitions(using: runtime.services)
-        self.outputComprehensiveGuide(systemPrompt: systemPrompt, tools: tools)
+        let guide = Self.guide(
+            tools: tools,
+            commandSummaries: CommanderRegistryBuilder.buildCommandSummaries()
+        )
+        self.renderGuide(guide)
     }
 
     static func toolDefinitions(using services: any PeekabooServiceProviding) -> [PeekabooToolDefinition] {
         ToolRegistry.allTools(using: services)
     }
 
-    private func outputComprehensiveGuide(systemPrompt: String, tools: [PeekabooToolDefinition]) {
+    static func guide(tools: [PeekabooToolDefinition], commandSummaries: [CommanderCommandSummary]) -> String {
+        let systemPrompt = AgentSystemPrompt.generate(availableToolNames: Set(tools.map(\.name)))
         var guide = ""
-        self.appendGuideHeader(systemPrompt: systemPrompt, to: &guide)
+        self.appendGuideHeader(systemPrompt: systemPrompt, toolCount: tools.count, to: &guide)
         self.appendToolCatalog(tools: tools, to: &guide)
+        self.appendQuickReference(tools: tools, to: &guide)
+        self.appendCLISurface(to: &guide)
         self.appendBestPractices(to: &guide)
-        self.appendQuickReference(to: &guide)
-        self.appendCommanderSummary(to: &guide)
-        self.renderGuide(guide)
+        self.appendCommanderSummary(commandSummaries, to: &guide)
+        return guide
     }
 
-    private func appendGuideHeader(systemPrompt: String, to output: inout String) {
+    private static func appendGuideHeader(systemPrompt: String, toolCount: Int, to output: inout String) {
         print("""
         # Peekaboo Comprehensive Guide
 
-        This guide contains everything you need to know about using Peekaboo for macOS automation.
+        This guide pairs the current policy-filtered Agent tool catalog with a complete standalone CLI reference.
 
-        ## Peekaboo 4 CLI Surface
+        ## System Instructions
+
+        \(systemPrompt)
+
+        ## Available Tools
+
+        This Agent catalog exposes \(toolCount) \(toolCount == 1 ? "tool" : "tools") for this configuration.
+        Only the tools listed here are available to the Agent; the CLI reference below does not expand that catalog.
+        """, to: &output)
+    }
+
+    private static func appendCLISurface(to output: inout String) {
+        print("""
+
+        ## CLI Command Reference
+
+        This standalone CLI reference is complete and unfiltered. Agent tool filters do not hide CLI commands
+        or grant authority to call them from an Agent session. Each CLI action retains its own consent requirements.
+
+        ### Peekaboo 4 CLI Surface
 
         - Observe with `see`: add `--tree` for an AX text tree, `--no-screenshot` for AX-only output,
           or `--no-elements` for a fast screenshot-only capture.
@@ -64,8 +74,13 @@ struct LearnCommand {
         - Exact targeted `dialog input` defaults to background AXValue; targetless/global input, file actions, and
           forced dismiss require explicit foreground consent.
         - Use `verify` instead of fixed sleeps to wait for stable window and element predicates.
-        - Invoke accessibility actions with `action`. Drag changes the shared physical cursor and requires explicit
-          foreground consent: `\(Self.foregroundDragExample)`.
+        - Invoke accessibility actions with `action`. Background drag uses an explicit fresh `--snapshot` and a
+          bounded linear path wholly inside that exact window, without moving the shared physical cursor.
+          Cross-window/application drops, modifiers, human movement, and shared physical cursor input require
+          explicit foreground consent: `\(self.foregroundDragExample)`.
+          A completed drag dispatch is unverified and retry-unsafe, not proof of the drop; observe the exact target
+          before another action and never blindly replay it.
+        - Shared-pointer `move` requires explicit `--foreground` consent.
         - Management commands are subcommand trees: `clipboard status|get|set|clear|save|restore`,
           `menubar list|click`, `agent run|resume|sessions|chat`, `config provider ...`, and
           `permissions request <kind>`.
@@ -74,19 +89,10 @@ struct LearnCommand {
         - JSON responses use one envelope. Mutating commands add `effect` as `confirmed`, `partial`,
           `unverifiable`, `suspected_noop`, or `refused`; read-only commands omit it.
 
-        ## System Instructions
-
-        \(systemPrompt)
-
-        ## Available Tools
-
-        Peekaboo provides 30+ tools for macOS automation.
-        Each tool is designed for a specific purpose and can be combined
-        to create powerful workflows.
         """, to: &output)
     }
 
-    private func appendToolCatalog(tools: [PeekabooToolDefinition], to output: inout String) {
+    private static func appendToolCatalog(tools: [PeekabooToolDefinition], to output: inout String) {
         let groupedTools = Dictionary(grouping: tools, by: \.category)
         for category in ToolCategory.allCases {
             guard let categoryTools = groupedTools[category], !categoryTools.isEmpty else { continue }
@@ -94,7 +100,7 @@ struct LearnCommand {
         }
     }
 
-    private func appendToolCategory(
+    private static func appendToolCategory(
         _ category: ToolCategory,
         tools: [PeekabooToolDefinition],
         to output: inout String
@@ -103,7 +109,7 @@ struct LearnCommand {
         tools.sorted(by: { $0.name < $1.name }).forEach { self.appendToolDetails($0, to: &output) }
     }
 
-    private func appendToolDetails(_ tool: PeekabooToolDefinition, to output: inout String) {
+    private static func appendToolDetails(_ tool: PeekabooToolDefinition, to output: inout String) {
         print("#### `\(tool.name)`\n", to: &output)
         print("\(tool.abstract)\n", to: &output)
 
@@ -124,7 +130,7 @@ struct LearnCommand {
         print("", to: &output)
     }
 
-    private func appendParameters(_ parameters: [PeekabooToolParameter], to output: inout String) {
+    private static func appendParameters(_ parameters: [PeekabooToolParameter], to output: inout String) {
         print("**Parameters:**", to: &output)
         for param in parameters {
             var line = "- `\(param.name)` (\(param.type)"
@@ -143,11 +149,12 @@ struct LearnCommand {
         print("", to: &output)
     }
 
-    private func appendBestPractices(to output: inout String) {
+    private static func appendBestPractices(to output: inout String) {
         print("""
-        ## Usage Best Practices
+        ### CLI Usage Best Practices
 
-        1. Always start with `see` to understand the UI before interacting.
+        1. Start with fresh state appropriate to the target: `see --tree --no-screenshot` for AX text/control state,
+           or `see` with a screenshot when pixels are needed.
         2. Prefer opaque element IDs from the current snapshot over guessed coordinates.
         3. Verify each action before proceeding; use `verify` for exact predicates or `see` for fresh state.
         4. Inventory targets with `app list`, `window list`, and `screen list`;
@@ -165,35 +172,32 @@ struct LearnCommand {
         """, to: &output)
     }
 
-    private func appendQuickReference(to output: inout String) {
+    private static func appendQuickReference(tools: [PeekabooToolDefinition], to output: inout String) {
         print("""
+
         ## MCP / Agent Tool Quick Reference
-        - **Vision**: see, image
-        - **UI Automation**: click, type, press, scroll
-        - **Background drag**: linear drag inside one fresh explicit snapshot window; observe the unverified drop
-        - **Foreground-only CLI pointer**: move and cross-window drag require explicit `--foreground` consent
-        - **Window Management**: window, space
-        - **Applications**: app
-        - **Elements**: inspect_ui, verify_state, set_value, action
-        - **Menu/Dialog**: menu, dialog
-        - **System**: permissions, sleep, clipboard, paste
-        - **Completion**: done, need_info
 
-        The MCP-only `image` and `inspect_ui` tools remain separate; their CLI equivalents are
-        `see --no-elements` and `see --tree --no-screenshot`.
-
-        Remember: You are Peekaboo, an AI-powered screen automation assistant.
-        Be confident, be helpful, and get things done!
+        This quick reference contains only the tools exposed in the catalog above.
         """, to: &output)
+        guard !tools.isEmpty else {
+            print("\nNo MCP/Agent tools are available in this catalog.\n", to: &output)
+            return
+        }
+        print("", to: &output)
+        let groupedTools = Dictionary(grouping: tools, by: \.category)
+        for category in ToolCategory.allCases {
+            guard let categoryTools = groupedTools[category], !categoryTools.isEmpty else { continue }
+            let names = categoryTools.map(\.name).sorted().map { "`\($0)`" }.joined(separator: ", ")
+            print("- **\(category.rawValue)**: \(names)", to: &output)
+        }
+        print("", to: &output)
     }
 
-    @MainActor
-    private func appendCommanderSummary(to output: inout String) {
+    private static func appendCommanderSummary(_ summaries: [CommanderCommandSummary], to output: inout String) {
         print("\n## Commander Command Signatures\n", to: &output)
-        let summaries = CommanderRegistryBuilder.buildCommandSummaries()
-            .sorted { $0.name < $1.name }
+        print("All standalone CLI commands are listed below, independently of Agent tool filtering.\n", to: &output)
 
-        for summary in summaries {
+        for summary in summaries.sorted(by: { $0.name < $1.name }) {
             print("### `peekaboo \(summary.name)`\n", to: &output)
             if !summary.arguments.isEmpty {
                 print("**Positional Arguments:**", to: &output)
