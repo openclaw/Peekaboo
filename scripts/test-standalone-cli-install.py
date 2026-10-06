@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify the standalone installer with a native executable and companion dylib."""
-import os
 import json
+import os
 from pathlib import Path
 import resource
 import shutil
@@ -71,7 +71,11 @@ os.execv({"cp": "/bin/cp", "install": "/usr/bin/install"}[args[0]], args)
 ''')
     sudo.chmod(0o755)
     (tools / "python3").symlink_to(sys.executable)
-    environment = dict(os.environ, PATH=f"{tools}:/usr/bin:/bin", FIXTURE_INSTALL_DIR=str(installed),
+    # This fixture validates loading/installation, never the operator's signing
+    # identity or keychain. Keep the real collector on its unsigned default path.
+    inherited = {key: value for key, value in os.environ.items()
+                 if key not in ("SIGN_IDENTITY", "MAC_RELEASE_CODESIGN_IDENTITY")}
+    environment = dict(inherited, PATH=f"{tools}:/usr/bin:/bin", FIXTURE_INSTALL_DIR=str(installed),
                        FIXTURE_SDK_LIBRARY=str(sdk_library))
     run(["/bin/bash", str(scripts / "build-cli-standalone.sh"), "--install"], env=environment)
 
@@ -126,7 +130,9 @@ os.execv({"cp": "/bin/cp", "install": "/usr/bin/install"}[args[0]], args)
 
     span_source = fixture / "Span.swift"
     span_source.write_text("print(OutputSpan<UInt8>.self)\n")
-    run(["/usr/bin/xcrun", "swiftc", "-target", "arm64-apple-macosx15.0",
+    target_info = json.loads(run(["/usr/bin/xcrun", "swiftc", "-print-target-info"]).stdout)
+    architecture = target_info["target"]["triple"].split("-", 1)[0]
+    run(["/usr/bin/xcrun", "swiftc", "-target", f"{architecture}-apple-macosx15.0",
          "-Xlinker", "-rpath", "-Xlinker", "@loader_path", str(span_source), "-o", str(binary)])
     dependencies = run(["/usr/bin/otool", "-L", str(binary)]).stdout
     if "@rpath/libswiftCompatibility" not in dependencies:
