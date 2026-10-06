@@ -334,6 +334,7 @@ final class RemoteResultMenuFixture: MenuServiceGenerationPinnedActionResultProv
     private(set) var lastMenuBarRequest: MenuBarItemActionRequest?
     var listedMenuBarItems: [MenuBarItemInfo]?
     var failMenuBarAfterDispatch = false
+    var beforeMenuBarPreparation: (@MainActor () async throws -> Void)?
 
     init(target: DesktopTargetIdentity) {
         self.target = target
@@ -467,6 +468,7 @@ final class RemoteResultMenuFixture: MenuServiceGenerationPinnedActionResultProv
     }
 
     func prepareMenuBarItem(_ request: MenuBarItemPreparationRequest) async throws -> MenuBarItemInfo {
+        try await self.beforeMenuBarPreparation?()
         self.preparationRequests.append(request)
         return try self.menuItem(evidence: self.namedMenuLeaf(request.name))
     }
@@ -639,10 +641,20 @@ final class RemoteMenuDockResultServices: PeekabooBridgeServiceProviding {
     private let applicationService = RemoteMenuApplicationService()
     let menu: any MenuServiceProtocol
     let dock: any DockServiceProtocol
+    let ownedLaneOperations: Set<PeekabooBridgeOperation>
 
-    init(menu: any MenuServiceProtocol, dock: any DockServiceProtocol) {
+    init(
+        menu: any MenuServiceProtocol,
+        dock: any DockServiceProtocol,
+        ownedLaneOperations: Set<PeekabooBridgeOperation> = [])
+    {
         self.menu = menu
         self.dock = dock
+        self.ownedLaneOperations = ownedLaneOperations
+    }
+
+    func ownsDesktopOperationLane(for operation: PeekabooBridgeOperation) -> Bool {
+        self.ownedLaneOperations.contains(operation)
     }
 
     var permissions: PermissionsService {
