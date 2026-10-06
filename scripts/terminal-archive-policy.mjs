@@ -1,4 +1,4 @@
-import { createReadStream } from 'node:fs';
+import { createReadStream, read } from 'node:fs';
 import { lstat, open } from 'node:fs/promises';
 import path from 'node:path';
 import { createGunzip, createInflateRaw } from 'node:zlib';
@@ -381,11 +381,15 @@ async function validateZipPayload(handle, dataOffset, record, budget, label) {
     fd: handle.fd,
     start: dataOffset,
     end: dataOffset + record.compressedSize - 1,
-    autoClose: false,
-    emitClose: false
+    // The archive owns this descriptor. Destroy the entry reader to drain pending
+    // reads, but leave descriptor closure to validateZipArchive after all entries.
+    fs: { read, close: (_fd, callback) => callback(null) }
   });
+  const sourceClosed = new Promise((resolve) => source.once('close', resolve));
   const inflater = record.method === 8 ? createInflateRaw() : null;
-  source.on('error', (error) => inflater?.destroy(error));
+  source.on('error', (error) => {
+    if (inflater && !inflater.destroyed) inflater.destroy(error);
+  });
   if (inflater) source.pipe(inflater);
   const output = inflater ?? source;
   const capture = record.type === 'symlink' ? [] : null;
@@ -407,6 +411,10 @@ async function validateZipPayload(handle, dataOffset, record, budget, label) {
   } catch (error) {
     if (error instanceof TypeError) throw error;
     fail(label, `has an invalid compressed payload: ${record.path}`);
+  } finally {
+    if (inflater) source.unpipe(inflater);
+    source.destroy();
+    await sourceClosed;
   }
   if (inflater && inflater.bytesWritten !== record.compressedSize) {
     fail(label, `has unbound bytes after its DEFLATE stream: ${record.path}`);
