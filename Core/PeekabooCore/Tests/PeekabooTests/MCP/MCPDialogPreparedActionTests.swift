@@ -220,6 +220,7 @@ struct MCPDialogPreparedActionTests {
         #expect(dialogs.prepareCount == 0)
         #expect(dialogs.inputCount == 1)
         #expect(dialogs.fileCount == 1)
+        #expect(dialogs.lastExactFileRequest == nil)
     }
 
     @Test
@@ -365,6 +366,112 @@ struct MCPDialogPreparedActionTests {
         #expect(request.target.windowID == 700)
         #expect(request.focus == DialogForegroundFocusPolicy())
         #expect(await windows.focusRequests.isEmpty)
+    }
+
+    @Test
+    func `exact file dialog leaves parent selector focus and action count to its owner`() async throws {
+        let windows = EmptyRecordingWindowService()
+        let dialogs = PreparedDialogService()
+        dialogs.fileOutcome = .dispatchedUnverified(
+            delivery: .init(mechanism: .composite, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .init(3))
+        let context = await MCPToolTestHelpers.makeContext(
+            windows: windows,
+            dialogs: dialogs,
+            executionPolicy: .unrestricted)
+
+        let response = try await context.execute(
+            tool: DialogTool(context: context),
+            arguments: ToolArguments(raw: [
+                "action": "file",
+                "pid": 89,
+                "window_id": 700,
+                "path": "/tmp",
+                "name": "fixture.txt",
+                "select": "Save",
+                "ensure_expanded": true,
+                "foreground": true,
+            ]))
+
+        #expect(!response.isError)
+        let request = try #require(dialogs.lastExactFileRequest)
+        #expect(request.target.processIdentifier == 89)
+        #expect(request.target.windowID == 700)
+        #expect(request.path == "/tmp")
+        #expect(request.filename == "fixture.txt")
+        #expect(request.actionButton == "Save")
+        #expect(request.ensureExpanded)
+        #expect(request.focus == DialogForegroundFocusPolicy())
+        #expect(dialogs.fileCount == 1)
+        #expect(await windows.focusRequests.isEmpty)
+        try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(
+            #require(dialogs.fileOutcome),
+            in: response)
+        let meta = try #require(response.meta?.objectValue)
+        let receipt = try #require(meta["target_receipt"]?.objectValue)
+        #expect(receipt["window_id"] == .int(700))
+    }
+
+    @Test
+    func `exact file rejects numeric mismatches or missing canonical result without setup focus`() async throws {
+        for invalidResult in 0..<4 {
+            let windows = EmptyRecordingWindowService()
+            let dialogs = PreparedDialogService()
+            dialogs.fileWindowIDOverride = invalidResult == 0 ? 701 : nil
+            dialogs.omitFileOutcome = invalidResult == 1
+            dialogs.omitFileTarget = invalidResult == 2
+            dialogs.fileProcessIdentifierOverride = invalidResult == 3 ? 90 : nil
+            let context = await MCPToolTestHelpers.makeContext(
+                windows: windows,
+                dialogs: dialogs,
+                executionPolicy: .unrestricted)
+
+            let response = try await context.execute(
+                tool: DialogTool(context: context),
+                arguments: ToolArguments(raw: [
+                    "action": "file",
+                    "pid": 89,
+                    "window_id": 700,
+                    "foreground": true,
+                ]))
+
+            #expect(response.isError)
+            #expect(dialogs.fileCount == 1)
+            #expect(await windows.focusRequests.isEmpty)
+        }
+    }
+
+    @Test(arguments: ["app", "window_title", "window_index"])
+    func `file textual selectors reject arbitrary exact targets without selector proof`(selector: String) async throws {
+        let windows = EmptyRecordingWindowService()
+        let dialogs = PreparedDialogService()
+        let context = await MCPToolTestHelpers.makeContext(
+            windows: windows,
+            dialogs: dialogs,
+            executionPolicy: .unrestricted)
+        var arguments: [String: Any] = ["action": "file", "foreground": true]
+        switch selector {
+        case "app":
+            arguments[selector] = "Fixture"
+        case "window_title":
+            arguments["pid"] = 89
+            arguments[selector] = "Parent"
+        default:
+            arguments["pid"] = 89
+            arguments[selector] = 0
+        }
+
+        let response = try await context.execute(
+            tool: DialogTool(context: context),
+            arguments: ToolArguments(raw: arguments))
+
+        #expect(response.isError)
+        #expect(dialogs.fileCount == 1)
+        #expect(await windows.focusRequests.isEmpty)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("indeterminate"))
+        #expect(meta["retry_safe"] == .bool(false))
     }
 
     @Test
@@ -607,6 +714,7 @@ private enum DialogLeafTargetMismatch: CaseIterable {
 @MainActor
 private final class PreparedDialogService: DialogServiceProtocol {
     let supportsBackgroundExactDialogInput = true
+    let supportsExactFileDialogExecution = true
     let outcome = DesktopActionOutcome.confirmedChange(
         delivery: .init(mechanism: .accessibilityAction, mode: .background),
         unitCount: .one)
@@ -621,6 +729,9 @@ private final class PreparedDialogService: DialogServiceProtocol {
     var fileOutcome: DesktopActionOutcome?
     var fileSuccess = true
     var fileTargetReceipt: DesktopActionTargetReceipt?
+    var fileWindowIDOverride: Int?
+    var fileProcessIdentifierOverride: pid_t?
+    var omitFileTarget = false
     var preparedTargetReceipt: DesktopActionTargetReceipt?
     var preparedTargetWindowIdentity: WindowMutationIdentity?
     var preparedTargetWindowBounds: CGRect?
@@ -629,6 +740,7 @@ private final class PreparedDialogService: DialogServiceProtocol {
     var lastInputAppHint: String?
     var lastExactInputRequest: DialogInputExecutionRequest?
     var lastExactForcedDismissRequest: DialogForcedDismissExecutionRequest?
+    var lastExactFileRequest: DialogFileExecutionRequest?
     var targetedListElements: DialogElements?
     var preparedProcessGeneration: UInt64 = 890
 
@@ -765,6 +877,29 @@ private final class PreparedDialogService: DialogServiceProtocol {
             details: ["button_clicked": "Open"],
             outcome: self.omitFileOutcome ? nil : (self.fileOutcome ?? self.outcome),
             targetReceipt: self.fileTargetReceipt)
+    }
+
+    func handleFileDialog(_ request: DialogFileExecutionRequest) async throws -> DialogActionResult {
+        self.fileCount += 1
+        self.lastExactFileRequest = request
+        let bounds = CGRect(x: 10, y: 20, width: 300, height: 200)
+        let identity = WindowMutationIdentity(
+            windowID: self.fileWindowIDOverride ?? request.target.windowID ?? 700,
+            ownerProcessIdentifier: self.fileProcessIdentifierOverride ?? request.target.processIdentifier ?? 89,
+            ownerProcessStartIdentity: 890,
+            capturedBounds: bounds)
+        return DialogActionResult(
+            success: self.fileSuccess,
+            action: .handleFileDialog,
+            details: ["button_clicked": "Save"],
+            outcome: self.omitFileOutcome ? nil : (self.fileOutcome ?? .dispatchedUnverified(
+                delivery: .init(mechanism: .composite, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: .one)),
+            targetReceipt: self.omitFileTarget ? nil : identity.actionTargetReceipt,
+            targetWindowIdentity: self.omitFileTarget ? nil : identity,
+            targetWindowBounds: self.omitFileTarget ? nil : bounds,
+            focusedElement: nil)
     }
 
     func dismissDialog(force: Bool, windowTitle _: String?, appName _: String?) async throws -> DialogActionResult {

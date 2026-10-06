@@ -502,6 +502,14 @@ capture-owned exact window and producer lease; a nil element with a point never 
 host require the negotiated capability before dispatch, while older element-scroll and explicit foreground contracts
 remain unchanged. Coordinates cannot request foreground, smooth, or delayed input.
 
+Protocol `1.43` also supports the additive, service-derived `exactFileDialogExecution` capability on
+`dialogHandleFile`. A typed execution payload carries the original app/PID/window selector and foreground focus
+policy to the dialog owner. That owner plans the parent and file sheet before focus and retains the parent in the
+canonical result and signed receipt. The client and host require the capability, operation enablement, and an attested
+session; the version number alone is insufficient. Missing support refuses before operation transport or provider
+execution, with no legacy fallback. Existing attested legacy file payloads remain refused. This capability does not
+grant foreground authority or make keyboard file navigation available to background-only sessions.
+
 Browser execution is bound atomically to the connection receipt observed before dispatch. Protocol 1.29 carries the
 complete normalized browser URL, WebSocket debugger URL, DevTools browser ID, browser version, protocol version, and
 channel. Protocol 1.34 plus `nativeBrowserConnectionBinding` is required for native channel resolution, which carries

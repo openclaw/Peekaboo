@@ -3,23 +3,18 @@ import Foundation
 
 @MainActor
 extension DialogService {
-    func findActiveFileDialogElement(appName: String) -> Element? {
-        guard let targetApp = self.runningApplication(matching: appName) else { return nil }
-        let appElement = AXApp(targetApp).element
-
-        let windows = appElement.windowsWithTimeout() ?? []
-        for window in windows {
-            if let candidate = self.findActiveFileDialogCandidate(in: window) {
-                return candidate
+    static func filePanelElements(
+        in dialogs: FreshDialogElements,
+        window: Element,
+        matching isFilePanel: (Element) -> Bool) -> [Element]
+    {
+        // File operations retain compatible panels even when an unrelated structural alert is present.
+        let panels = (dialogs.structural + dialogs.legacy).filter { element in
+            if let evidence = dialogs.evidence[element], DialogElementClassifier.isTargetedFilePanel(evidence) {
+                return true
             }
+            return isFilePanel(element)
         }
-        return nil
-    }
-
-    private func findActiveFileDialogCandidate(in element: Element) -> Element? {
-        DialogTraversal.firstUniqueDepthFirst(
-            from: element,
-            matching: self.isFileDialogElement,
-            children: { self.sheetFirstTraversalChildren(for: $0) })
+        return DialogTraversal.preferredStructuralDialogs(in: window, candidates: panels)
     }
 }

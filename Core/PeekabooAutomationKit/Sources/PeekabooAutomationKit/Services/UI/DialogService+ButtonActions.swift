@@ -22,9 +22,10 @@ extension DialogService {
         in dialog: Element,
         buttonText: String,
         allowFallbackToDefaultAction: Bool,
-        allowGlobalFallback: Bool = false) async throws -> DialogActionResult
+        allowGlobalFallback: Bool = false,
+        execution: FileExecution? = nil) async throws -> DialogActionResult
     {
-        let buttons = self.collectButtons(from: dialog)
+        let buttons = try await self.fileDialogControls(in: dialog, execution: execution, role: "AXButton")
         self.logger.debug("Found \(buttons.count) buttons in dialog")
 
         guard let targetButton = self.resolveButton(
@@ -40,6 +41,10 @@ extension DialogService {
         let resolvedButtonIdentifier = targetButton.attribute(identifierAttribute)
 
         self.logger.debug("Clicking button: \(resolvedButtonTitle)")
+        try self.requireFileExecutionFocus(execution)
+        if execution != nil, targetButton.isEnabled() != true {
+            throw self.targetUnavailable("The selected file-dialog button is no longer enabled.")
+        }
         let outcome = try self.pressOrClick(targetButton, allowGlobalFallback: allowGlobalFallback)
 
         var clickDetails: [String: String] = [

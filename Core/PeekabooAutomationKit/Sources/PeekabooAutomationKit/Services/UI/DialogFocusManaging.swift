@@ -13,6 +13,22 @@ protocol DialogFocusManaging {
         target: UIAutomationTarget.ExactWindow,
         dialog: Element,
         options: FocusManagementService.FocusOptions) async throws
+    func focusFileDialogWindowWithOwnedLane(
+        target: UIAutomationTarget.ExactWindow,
+        window: Element,
+        dialog: Element,
+        options: FocusManagementService.FocusOptions,
+        onDispatch: @escaping (FocusDispatchRecord) -> Void) async throws
+    func requireFileDialogWindowFocusWithOwnedLane(
+        target: UIAutomationTarget.ExactWindow,
+        window: Element,
+        dialog: Element,
+        timeout: TimeInterval) async throws
+    func requireFileDialogDispatchFocus(
+        target: UIAutomationTarget.ExactWindow,
+        window: Element,
+        dialog: Element,
+        field: Element?) throws
     func requireDialogWindowFocusWithOwnedLane(
         target: UIAutomationTarget.ExactWindow,
         dialog: Element,
@@ -29,6 +45,15 @@ protocol DialogFocusManaging {
 }
 
 extension FocusManagementService: DialogFocusManaging {
+    func focusDialogWindowWithOwnedLane(
+        target: UIAutomationTarget.ExactWindow,
+        dialog: Element,
+        options: FocusOptions) async throws
+    {
+        try await self.focusDialogWindowWithOwnedLane(
+            target: target, dialog: dialog, options: options, onDispatch: nil)
+    }
+
     func focusWindowWithOwnedLane(
         windowID: CGWindowID,
         options: FocusOptions,

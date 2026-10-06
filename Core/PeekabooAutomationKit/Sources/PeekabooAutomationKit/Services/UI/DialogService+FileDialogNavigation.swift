@@ -20,7 +20,8 @@ extension DialogService {
         _ filePath: String,
         in dialog: Element,
         ensureExpanded: Bool,
-        appName: String?) async throws -> FileDialogNavigationResult
+        appName: String?,
+        execution: FileExecution? = nil) async throws -> FileDialogNavigationResult
     {
         let expandedPath = (filePath as NSString).expandingTildeInPath
         let targetURL = URL(fileURLWithPath: expandedPath)
@@ -40,7 +41,8 @@ extension DialogService {
             directoryPath: directoryPath,
             in: dialog,
             ensureExpanded: ensureExpanded,
-            appName: appName)
+            appName: appName,
+            execution: execution)
     }
 
     func ensureDialogFocus(dialog: Element, appName: String?) async throws -> DesktopActionOutcome? {
@@ -68,7 +70,10 @@ extension DialogService {
         }
     }
 
-    func ensureFileDialogExpandedIfNeeded(dialog: Element) async throws -> DesktopActionOutcome? {
+    func ensureFileDialogExpandedIfNeeded(
+        dialog: Element,
+        execution: FileExecution? = nil) async throws -> DesktopActionOutcome?
+    {
         let identifierAttribute = Attribute<String>("AXIdentifier")
 
         func findDisclosureCandidate(in element: Element) -> Element? {
@@ -111,6 +116,7 @@ extension DialogService {
 
         var sequence = DesktopActionSequenceAccumulator()
         do {
+            try self.requireFileExecutionFocus(execution)
             try sequence.record(.outcome(self.pressOrClick(disclosure, allowGlobalFallback: true)))
             try await Task.sleep(nanoseconds: 250_000_000)
             return sequence.successResolution().outcome
@@ -123,29 +129,34 @@ extension DialogService {
         directoryPath: String,
         in dialog: Element,
         ensureExpanded: Bool,
-        appName: String?) async throws -> FileDialogNavigationResult
+        appName: String?,
+        execution: FileExecution?) async throws -> FileDialogNavigationResult
     {
         var sequence = DesktopActionSequenceAccumulator()
         do {
+            var dialog = dialog
             let identifierAttribute = Attribute<String>("AXIdentifier")
             let pathFieldIdentifier = "PathTextField"
 
-            func findPathField(in element: Element) -> Element? {
-                self.collectTextFields(from: element).first(where: { field in
-                    field.attribute(identifierAttribute) == pathFieldIdentifier
-                })
+            func findPathField(in element: Element) async throws -> Element? {
+                try await self.fileDialogControls(in: element, execution: execution, role: "AXTextField")
+                    .first(where: { field in
+                        field.attribute(identifierAttribute) == pathFieldIdentifier
+                    })
             }
 
-            var pathField = findPathField(in: dialog)
+            var pathField = try await findPathField(in: dialog)
 
-            if ensureExpanded {
+            if ensureExpanded, execution == nil {
                 if let outcome = try await self.ensureFileDialogExpandedIfNeeded(dialog: dialog) {
                     sequence.record(.outcome(outcome))
                 }
-                pathField = findPathField(in: dialog)
+                pathField = try await findPathField(in: dialog)
             }
 
-            if let outcome = try await self.ensureDialogFocus(dialog: dialog, appName: appName) {
+            if let outcome = try await self.ensureFileDialogFocus(
+                dialog: dialog, appName: appName, execution: execution)
+            {
                 sequence.record(.outcome(outcome))
             }
 
@@ -158,18 +169,22 @@ extension DialogService {
             if pathField == nil, !ensureExpanded {
                 // When NSSavePanel/NSSOpenPanel is collapsed, Cmd+Shift+G (Go to Folder) is often ignored and the
                 // PathTextField isn't in the AX tree. Best effort: expand once before falling back to Go to Folder.
-                if let outcome = try await self.ensureFileDialogExpandedIfNeeded(dialog: dialog) {
+                if let outcome = try await self.ensureFileDialogExpandedIfNeeded(dialog: dialog, execution: execution) {
                     sequence.record(.outcome(outcome))
+                    autoExpandedForNavigation = true
+                    if let execution {
+                        dialog = try await self.refreshFileExecution(execution, allowExpansion: true).element
+                    }
+                    pathField = try await findPathField(in: dialog)
                 }
-                autoExpandedForNavigation = true
-                pathField = findPathField(in: dialog)
             }
 
             guard let pathField else {
                 if let outcome = try await self.navigateViaGoToFolder(
                     directoryPath: requestedDirectory,
                     dialog: dialog,
-                    appName: appName)
+                    appName: appName,
+                    execution: execution)
                 {
                     sequence.record(.outcome(outcome))
                 }
@@ -181,24 +196,23 @@ extension DialogService {
 
             var method = "path_textfield"
 
+            try self.requireFileExecutionFocus(execution)
             try sequence.record(.outcome(self.focusTextField(pathField)))
-            if pathField.isAttributeSettable(named: AXAttributeNames.kAXValueAttribute),
-               pathField.setValue(requestedDirectory, forAttribute: AXAttributeNames.kAXValueAttribute)
-            {
-                sequence.record(.outcome(.dispatchedUnverified(
-                    delivery: .init(mechanism: .accessibilityValue, mode: .background),
-                    evidence: .deliveryAccepted,
-                    unitCount: .one)))
+            if let outcome = try self.setFileDialogValue(requestedDirectory, field: pathField) {
+                sequence.record(.outcome(outcome))
                 // Some NSSavePanel implementations don't update AXValue immediately; commit via Return below.
                 method = "path_textfield_axvalue"
             } else {
+                try self.requireFileExecutionFocus(execution, field: pathField)
                 try sequence.record(.outcome(self.fileDialogGlobalInput(operation: "select the path field") {
                     try self.syntheticInputDriver.hotkey(keys: ["cmd", "a"], holdDuration: 0.05)
                 }))
                 try await Task.sleep(nanoseconds: 75_000_000)
+                try self.requireFileExecutionFocus(execution, field: pathField)
                 try sequence.record(.outcome(self.typeTextValue(requestedDirectory, delay: 5000)))
                 method = "path_textfield_typed"
             }
+            try self.requireFileExecutionFocus(execution, field: pathField)
             try sequence.record(.outcome(self.fileDialogGlobalInput(operation: "commit the path field") {
                 try self.syntheticInputDriver.tapKey(.return, modifiers: [])
             }))
@@ -216,7 +230,8 @@ extension DialogService {
                     if let outcome = try await self.navigateViaGoToFolder(
                         directoryPath: requestedDirectory,
                         dialog: dialog,
-                        appName: appName)
+                        appName: appName,
+                        execution: execution)
                     {
                         sequence.record(.outcome(outcome))
                     }
@@ -227,7 +242,8 @@ extension DialogService {
                 if let outcome = try await self.navigateViaGoToFolder(
                     directoryPath: requestedDirectory,
                     dialog: dialog,
-                    appName: appName)
+                    appName: appName,
+                    execution: execution)
                 {
                     sequence.record(.outcome(outcome))
                 }
@@ -259,25 +275,46 @@ extension DialogService {
     private func navigateViaGoToFolder(
         directoryPath: String,
         dialog: Element,
-        appName: String?) async throws -> DesktopActionOutcome?
+        appName: String?,
+        execution: FileExecution?) async throws -> DesktopActionOutcome?
     {
         var sequence = DesktopActionSequenceAccumulator()
         do {
-            if let outcome = try await self.ensureDialogFocus(dialog: dialog, appName: appName) {
-                sequence.record(.outcome(outcome))
-            }
-            // Cmd+Shift+G is unreliable when the panel is collapsed; try to expand first.
-            if let outcome = try await self.ensureFileDialogExpandedIfNeeded(dialog: dialog) {
+            if let outcome = try await self.ensureFileDialogFocus(
+                dialog: dialog, appName: appName, execution: execution)
+            {
                 sequence.record(.outcome(outcome))
             }
             self.logger.debug("Navigating via Go to Folder (Cmd+Shift+G): \(directoryPath)")
 
-            let keyboardOutcome = try await self.performGoToFolderKeyboardNavigation(directoryPath: directoryPath) {
-                // Best effort: re-assert focus before typing into the Go-to sheet.
-                try await self.ensureDialogFocus(dialog: dialog, appName: appName)
-            }
+            var navigationSheet: FileNavigationSheet?
+            let keyboardOutcome = try await self.performGoToFolderKeyboardNavigation(
+                directoryPath: directoryPath,
+                beforeOpen: { try self.requireFileExecutionFocus(execution) },
+                beforeInput: {
+                    if let execution {
+                        guard let navigationSheet else {
+                            throw self.targetUnavailable("Go to Folder has no retained input target.")
+                        }
+                        try self.requireFileNavigationSheet(navigationSheet, execution: execution)
+                    }
+                },
+                reassertFocus: {
+                    if let execution {
+                        navigationSheet = try await self.resolveFileNavigationSheet(execution)
+                        return nil
+                    }
+                    return try await self.ensureDialogFocus(dialog: dialog, appName: appName)
+                })
             sequence.record(.outcome(keyboardOutcome))
             try await Task.sleep(nanoseconds: 450_000_000)
+            if let execution, let navigationSheet {
+                guard Self.rawElementPresence(navigationSheet.dialog, in: execution.resolution.element) == .absent
+                else {
+                    throw self.targetUnavailable("Go to Folder did not close after committing the requested path.")
+                }
+                try self.requireFileExecutionFocus(execution)
+            }
             return sequence.successResolution().outcome
         } catch {
             throw Self.preservingFileDialogFailure(error, after: sequence, target: nil)
@@ -286,10 +323,13 @@ extension DialogService {
 
     func performGoToFolderKeyboardNavigation(
         directoryPath: String,
+        beforeOpen: () throws -> Void = {},
+        beforeInput: () throws -> Void = {},
         reassertFocus: () async throws -> DesktopActionOutcome?) async throws -> DesktopActionOutcome
     {
         var sequence = DesktopActionSequenceAccumulator()
         do {
+            try beforeOpen()
             try sequence.record(.outcome(self.fileDialogGlobalInput(operation: "open Go to Folder") {
                 try self.syntheticInputDriver.hotkey(keys: ["cmd", "shift", "g"], holdDuration: 0.05)
             }))
@@ -297,16 +337,19 @@ extension DialogService {
             if let outcome = try await reassertFocus() {
                 sequence.record(.outcome(outcome))
             }
+            try beforeInput()
             try sequence.record(.outcome(self.fileDialogGlobalInput(operation: "select Go to Folder text") {
                 try self.syntheticInputDriver.hotkey(keys: ["cmd", "a"], holdDuration: 0.05)
             }))
             try await Task.sleep(nanoseconds: 75_000_000)
+            try beforeInput()
             try sequence.record(.outcome(self.fileDialogGlobalInput(
                 operation: "type the Go to Folder path",
                 unitCount: directoryPath.count)
             {
                 try self.syntheticInputDriver.type(directoryPath, delayPerCharacter: 0.005)
             }))
+            try beforeInput()
             try sequence.record(.outcome(self.fileDialogGlobalInput(operation: "commit Go to Folder") {
                 try self.syntheticInputDriver.tapKey(.return, modifiers: [])
             }))

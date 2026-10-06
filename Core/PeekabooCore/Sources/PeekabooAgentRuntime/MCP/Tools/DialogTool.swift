@@ -159,9 +159,10 @@ public struct DialogTool: MCPTool {
                 preparedReceipt = try await self.context.dialogs.prepareDialogAction(preparationRequest)
             }
 
-            // Input focus is owned by DialogService after it has retained one exact
+            // Input and targeted file focus are owned by DialogService after retaining one exact
             // parent/dialog tuple. Generic window focus cannot safely recognize sheets.
             let hostOwnsForegroundDialogFocus = action == .input ||
+                (action == .file && dialogTarget.hasTarget) ||
                 (action == .dismiss && inputs.force == true && dialogTarget.hasTarget)
             if inputs.foreground, inputs.hasAnyTargeting, !hostOwnsForegroundDialogFocus {
                 setupFocusResult = try await target.focusResultIfRequested(windows: self.context.windows)
@@ -170,7 +171,8 @@ public struct DialogTool: MCPTool {
                 preparedReceipt = try await self.context.dialogs.prepareDialogAction(preparationRequest)
             }
 
-            let usesLegacyDialogResolution = (action == .input && !dialogTarget.hasTarget) || action == .file ||
+            let usesLegacyDialogResolution = (action == .input && !dialogTarget.hasTarget) ||
+                (action == .file && !dialogTarget.hasTarget) ||
                 (action == .dismiss && inputs.force == true && !dialogTarget.hasTarget)
             let resolvedWindowTitle: String? = if usesLegacyDialogResolution {
                 try await target.resolveWindowTitleIfNeeded(windows: self.context.windows)
@@ -417,14 +419,32 @@ public struct DialogTool: MCPTool {
             actionButton = nil
         }
 
-        let result = try await self.context.dialogs.handleFileDialog(
-            path: request.path,
-            filename: request.name,
-            actionButton: actionButton,
-            ensureExpanded: request.ensureExpanded,
-            appName: target.appHint)
+        let result: DialogActionResult = if target.selector.hasTarget {
+            try await self.context.dialogs.handleFileDialog(DialogFileExecutionRequest(
+                target: target.selector,
+                path: request.path,
+                filename: request.name,
+                actionButton: actionButton,
+                ensureExpanded: request.ensureExpanded))
+        } else {
+            try await self.context.dialogs.handleFileDialog(
+                path: request.path,
+                filename: request.name,
+                actionButton: actionButton,
+                ensureExpanded: request.ensureExpanded,
+                appName: target.appHint)
+        }
         let leafOutcome = result.foregroundOutcomeOrUnverified(
             route: self.context.dialogs.foregroundOutcomeRoute)
+        if target.selector.hasTarget,
+           result.outcome == nil || result.targetWindowIdentity == nil || result.targetWindowBounds == nil
+        {
+            throw self.dialogLeafTargetFailure(
+                result: result,
+                leafOutcome: leafOutcome,
+                operation: "Dialog file action",
+                cause: "Exact file execution omitted its canonical outcome or complete parent target.")
+        }
         let actionResult = try self.combinedResult(
             leafOutcome,
             result: result,
@@ -633,17 +653,12 @@ public struct DialogTool: MCPTool {
             let authorizedTarget = try self.context.coalesceAuthorizedDesktopTarget(
                 resultTarget,
                 operation: operation)
-            if target.selector.hasTarget, authorizedTarget.exactWindow == nil {
-                guard let receipt = result.targetReceipt,
-                      target.selector.applicationIdentifier == nil,
-                      target.selector.windowTitle == nil,
-                      target.selector.windowIndex == nil,
-                      target.selector.processIdentifier == receipt.processIdentifier,
-                      target.selector.windowID.map({ $0 == receipt.windowID }) ?? true
-                else {
-                    throw DesktopTargetIdentityError.incompleteExactWindow
-                }
-            }
+            try Self.validateDialogResultSelector(
+                target.selector,
+                result: result,
+                resolvedTarget: authorizedTarget,
+                hasPreparedOrFocusedTarget: target.preparedReceipt != nil ||
+                    target.focusResult?.targetIdentity.exactWindow != nil)
             if let receiptWindowID = result.targetReceipt?.windowID,
                let exactWindowID = authorizedTarget.exactWindow?.identity.windowID,
                receiptWindowID != exactWindowID
@@ -657,6 +672,37 @@ public struct DialogTool: MCPTool {
                 leafOutcome: leafOutcome,
                 operation: operation,
                 cause: error.localizedDescription)
+        }
+    }
+
+    private static func validateDialogResultSelector(
+        _ selector: DialogTargetSelector,
+        result: DialogActionResult,
+        resolvedTarget: DesktopTargetIdentity,
+        hasPreparedOrFocusedTarget: Bool) throws
+    {
+        guard selector.hasTarget else { return }
+        if let expectedPID = selector.processIdentifier,
+           expectedPID != resolvedTarget.processIdentity.processIdentifier
+        {
+            throw DesktopTargetIdentityError.contradictoryProcessIdentifier
+        }
+        let resultWindowID = resolvedTarget.exactWindow?.identity.windowID ?? result.targetReceipt?.windowID
+        if let expectedWindowID = selector.windowID, expectedWindowID != resultWindowID {
+            throw DesktopTargetIdentityError.contradictoryWindowIdentifier
+        }
+        let requiresSelectorProof = selector.applicationIdentifier != nil ||
+            selector.windowTitle != nil || selector.windowIndex != nil
+        guard !requiresSelectorProof || result.resolvedTarget != nil || hasPreparedOrFocusedTarget else {
+            throw DesktopTargetIdentityError.incompleteExactWindow
+        }
+        if resolvedTarget.exactWindow == nil {
+            guard let receipt = result.targetReceipt,
+                  !requiresSelectorProof,
+                  selector.processIdentifier == receipt.processIdentifier
+            else {
+                throw DesktopTargetIdentityError.incompleteExactWindow
+            }
         }
     }
 
