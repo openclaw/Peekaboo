@@ -5,6 +5,126 @@ import Testing
 @testable import PeekabooAutomationKit
 
 struct MenuExtraAXReaderTests {
+    @Test
+    func `attribute failure context names the scan and read without exposing returned text`() throws {
+        let fixture = Fixture()
+        let sensitive = "PRIVATE-SYNTHETIC-TITLE-IDENTIFIER-VALUE"
+        let message = try Self.refusalMessage {
+            _ = try MenuExtraAXReader.readSynchronously(
+                owner: fixture.owner,
+                deadline: .now.advanced(by: .seconds(1)),
+                copyAttribute: { element, name in
+                    if name == "AXIdentifier" {
+                        return (sensitive as CFString, .cannotComplete)
+                    }
+                    if ["AXTitle", "AXHelp", "AXDescription"].contains(name) {
+                        return (sensitive as CFString, .success)
+                    }
+                    return fixture.attribute(element, name)
+                },
+                processIdentifier: { _ in fixture.owner.processIdentifier },
+                processGeneration: { _ in fixture.owner.processStartIdentity },
+                setMessagingTimeout: { _, _ in .success })
+        }
+        #expect(message.contains("scope=application"))
+        #expect(message.contains("owner_pid=42"))
+        #expect(message.contains("node=leaf phase=attribute attribute=AXIdentifier"))
+        #expect(message.contains("native_error=\(AXError.cannotComplete.rawValue)"))
+        #expect(message.contains("expected=string actual=string"))
+        #expect(!message.contains(sensitive))
+    }
+
+    @Test
+    func `malformed system root result reports only its type and never changes global timeout`() throws {
+        let fixture = Fixture()
+        let sensitive = "PRIVATE-SYNTHETIC-MENU-BAR"
+        let message = try Self.refusalMessage {
+            _ = try MenuExtraAXReader.readSynchronously(
+                owner: fixture.owner,
+                systemWide: true,
+                deadline: .now.advanced(by: .seconds(1)),
+                copyAttribute: { _, _ in (sensitive as CFString, .success) },
+                processGeneration: { _ in fixture.owner.processStartIdentity },
+                setMessagingTimeout: { _, _ in
+                    Issue.record("System root diagnosis changed the global timeout")
+                    return .failure
+                })
+        }
+        #expect(message.contains("scope=system scan_pid=42 owner_pid=none"))
+        #expect(message.contains("node=root phase=attribute attribute=AXMenuBar"))
+        #expect(message.contains("native_error=0 expected=ax_element actual=string"))
+        #expect(!message.contains(sensitive))
+    }
+
+    @Test(arguments: [false, true])
+    func `timeout setter failures retain their exact phase and native error`(restoring: Bool) throws {
+        let fixture = Fixture()
+        let message = try Self.refusalMessage {
+            _ = try MenuExtraAXReader.readSynchronously(
+                owner: fixture.owner,
+                deadline: .now.advanced(by: .seconds(1)),
+                copyAttribute: fixture.attribute,
+                processGeneration: { _ in fixture.owner.processStartIdentity },
+                setMessagingTimeout: { _, timeout in
+                    (timeout == 0) == restoring ? .illegalArgument : .success
+                })
+        }
+        #expect(message.contains("scope=application"))
+        #expect(message.contains("phase=\(restoring ? "timeout_restore" : "timeout_install")"))
+        #expect(message.contains("attribute=AXExtrasMenuBar"))
+        #expect(message.contains("native_error=\(AXError.illegalArgument.rawValue)"))
+    }
+
+    @Test
+    func `action errors and zero geometry are distinguishable without exposing labels`() throws {
+        let fixture = Fixture()
+        let sensitive = "PRIVATE-SYNTHETIC-ACTION"
+        let actionMessage = try Self.refusalMessage {
+            _ = try MenuExtraAXReader.readSynchronously(
+                owner: fixture.owner,
+                deadline: .now.advanced(by: .seconds(1)),
+                copyAttribute: fixture.attribute,
+                copyActions: { _ in ([sensitive] as CFArray, .cannotComplete) },
+                processIdentifier: { _ in fixture.owner.processIdentifier },
+                processGeneration: { _ in fixture.owner.processStartIdentity },
+                setMessagingTimeout: { _, _ in .success })
+        }
+        #expect(actionMessage.contains("phase=actions"))
+        #expect(actionMessage.contains("native_error=\(AXError.cannotComplete.rawValue)"))
+        #expect(actionMessage.contains("expected=string_array actual=array"))
+        #expect(!actionMessage.contains(sensitive))
+        let geometryMessage = try Self.refusalMessage {
+            _ = try MenuExtraAXReader.readSynchronously(
+                owner: fixture.owner,
+                deadline: .now.advanced(by: .seconds(1)),
+                copyAttribute: { element, name in
+                    if name == "AXSize" {
+                        var size = CGSize.zero
+                        return (AXValueCreate(.cgSize, &size), .success)
+                    }
+                    if name == "AXTitle" {
+                        return (sensitive as CFString, .success)
+                    }
+                    return fixture.attribute(element, name)
+                },
+                processIdentifier: { _ in fixture.owner.processIdentifier },
+                processGeneration: { _ in fixture.owner.processStartIdentity },
+                setMessagingTimeout: { _, _ in .success })
+        }
+        #expect(geometryMessage.contains("phase=geometry_nonpositive_size"))
+        #expect(!geometryMessage.contains(sensitive))
+    }
+
+    private static func refusalMessage(_ body: () throws -> Void) throws -> String {
+        do {
+            try body()
+            Issue.record("Expected an incomplete Accessibility refusal")
+            return ""
+        } catch let PeekabooError.accessibilityIncomplete(message) {
+            return message
+        }
+    }
+
     @Test(arguments: [AXError.attributeUnsupported, .noValue])
     func `only explicit absence produces an empty optional attribute`(_ error: AXError) throws {
         let value: AXUIElement? = try MenuExtraAXReader.attributeValue(nil, error: error)

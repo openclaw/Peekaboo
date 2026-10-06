@@ -44,8 +44,11 @@ enum MenuExtraAXReader {
     }
 
     static var incomplete: PeekabooError {
-        .accessibilityIncomplete("Menu-extra ownership, classification, or children could not be read completely.")
+        .accessibilityIncomplete(self.incompleteMessage)
     }
+
+    private static let incompleteMessage =
+        "Menu-extra ownership, classification, or children could not be read completely."
 
     static func read(
         owner: ApplicationProcessIdentity,
@@ -82,35 +85,70 @@ enum MenuExtraAXReader {
         -> [MenuExtraAXSnapshot]
     {
         let root = systemWide ? AXUIElementCreateSystemWide() : AXUIElementCreateApplication(owner.processIdentifier)
-        func value<Value>(_ name: String, on element: AXUIElement) throws -> Value? {
-            let (raw, error) = try self.withReadTimeout(
+        let scope = systemWide ? "system" : "application"
+        var nativeOwnerPID: pid_t? = systemWide ? nil : owner.processIdentifier
+        func failure(
+            _ phase: String,
+            node: String = "leaf",
+            attribute: String = "none",
+            error: AXError? = nil,
+            expected: String = "none",
+            actual: String = "none") -> PeekabooError
+        {
+            .accessibilityIncomplete(
+                "\(self.incompleteMessage) [scope=\(scope) scan_pid=\(owner.processIdentifier) " +
+                    "owner_pid=\(nativeOwnerPID.map { String($0) } ?? "none") " +
+                    "node=\(node) phase=\(phase) attribute=\(attribute) " +
+                    "native_error=\(error.map { String($0.rawValue) } ?? "none") " +
+                    "expected=\(expected) actual=\(actual)]")
+        }
+        func value<Value>(_ name: String, on element: AXUIElement, node: String = "leaf") throws -> Value? {
+            let (raw, nativeError) = try self.withReadTimeout(
                 on: element,
                 systemWideRoot: systemWide ? root : nil,
                 deadline: deadline,
-                setMessagingTimeout: setMessagingTimeout)
-            {
-                copyAttribute(element, name)
+                setMessagingTimeout: setMessagingTimeout,
+                timeoutFailure: { restoring, error in
+                    failure(
+                        restoring ? "timeout_restore" : "timeout_install",
+                        node: node,
+                        attribute: name,
+                        error: error)
+                },
+                read: {
+                    copyAttribute(element, name)
+                })
+            do {
+                return try self.attributeValue(raw, error: nativeError)
+            } catch let error as PeekabooError {
+                guard case .accessibilityIncomplete = error else { throw error }
+                throw failure(
+                    "attribute",
+                    node: node,
+                    attribute: name,
+                    error: nativeError,
+                    expected: self.expectedType(Value.self),
+                    actual: self.valueType(raw))
             }
-            return try self.attributeValue(raw, error: error)
         }
         guard processGeneration(owner.processIdentifier) == owner.processStartIdentity else {
-            throw self.incomplete
+            throw failure("owner_before", node: "root")
         }
-        let bar: AXUIElement? = try value(systemWide ? kAXMenuBarAttribute : "AXExtrasMenuBar", on: root)
+        let bar: AXUIElement? = try value(systemWide ? kAXMenuBarAttribute : "AXExtrasMenuBar", on: root, node: "root")
         guard let bar else {
             guard processGeneration(owner.processIdentifier) == owner.processStartIdentity else {
-                throw self.incomplete
+                throw failure("owner_after_absence", node: "root")
             }
             return []
         }
-        let barChildren: [AXUIElement] = try value(kAXChildrenAttribute, on: bar) ?? []
+        let barChildren: [AXUIElement] = try value(kAXChildrenAttribute, on: bar, node: "bar") ?? []
         var elements: [AXUIElement] = []
         if systemWide {
             for child in barChildren {
-                let role: String? = try value(kAXRoleAttribute, on: child)
-                guard let role else { throw self.incomplete }
+                let role: String? = try value(kAXRoleAttribute, on: child, node: "bar_child")
+                guard let role else { throw failure("required_role", node: "bar_child", attribute: kAXRoleAttribute) }
                 if role == "AXGroup" {
-                    let children: [AXUIElement] = try value(kAXChildrenAttribute, on: child) ?? []
+                    let children: [AXUIElement] = try value(kAXChildrenAttribute, on: child, node: "group") ?? []
                     elements.append(contentsOf: children)
                 }
             }
@@ -123,12 +161,13 @@ enum MenuExtraAXReader {
             try self.check(deadline)
             let identity = MenuExtraAXIdentity(element: element)
             guard seen.insert(identity).inserted else { continue }
-            guard let pid = processIdentifier(element), pid > 0,
+            nativeOwnerPID = processIdentifier(element)
+            guard let pid = nativeOwnerPID, pid > 0,
                   systemWide || pid == owner.processIdentifier,
                   let generation = processGeneration(pid)
-            else { throw self.incomplete }
+            else { throw failure("leaf_owner") }
             let role: String? = try value(kAXRoleAttribute, on: element)
-            guard let role, !role.isEmpty else { throw self.incomplete }
+            guard let role, !role.isEmpty else { throw failure("required_role", attribute: kAXRoleAttribute) }
             let subrole: String? = try value(kAXSubroleAttribute, on: element)
             let title: String? = try value(kAXTitleAttribute, on: element)
             let help: String? = try value(kAXHelpAttribute, on: element)
@@ -139,23 +178,45 @@ enum MenuExtraAXReader {
             var point = CGPoint.zero
             var dimensions = CGSize.zero
             guard let position, AXValueGetType(position) == .cgPoint,
-                  AXValueGetValue(position, .cgPoint, &point),
-                  let size, AXValueGetType(size) == .cgSize,
-                  AXValueGetValue(size, .cgSize, &dimensions),
-                  point.x.isFinite, point.y.isFinite,
-                  dimensions.width.isFinite, dimensions.height.isFinite,
-                  dimensions.width > 0, dimensions.height > 0
-            else { throw self.incomplete }
+                  AXValueGetValue(position, .cgPoint, &point)
+            else {
+                throw failure(
+                    "geometry",
+                    attribute: kAXPositionAttribute,
+                    expected: "point",
+                    actual: self.valueType(position))
+            }
+            guard let size, AXValueGetType(size) == .cgSize, AXValueGetValue(size, .cgSize, &dimensions) else {
+                throw failure("geometry", attribute: kAXSizeAttribute, expected: "size", actual: self.valueType(size))
+            }
+            guard point.x.isFinite, point.y.isFinite, dimensions.width.isFinite, dimensions.height.isFinite else {
+                throw failure("geometry_nonfinite")
+            }
+            guard dimensions.width > 0, dimensions.height > 0 else { throw failure("geometry_nonpositive_size") }
             let (rawActions, actionError) = try self.withReadTimeout(
                 on: element,
                 systemWideRoot: systemWide ? root : nil,
                 deadline: deadline,
-                setMessagingTimeout: setMessagingTimeout)
-            {
-                copyActions(element)
+                setMessagingTimeout: setMessagingTimeout,
+                timeoutFailure: { restoring, error in
+                    failure(restoring ? "timeout_restore" : "timeout_install", attribute: "action_names", error: error)
+                },
+                read: {
+                    copyActions(element)
+                })
+            let actions: [String]
+            do {
+                actions = try self.attributeValue(rawActions, error: actionError) ?? []
+            } catch let error as PeekabooError {
+                guard case .accessibilityIncomplete = error else { throw error }
+                throw failure(
+                    "actions",
+                    attribute: "action_names",
+                    error: actionError,
+                    expected: "string_array",
+                    actual: self.valueType(rawActions))
             }
-            let actions: [String] = try self.attributeValue(rawActions, error: actionError) ?? []
-            guard processGeneration(pid) == generation else { throw self.incomplete }
+            guard processGeneration(pid) == generation else { throw failure("owner_after_leaf") }
             snapshots.append(MenuExtraAXSnapshot(
                 identity: identity,
                 processIdentity: .init(processIdentifier: pid, processStartIdentity: generation),
@@ -169,7 +230,7 @@ enum MenuExtraAXReader {
                 actions: actions))
         }
         guard processGeneration(owner.processIdentifier) == owner.processStartIdentity else {
-            throw self.incomplete
+            throw failure("owner_after_scan", node: "root")
         }
         return snapshots
     }
@@ -180,6 +241,7 @@ enum MenuExtraAXReader {
         deadline: ContinuousClock.Instant,
         setMessagingTimeout: MessagingTimeoutSet,
         now: () -> ContinuousClock.Instant = { .now },
+        timeoutFailure: (Bool, AXError) -> PeekabooError = { _, _ in Self.incomplete },
         read: () throws -> Output) throws -> Output
     {
         try Task.checkCancellation()
@@ -201,16 +263,47 @@ enum MenuExtraAXReader {
                 // These references are created/returned inside this reader. Zero removes only this
                 // object's override, so retained mutation references inherit the unchanged global default.
                 defer { restoration = setMessagingTimeout(element, 0) }
-                guard setMessagingTimeout(element, timeout) == .success else { throw self.incomplete }
+                let installed = setMessagingTimeout(element, timeout)
+                guard installed == .success else { throw timeoutFailure(false, installed) }
                 try Task.checkCancellation()
                 guard now() < deadline else { throw self.timeout }
                 result = try read()
             }
-            guard restoration == .success else { throw self.incomplete }
+            guard restoration == .success else { throw timeoutFailure(true, restoration) }
         }
         try Task.checkCancellation()
         guard now() < deadline else { throw self.timeout }
         return result
+    }
+
+    private static func expectedType(_ type: Any.Type) -> String {
+        if type == String.self {
+            return "string"
+        }
+        if type == AXUIElement.self {
+            return "ax_element"
+        }
+        if type == AXValue.self {
+            return "ax_value"
+        }
+        if type == [AXUIElement].self {
+            return "ax_element_array"
+        }
+        return "typed_value"
+    }
+
+    private static func valueType(_ value: CFTypeRef?) -> String {
+        guard let value else { return "none" }
+        switch CFGetTypeID(value) {
+        case AXUIElementGetTypeID(): return "ax_element"
+        case AXValueGetTypeID(): return "ax_value"
+        case CFArrayGetTypeID(): return "array"
+        case CFStringGetTypeID(): return "string"
+        case CFBooleanGetTypeID(): return "boolean"
+        case CFNumberGetTypeID(): return "number"
+        case CFNullGetTypeID(): return "null"
+        default: return "other"
+        }
     }
 
     static func attributeValue<Value>(_ value: CFTypeRef?, error: AXError) throws -> Value? {
