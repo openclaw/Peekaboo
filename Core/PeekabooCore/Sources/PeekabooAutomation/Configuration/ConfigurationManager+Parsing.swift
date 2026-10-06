@@ -73,8 +73,10 @@ extension ConfigurationManager {
                         let replacement: String
                         if escapingJSONStringContents, self.isInsideJSONString(at: fullMatch.lowerBound, in: text) {
                             let encoded = try JSONEncoder().encode(value)
-                            guard let quoted = String(data: encoded, encoding: .utf8) else { continue }
-                            replacement = String(quoted.dropFirst().dropLast())
+                            guard let contents = String(bytes: encoded.dropFirst().dropLast(), encoding: .utf8) else {
+                                continue
+                            }
+                            replacement = contents
                         } else {
                             replacement = value
                         }

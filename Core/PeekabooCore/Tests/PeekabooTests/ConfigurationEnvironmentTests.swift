@@ -41,6 +41,27 @@ struct ConfigurationManagerEnvironmentTests {
         }
     }
 
+    @Test(arguments: ["\u{0301}leading", "\u{FE0F}variation", "🦞e\u{0301}", ""])
+    func `configuration interpolation retains leading environment scalars`(value: String) throws {
+        let key = "PEEKABOO_OWNED_LEADING_SCALAR_972"
+        let previous = getenv(key).map { String(cString: $0) }
+        setenv(key, value, 1)
+        defer {
+            if let previous {
+                setenv(key, previous, 1)
+            } else {
+                unsetenv(key)
+            }
+        }
+
+        try withIsolatedConfigurationEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let json = try JSONEncoder().encode(["defaults": ["savePath": "${\(key)}"]])
+            try json.write(to: configPath)
+            #expect(self.manager.loadConfiguration()?.defaults?.savePath == value)
+        }
+    }
+
     @Test
     func `configuration interpolation keeps numeric environment substitutions unquoted`() throws {
         let key = "PEEKABOO_OWNED_NUMERIC_LIMIT"
