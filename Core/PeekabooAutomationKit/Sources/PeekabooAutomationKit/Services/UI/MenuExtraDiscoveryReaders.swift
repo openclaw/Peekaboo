@@ -21,10 +21,20 @@ struct MenuExtraDiscoveryReaders {
         try Element(snapshot.identity.element).performAction(showMenu ? .showMenu : .press)
     }
 
+    static func permitsApplicationExtrasScan(
+        activationPolicy: NSApplication.ActivationPolicy,
+        isTerminated: Bool) -> Bool
+    {
+        // AppKit prohibits BackgroundOnly agents from creating windows or activating. The separate
+        // system-wide inventory remains authoritative for system-hosted status items.
+        !isTerminated && (activationPolicy == .regular || activationPolicy == .accessory)
+    }
+
     private static func readSnapshots() async throws -> [MenuExtraAXSnapshot] {
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-        let applications = NSWorkspace.shared.runningApplications.filter { !$0.isTerminated }
-            .sorted { $0.processIdentifier < $1.processIdentifier }
+        let applications = NSWorkspace.shared.runningApplications.filter {
+            self.permitsApplicationExtrasScan(activationPolicy: $0.activationPolicy, isTerminated: $0.isTerminated)
+        }.sorted { $0.processIdentifier < $1.processIdentifier }
         guard let ownGeneration = SystemIdentityResolver.processStartIdentity(getpid()) else {
             throw MenuExtraAXReader.incomplete
         }
