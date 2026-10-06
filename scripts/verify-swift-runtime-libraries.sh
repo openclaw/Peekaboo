@@ -3,13 +3,18 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME_SDK_ARGS=()
+AUDIT_RUNTIME_EXPORTS=true
+if [ "${1:-}" = --standalone ]; then
+    AUDIT_RUNTIME_EXPORTS=false
+    shift
+fi
 if [ "${1:-}" = --runtime-sdk-root ] && [ "$#" -ge 2 ]; then
     RUNTIME_SDK_ARGS=(--sdk-root "$2")
     shift 2
 fi
 
 if [ "$#" -ne 2 ]; then
-    echo "Usage: $0 [--runtime-sdk-root DIR] <executable> <runtime-library-directory>" >&2
+    echo "Usage: $0 [--standalone] [--runtime-sdk-root DIR] <executable> <runtime-library-directory>" >&2
     exit 2
 fi
 
@@ -23,19 +28,23 @@ EXPECTED_TEAM_ID="${MAC_RELEASE_CODESIGN_TEAM_ID:-}"
     exit 1
 }
 
-# An availability-qualified Swift Ref can still emit this strong runtime import.
-# The Span back-deployment library does not provide it; dyld fails before main on macOS 26 and earlier.
-undefined_symbols=$(nm -arch all -m -u "$EXECUTABLE_PATH") || {
-    echo "Unable to inspect Swift runtime imports: $EXECUTABLE_PATH" >&2
-    exit 1
-}
-if awk '/\(undefined\)/ && !/ weak / && / _swift_initBorrow([[:space:]]|$)/ { found = 1 }
-    END { exit !found }' <<< "$undefined_symbols"; then
-    echo "Unsupported strong macOS 27 Swift runtime import: _swift_initBorrow ($EXECUTABLE_PATH)" >&2
-    exit 1
-fi
+# Standalone developer builds use their selected SDK; release callers retain
+# older-runtime export certification by default. Loader checks always run.
+if [ "$AUDIT_RUNTIME_EXPORTS" = true ]; then
+    # An availability-qualified Swift Ref can still emit this strong runtime import.
+    # The Span back-deployment library does not provide it; dyld fails before main on macOS 26 and earlier.
+    undefined_symbols=$(nm -arch all -m -u "$EXECUTABLE_PATH") || {
+        echo "Unable to inspect Swift runtime imports: $EXECUTABLE_PATH" >&2
+        exit 1
+    }
+    if awk '/\(undefined\)/ && !/ weak / && / _swift_initBorrow([[:space:]]|$)/ { found = 1 }
+        END { exit !found }' <<< "$undefined_symbols"; then
+        echo "Unsupported strong macOS 27 Swift runtime import: _swift_initBorrow ($EXECUTABLE_PATH)" >&2
+        exit 1
+    fi
 
-python3 "$SCRIPT_DIR/swift-runtime-exports.py" audit ${RUNTIME_SDK_ARGS[@]+"${RUNTIME_SDK_ARGS[@]}"} "$EXECUTABLE_PATH" || exit 1
+    python3 "$SCRIPT_DIR/swift-runtime-exports.py" audit ${RUNTIME_SDK_ARGS[@]+"${RUNTIME_SDK_ARGS[@]}"} "$EXECUTABLE_PATH" || exit 1
+fi
 
 # dyld resolves @rpath separately for each Mach-O slice. A load command in
 # arm64 does not provide a search path for an Intel dependency (or vice versa).

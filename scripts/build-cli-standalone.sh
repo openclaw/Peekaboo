@@ -42,7 +42,7 @@ if [ -f "$BUILD_PATH" ]; then
     echo -e "${BLUE}Binary location: $(pwd)/$BUILD_PATH${NC}"
     
     # Collect the exact compatibility libraries required by this standalone binary.
-    ../../scripts/copy-swift-runtime-libraries.sh "$BUILD_PATH" "$(dirname "$BUILD_PATH")"
+    ../../scripts/copy-swift-runtime-libraries.sh --standalone "$BUILD_PATH" "$(dirname "$BUILD_PATH")"
 
     # Show binary info
     echo -e "\n${BLUE}Binary info:${NC}"

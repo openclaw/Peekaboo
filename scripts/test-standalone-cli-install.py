@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Verify the standalone installer with a native executable and companion dylib."""
 import os
+import json
 from pathlib import Path
 import resource
 import shutil
@@ -40,6 +41,7 @@ with tempfile.TemporaryDirectory(prefix="peekaboo-standalone-install.") as direc
     shutil.move(library, sdk_library)
     collector = scripts / "copy-swift-runtime-libraries.sh"
     collector.write_text('#!/bin/bash\nset -eu\n'
+                         '[ "$1" = --standalone ]\nshift\n'
                          'cp "$FIXTURE_SDK_LIBRARY" "$2/libswiftCompatibilityFixture.dylib"\n')
     collector.chmod(0o755)
     # Link with the same companion, then let the public builder collect it from
@@ -101,3 +103,42 @@ os.execv({"cp": "/bin/cp", "install": "/usr/bin/install"}[args[0]], args)
     assert run([str(installed / "peekaboo")]).stdout == "independent\n"
     assert [path.name for path in installed.iterdir()] == ["peekaboo"]
     print("PASS collection failure refuses partial installation; native dependency-free CLI still installs")
+
+    # Exercise the actual collector and verifier rather than substituting their
+    # behavior. Only workspace compilation and sudo's destination stay controlled.
+    for name in ("copy-swift-runtime-libraries.sh", "verify-swift-runtime-libraries.sh",
+                 "swift-runtime-exports.py"):
+        shutil.copy2(ROOT / "scripts" / name, scripts / name)
+    future_sdk_root = fixture / "SDKs"
+    future_sdk = future_sdk_root / "MacOSX27.sdk"
+    (future_sdk / "usr/lib/swift").mkdir(parents=True)
+    (future_sdk / "SDKSettings.json").write_text(json.dumps({"Version": "27.0"}))
+    (future_sdk / "usr/lib/swift/libswiftCore.tbd").write_text("# selection fixture\n")
+    verifier = str(scripts / "verify-swift-runtime-libraries.sh")
+    refused = subprocess.run([verifier, "--runtime-sdk-root", str(future_sdk_root),
+                              str(binary), str(output)], env=environment,
+                             capture_output=True, text=True)
+    assert refused.returncode != 0, refused.stdout
+    assert "No eligible macOS SDK" in refused.stderr, refused.stderr
+    run([verifier, "--standalone", "--runtime-sdk-root", str(future_sdk_root),
+         str(binary), str(output)], env=environment)
+    print("PASS release certification refuses only-27 SDK inventory; standalone loader checks accept native CLI")
+
+    span_source = fixture / "Span.swift"
+    span_source.write_text("print(OutputSpan<UInt8>.self)\n")
+    run(["/usr/bin/xcrun", "swiftc", "-target", "arm64-apple-macosx15.0",
+         "-Xlinker", "-rpath", "-Xlinker", "@loader_path", str(span_source), "-o", str(binary)])
+    dependencies = run(["/usr/bin/otool", "-L", str(binary)]).stdout
+    if "@rpath/libswiftCompatibility" not in dependencies:
+        print("SKIP native compatibility installation: active Swift toolchain emitted no companion dependency")
+    else:
+        for path in installed.iterdir():
+            path.unlink()
+        run(["/bin/bash", str(scripts / "build-cli-standalone.sh"), "--install"], env=environment)
+        result = run([str(installed / "peekaboo")], preexec_fn=no_core_dump)
+        assert result.stdout.strip() == "OutputSpan<UInt8>", result.stdout
+        companions = list(installed.glob("libswiftCompatibility*.dylib"))
+        assert companions, "real SDK collector must install the required companions"
+        for companion in companions:
+            assert companion.read_bytes() == (output / companion.name).read_bytes()
+        print("PASS real Swift SDK collector -> actual standalone installer -> native OutputSpan executable")

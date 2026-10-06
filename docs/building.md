@@ -44,6 +44,8 @@ pnpm run build:swift:all
 
 The standalone helper collects the compatibility libraries required by the executable into its build output.
 `--install` copies both the binary and those libraries to `/usr/local/bin`; keep them together when moving the CLI.
+Standalone builds check companion loader paths, architectures, and signatures using the selected toolchain.
+The release-only older-SDK runtime export audit remains mandatory for release builders and verifiers.
 
 The universal CLI build uses `--triple x86_64-apple-macosx15.0` for Intel compilation and binary-directory lookup,
 matching the CLI package's existing `.macOS(.v15)` minimum. It also sets Swift Build's aggregate deployment minimum,
