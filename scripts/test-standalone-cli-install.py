@@ -74,7 +74,8 @@ os.execv({"cp": "/bin/cp", "install": "/usr/bin/install"}[args[0]], args)
     # This fixture validates loading/installation, never the operator's signing
     # identity or keychain. Keep the real collector on its unsigned default path.
     inherited = {key: value for key, value in os.environ.items()
-                 if key not in ("SIGN_IDENTITY", "MAC_RELEASE_CODESIGN_IDENTITY")}
+                 if key not in ("SIGN_IDENTITY", "MAC_RELEASE_CODESIGN_IDENTITY",
+                                "MAC_RELEASE_CODESIGN_TEAM_ID")}
     environment = dict(inherited, PATH=f"{tools}:/usr/bin:/bin", FIXTURE_INSTALL_DIR=str(installed),
                        FIXTURE_SDK_LIBRARY=str(sdk_library))
     run(["/bin/bash", str(scripts / "build-cli-standalone.sh"), "--install"], env=environment)
