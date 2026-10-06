@@ -294,9 +294,11 @@ public struct AgentSystemPrompt {
             guidance.append("Scrolling → `scroll` with direction and amount, pinned to the observed target.")
         }
         if catalog.contains("menu") {
+            guidance.append("Application menus → use the `menu` tool with action \"list\" or \"click\". " +
+                "Background click requires an exact app name, bundle ID, or PID and the full menu path.")
             guidance.append(allowsForeground
-                ? "Menus → the `menu` tool with action \"click\" and the full path."
-                : "Menus → the `menu` tool with action \"list\"; menu mutations require foreground authority.")
+                ? "Menu operations default to background AX access; use foreground expansion only when required."
+                : "Foreground menu expansion is unavailable in this session; never promote a refused background click.")
         }
         if catalog.contains("space") {
             guidance.append(allowsForeground

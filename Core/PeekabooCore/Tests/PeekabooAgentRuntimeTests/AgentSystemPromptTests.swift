@@ -178,6 +178,21 @@ struct AgentSystemPromptTests {
         #expect(prompt.contains("`menu` tool"), "Prompt should reference the real `menu` tool.")
     }
 
+    @Test(arguments: [MCPToolExecutionPolicy.backgroundOnly, .foregroundAllowed, .unrestricted])
+    func `menu guidance preserves exact background click without granting foreground authority`(
+        policy: MCPToolExecutionPolicy)
+    {
+        let prompt = AgentSystemPrompt.generate(executionPolicy: policy, availableToolNames: ["menu"])
+        #expect(prompt.contains("action \"list\" or \"click\""))
+        #expect(prompt
+            .contains("Background click requires an exact app name, bundle ID, or PID and the full menu path"))
+        #expect(!prompt.contains("menu mutations require foreground authority"))
+        #expect(prompt.contains("Foreground menu expansion is unavailable") == (policy == .backgroundOnly))
+        #expect(prompt.contains("never promote a refused background click") == (policy == .backgroundOnly))
+        let unavailable = AgentSystemPrompt.generate(executionPolicy: policy, availableToolNames: [])
+        #expect(!unavailable.contains("Application menus →"))
+    }
+
     @Test
     func `generated prompt references real sleep tool`() {
         guard #available(macOS 14.0, *) else { return }
