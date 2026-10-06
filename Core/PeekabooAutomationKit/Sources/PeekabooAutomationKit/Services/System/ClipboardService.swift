@@ -243,7 +243,6 @@ ClipboardReadAccessProviding {
     private let pasteboard: NSPasteboard
     private let sizeLimit: Int
     private let readAccessStatusReader: @MainActor (NSPasteboard) -> ClipboardReadAccessStatus
-    private var slots: [String: [ClipboardRepresentation]] = [:]
 
     public convenience init(
         pasteboard: NSPasteboard = .general,
@@ -560,109 +559,114 @@ ClipboardReadAccessProviding {
             throw ClipboardServiceError.writeFailed("Slot name must not be empty.")
         }
 
-        let reps = try self.snapshotRepresentations(from: self.pasteboard, allowPrompt: allowPrompt)
-        self.slots[trimmedSlot] = reps
-
+        if !allowPrompt {
+            try Self.requireSilentReadAccess(self.readAccessStatus())
+        }
+        let items = self.snapshotItems(from: self.pasteboard)
+        let objects = try Self.pasteboardItems(from: items)
         let slotPasteboard = NSPasteboard(name: self.slotPasteboardName(for: trimmedSlot))
         slotPasteboard.clearContents()
-        let types = reps.map { NSPasteboard.PasteboardType($0.utiIdentifier) }
-        slotPasteboard.declareTypes(types, owner: nil)
-
-        for rep in reps {
-            let pbType = NSPasteboard.PasteboardType(rep.utiIdentifier)
-            guard slotPasteboard.setData(rep.data, forType: pbType) else {
-                throw ClipboardServiceError
-                    .writeFailed("Unable to save type \(rep.utiIdentifier) to slot \(trimmedSlot)")
-            }
+        if !objects.isEmpty, !slotPasteboard.writeObjects(objects) {
+            throw ClipboardServiceError.writeFailed("Unable to save clipboard items to slot \(trimmedSlot)")
         }
     }
 
     public func restore(slot: String) throws -> ClipboardReadResult {
         var didDispatch = false
-        var restoredRepresentations: [ClipboardRepresentation] = []
+        var restoredItems: [[ClipboardRepresentation]] = []
         return try self.restore(
             slot: slot,
             didDispatch: &didDispatch,
-            restoredRepresentations: &restoredRepresentations)
+            restoredItems: &restoredItems)
     }
 
     public func restoreActionResult(slot: String) throws -> DesktopActionResult<ClipboardReadResult> {
-        var restoredRepresentations: [ClipboardRepresentation] = []
+        var restoredItems: [[ClipboardRepresentation]] = []
         return try ClipboardMutationResultOwner.perform(
             operation: "Clipboard restore",
             mutation: { didDispatch in
                 try self.restore(
                     slot: slot,
                     didDispatch: &didDispatch,
-                    restoredRepresentations: &restoredRepresentations)
+                    restoredItems: &restoredItems)
             },
-            verify: { _ in self.matches(representations: restoredRepresentations, alsoText: nil) })
+            verify: { _ in self.matches(items: restoredItems) })
     }
 
     private func restore(
         slot: String,
         didDispatch: inout Bool,
-        restoredRepresentations: inout [ClipboardRepresentation]) throws -> ClipboardReadResult
+        restoredItems: inout [[ClipboardRepresentation]]) throws -> ClipboardReadResult
     {
         let trimmedSlot = slot.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSlot.isEmpty else {
             throw ClipboardServiceError.slotNotFound(slot)
         }
 
-        let slotPasteboardName = self.slotPasteboardName(for: trimmedSlot)
-        let reps: [ClipboardRepresentation]
-        if let cached = self.slots[trimmedSlot], !cached.isEmpty {
-            reps = cached
-        } else {
-            let slotPasteboard = NSPasteboard(name: slotPasteboardName)
-            let loaded = try self.snapshotRepresentations(from: slotPasteboard)
-            guard !loaded.isEmpty else {
-                throw ClipboardServiceError.slotNotFound(trimmedSlot)
-            }
-            reps = loaded
+        let slotPasteboard = NSPasteboard(name: self.slotPasteboardName(for: trimmedSlot))
+        // Slot boards are named, not General; native clipboard read admission is not required.
+        let items = self.snapshotItems(from: slotPasteboard)
+        guard !items.isEmpty else { throw ClipboardServiceError.slotNotFound(trimmedSlot) }
+        restoredItems = items
+        let totalSize = items.flatMap(\.self).reduce(0) { $0 + $1.data.count }
+        guard totalSize <= self.sizeLimit else {
+            throw ClipboardServiceError.sizeExceeded(current: totalSize, limit: self.sizeLimit)
         }
-        restoredRepresentations = reps
-
-        let request = ClipboardWriteRequest(representations: reps)
-        let result = try self.set(request, didDispatch: &didDispatch)
-        self.slots.removeValue(forKey: trimmedSlot)
-        NSPasteboard(name: slotPasteboardName).clearContents()
-        return result
+        let objects = try Self.pasteboardItems(from: items)
+        self.pasteboard.clearContents()
+        didDispatch = true
+        guard self.pasteboard.writeObjects(objects) else {
+            throw ClipboardServiceError.writeFailed("Unable to restore saved clipboard items")
+        }
+        slotPasteboard.clearContents()
+        return Self.writeResult(for: ClipboardWriteRequest(representations: items[0]))
     }
 
     // MARK: - Helpers
 
-    private func snapshotRepresentations(
-        from pasteboard: NSPasteboard,
-        allowPrompt: Bool = false) throws -> [ClipboardRepresentation]
-    {
-        if !allowPrompt {
-            try Self.requireSilentReadAccess(self.readAccessStatusReader(pasteboard))
+    private func snapshotItems(from pasteboard: NSPasteboard) -> [[ClipboardRepresentation]] {
+        let items = (pasteboard.pasteboardItems ?? []).compactMap { item -> [ClipboardRepresentation]? in
+            let representations = item.types.compactMap { type -> ClipboardRepresentation? in
+                guard let data = item.data(forType: type) else { return nil }
+                return ClipboardRepresentation(utiIdentifier: type.rawValue, data: data)
+            }
+            return representations.isEmpty ? nil : representations
         }
-        var reps: [ClipboardRepresentation] = []
+        if !items.isEmpty {
+            return items
+        }
+        let representations = (pasteboard.types ?? []).compactMap { type -> ClipboardRepresentation? in
+            guard let data = pasteboard.data(forType: type) else { return nil }
+            return ClipboardRepresentation(utiIdentifier: type.rawValue, data: data)
+        }
+        return representations.isEmpty ? [] : [representations]
+    }
 
-        if let items = pasteboard.pasteboardItems {
-            for item in items {
-                for type in item.types {
-                    if let data = item.data(forType: type) {
-                        reps.append(ClipboardRepresentation(utiIdentifier: type.rawValue, data: data))
-                    }
+    private static func pasteboardItems(from items: [[ClipboardRepresentation]]) throws -> [NSPasteboardItem] {
+        try items.map { representations in
+            let item = NSPasteboardItem()
+            for representation in representations {
+                guard item.setData(representation.data, forType: .init(representation.utiIdentifier)) else {
+                    throw ClipboardServiceError.writeFailed("Unable to prepare a saved clipboard representation")
+                }
+            }
+            return item
+        }
+    }
+
+    private func matches(items: [[ClipboardRepresentation]]) -> Bool {
+        guard self.readAccessStatus().readAdmitted else { return false }
+        let current = self.snapshotItems(from: self.pasteboard)
+        guard current.count == items.count else { return false }
+        return zip(current, items).allSatisfy { actual, expected in
+            actual.count == expected.count && expected.allSatisfy { representation in
+                actual.contains { candidate in
+                    candidate.utiIdentifier == representation.utiIdentifier &&
+                        Self.normalizedData(candidate.data, for: candidate.utiIdentifier) ==
+                        Self.normalizedData(representation.data, for: representation.utiIdentifier)
                 }
             }
         }
-
-        if !reps.isEmpty {
-            return reps
-        }
-
-        guard let types = pasteboard.types else { return [] }
-        for type in types {
-            if let data = pasteboard.data(forType: type) {
-                reps.append(ClipboardRepresentation(utiIdentifier: type.rawValue, data: data))
-            }
-        }
-
-        return reps
     }
 
     private static func isPlainTextRepresentation(_ representation: ClipboardRepresentation) -> Bool {
