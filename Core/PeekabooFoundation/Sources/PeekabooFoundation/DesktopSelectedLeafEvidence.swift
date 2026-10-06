@@ -258,7 +258,10 @@ public struct DesktopSelectedLeafEvidence: Sendable, Codable, Equatable {
     }
 
     private static func isCanonicalDigest(_ value: String) -> Bool {
-        value.count == 64 && value == value.lowercased() && value.allSatisfy(\.isHexDigit)
+        let bytes = value.utf8
+        return bytes.count == 64 && bytes.allSatisfy { byte in
+            (48...57).contains(byte) || (97...102).contains(byte)
+        }
     }
 }
 
