@@ -4,6 +4,16 @@ import PeekabooFoundation
 
 @MainActor
 extension StubDialogService {
+    func handleFileDialog(_ request: DialogFileExecutionRequest) async throws -> DialogActionResult {
+        self.exactFileRequests.append(request)
+        return try await self.handleFileDialog(
+            path: request.path,
+            filename: request.filename,
+            actionButton: request.actionButton,
+            ensureExpanded: request.ensureExpanded,
+            appName: nil)
+    }
+
     func enterText(_ request: DialogLegacyInputExecutionRequest) async throws -> DialogActionResult {
         self.legacyInputFocusPolicies.append(request.focus)
         return try await self.enterText(
@@ -11,8 +21,7 @@ extension StubDialogService {
             fieldIdentifier: request.fieldIdentifier,
             clearExisting: request.clearExisting,
             windowTitle: request.windowTitle,
-            appName: request.appName
-        )
+            appName: request.appName)
     }
 
     func forceDismissDialog(_ request: DialogForcedDismissExecutionRequest) async throws -> DialogActionResult {
@@ -25,8 +34,7 @@ extension StubDialogService {
             windowID: request.target.windowID ?? 73,
             ownerProcessIdentifier: request.target.processIdentifier ?? 42,
             ownerProcessStartIdentity: 9001,
-            capturedBounds: bounds
-        )
+            capturedBounds: bounds)
         let provided = self.dismissResult
         return DialogActionResult(
             success: provided?.success ?? true,
@@ -35,17 +43,14 @@ extension StubDialogService {
             outcome: provided?.outcome ?? .dispatchedUnverified(
                 delivery: .init(mechanism: .globalEvents, mode: .foreground),
                 evidence: .deliveryAccepted,
-                unitCount: .one
-            ),
+                unitCount: .one),
             targetReceipt: provided?.targetReceipt ?? .init(
                 processIdentifier: identity.ownerProcessIdentifier,
                 processStartIdentity: identity.ownerProcessStartIdentity,
-                windowID: identity.windowID
-            ),
+                windowID: identity.windowID),
             targetWindowIdentity: provided?.targetWindowIdentity ?? identity,
             targetWindowBounds: provided?.targetWindowBounds ?? bounds,
             focusedElement: provided?.focusedElement,
-            resolvedTarget: provided?.resolvedTarget
-        )
+            resolvedTarget: provided?.resolvedTarget)
     }
 }

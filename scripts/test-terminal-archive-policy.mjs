@@ -158,6 +158,12 @@ assert.throws(() => validateArchiveEntries([
   { path: 'Fixture.app', type: 'symlink', target: 'Fixture.app' }
 ], 'Fixture.app'), /root is not a directory/);
 
+const legacyHierarchy = ['Fixture.app/', 'Fixture.app/value', 'Fixture.app/value/child'];
+const normalizedHierarchy = ['Fixture.app', 'Fixture.app/value', 'Fixture.app/value/child'];
+assert.deepEqual(validateArchiveEntries(legacyHierarchy, 'Fixture.app'), normalizedHierarchy);
+assert.deepEqual(validateArchiveEntries(legacyHierarchy.map((entryPath) => ({ path: entryPath })), 'Fixture.app'),
+  normalizedHierarchy.map((entryPath) => ({ path: entryPath, type: null, target: null })));
+
 assert.throws(() => validateArchiveEntries([
   { path: 'Fixture.app/', type: 'directory' },
   { path: 'Fixture.app/alias', type: 'symlink', target: '.' },
@@ -181,6 +187,33 @@ assert.equal(validateArchiveEntries([
 
 const testDirectory = await mkdtemp(path.join(os.tmpdir(), 'peekaboo-terminal-archive-policy.'));
 try {
+  const parentFileEntries = [
+    { path: 'Fixture.app/', type: 'directory' },
+    { path: 'Fixture.app/value', type: 'file', data: 'parent' },
+    { path: 'Fixture.app/value/child', type: 'file', data: 'child' }
+  ];
+  for (const childFirst of [false, true]) {
+    const orderedEntries = childFirst ?
+      [parentFileEntries[0], parentFileEntries[2], parentFileEntries[1]] : parentFileEntries;
+    assert.throws(() => validateArchiveEntries(orderedEntries, 'Fixture.app'), /descendant beneath a file/);
+    const directoryEntries = orderedEntries.map((entry) => entry.path === 'Fixture.app/value' ?
+      { path: 'Fixture.app/value/', type: 'directory' } : entry);
+    const expectedDirectories = directoryEntries.map((entry) => ({
+      path: entry.path.replace(/\/$/, ''), type: entry.type, target: null
+    }));
+    assert.deepEqual(validateArchiveEntries(directoryEntries, 'Fixture.app'), expectedDirectories);
+    for (const [extension, encode, validate] of [
+      ['zip', zipFixture, validateZipArchive],
+      ['tar.gz', tarFixture, validateTarGzArchive]
+    ]) {
+      const archive = path.join(testDirectory, `file-parent-${childFirst}.${extension}`);
+      await writeFile(archive, encode(orderedEntries));
+      await assert.rejects(validate(archive, 'Fixture.app'), /descendant beneath a file/);
+      const directoryArchive = path.join(testDirectory, `directory-parent-${childFirst}.${extension}`);
+      await writeFile(directoryArchive, encode(directoryEntries));
+      assert.deepEqual(await validate(directoryArchive, 'Fixture.app'), expectedDirectories);
+    }
+  }
   for (const count of [32, 33]) {
     const chain = [
       { path: 'Fixture.app/', type: 'directory' },

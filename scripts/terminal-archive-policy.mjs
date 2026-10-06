@@ -100,7 +100,7 @@ export function validateArchiveEntries(entries, expectedRoot, label = 'archive',
   const exactPaths = new Set();
   const collisionPaths = new Map();
   const collisionPrefixes = new Map();
-  const symlinks = new Set();
+  const nonDirectories = new Map();
   let rootRecord = null;
 
   for (const record of records) {
@@ -145,9 +145,11 @@ export function validateArchiveEntries(entries, expectedRoot, label = 'archive',
     }
     if (record.type === 'symlink') {
       validateSymlink(record, expectedRoot, label, allowSymlinks);
-      symlinks.add(normalizedCollisionKey(record.path));
     } else if (record.target !== null) {
       fail(label, `contains a link target on a non-symlink: ${entry}`);
+    }
+    if (record.type === 'file' || record.type === 'symlink') {
+      nonDirectories.set(normalizedCollisionKey(record.path), record.type);
     }
     if (withoutSlash === expectedRoot) rootRecord = record;
   }
@@ -160,9 +162,8 @@ export function validateArchiveEntries(entries, expectedRoot, label = 'archive',
   for (const record of records) {
     let ancestor = path.posix.dirname(record.path);
     while (ancestor !== '.' && ancestor !== '/') {
-      if (symlinks.has(normalizedCollisionKey(ancestor))) {
-        fail(label, `contains a descendant beneath a symlink: ${record.path}`);
-      }
+      const ancestorType = nonDirectories.get(normalizedCollisionKey(ancestor));
+      if (ancestorType) fail(label, `contains a descendant beneath a ${ancestorType}: ${record.path}`);
       if (ancestor === expectedRoot) break;
       ancestor = path.posix.dirname(ancestor);
     }

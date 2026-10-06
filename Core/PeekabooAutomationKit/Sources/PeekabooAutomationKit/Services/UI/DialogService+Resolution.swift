@@ -9,6 +9,8 @@ extension DialogService {
         let dialogIdentifier: String
         let foundVia: String
         let target: UIAutomationTarget.ExactWindow
+        var window: Element?
+        var resolvedTarget: ResolvedDialogTargetEvidence?
     }
 
     func resolveDialogElement(windowTitle: String?, appName: String?) async throws -> Element {
@@ -35,13 +37,9 @@ extension DialogService {
 
     func resolveFileDialogElementResolution(appName: String?) async throws
     -> FileDialogElementResolution {
-        if let appName,
-           let fileDialog = self.findActiveFileDialogElement(appName: appName)
-        {
-            return try await self.fileDialogElementResolution(
-                element: fileDialog,
-                dialogIdentifier: self.dialogIdentifier(for: fileDialog),
-                foundVia: "active_file_dialog")
+        if let appName {
+            return try await self.resolveFileDialogElementResolution(
+                target: DialogTargetSelector(applicationIdentifier: appName))
         }
 
         let resolved = try await self.resolveDialogElementResolution(windowTitle: nil, appName: appName)
@@ -53,6 +51,30 @@ extension DialogService {
             element: resolved.element,
             dialogIdentifier: resolved.dialogIdentifier,
             foundVia: resolved.foundVia)
+    }
+
+    func resolveFileDialogElementResolution(
+        target selector: DialogTargetSelector,
+        revalidate: Bool = true) async throws
+        -> FileDialogElementResolution
+    {
+        let candidates = try await self.targetedDialogCandidates(target: selector, membership: .filePanel)
+        guard candidates.count == 1, let candidate = candidates.first else {
+            throw self.dialogCandidateRefusal(target: selector, candidates: candidates)
+        }
+        let current = try await revalidate ? self.revalidateDialogTarget(
+            target: candidate.target,
+            retainedWindow: candidate.window,
+            retainedDialog: candidate.dialog,
+            operation: "file dialog resolution",
+            membership: .filePanel) : candidate
+        return try FileDialogElementResolution(
+            element: current.dialog,
+            dialogIdentifier: self.dialogIdentifier(for: current.dialog),
+            foundVia: "targeted_dialog",
+            target: current.target,
+            window: current.window,
+            resolvedTarget: self.resolvedTargetWithUniqueWindowProof(candidate, candidates: candidates))
     }
 
     private func fileDialogElementResolution(

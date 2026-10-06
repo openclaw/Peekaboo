@@ -192,6 +192,9 @@ extension PeekabooBridgeClient {
         if request.requiresScopedMenuBarActions {
             try self.requireScopedMenuBarActions()
         }
+        if request.requiresExactFileDialogExecution {
+            try self.requireExactFileDialogExecution()
+        }
         if request.requiresPreparedClipboardGuardedExactWindowHotkey,
            !self.preparedClipboardGuardedExactWindowHotkeysEnabled
         {

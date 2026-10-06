@@ -14,6 +14,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
     let requestPinnedExactWindowScrollReceipt: Bool
     let backgroundCoordinateScroll: Bool
     let compositeTypeDelivery: Bool
+    let exactFileDialogExecution: Bool
     let clipboardGuardedExactWindowHotkeys: Bool
     let preparedClipboardGuardedExactWindowHotkeys: Bool
     let processGenerationBoundElementMutations: Bool
@@ -40,6 +41,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         requestPinnedExactWindowScrollReceipt: true,
         backgroundCoordinateScroll: true,
         compositeTypeDelivery: true,
+        exactFileDialogExecution: true,
         clipboardGuardedExactWindowHotkeys: true,
         preparedClipboardGuardedExactWindowHotkeys: true,
         processGenerationBoundElementMutations: true,
@@ -59,6 +61,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         requestPinnedExactWindowScrollReceipt: Bool = false,
         backgroundCoordinateScroll: Bool = false,
         compositeTypeDelivery: Bool = false,
+        exactFileDialogExecution: Bool = false,
         clipboardGuardedExactWindowHotkeys: Bool = false,
         preparedClipboardGuardedExactWindowHotkeys: Bool = false,
         processGenerationBoundElementMutations: Bool = false,
@@ -78,6 +81,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         self.requestPinnedExactWindowScrollReceipt = requestPinnedExactWindowScrollReceipt
         self.backgroundCoordinateScroll = backgroundCoordinateScroll
         self.compositeTypeDelivery = compositeTypeDelivery
+        self.exactFileDialogExecution = exactFileDialogExecution
         self.clipboardGuardedExactWindowHotkeys = clipboardGuardedExactWindowHotkeys
         self.preparedClipboardGuardedExactWindowHotkeys = preparedClipboardGuardedExactWindowHotkeys
         self.processGenerationBoundElementMutations = processGenerationBoundElementMutations
