@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Add exact app/PID-scoped menu-extra clicks with bounded AX owner preparation and revalidation, preserving displayed-CG names and indices without scanning unrelated applications. Thanks @buremba! #953.
+- Reject non-ASCII tar size/checksum text and PAX record lengths/keys before decoding can disguise malformed bytes, preserving binary tar numbers and UTF-8 values. Thanks @rudycelekli! #966.
 - Recognize equivalent saved-file paths such as `/tmp` and `/private/tmp` in dialog diagnostics, preserving reported paths and directory-only enforcement.
 - Fix application-targeted file sheets losing their parent-window identity; preserve compatible panels and ignore unrelated alerts when selecting a unique file panel. Thanks @buremba! #951.
 - Recognize native file-panel identifiers and reuse fresh classification evidence to avoid redundant button scans; batch strict dialog AX reads without truncating hierarchy discovery.

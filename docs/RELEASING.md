@@ -315,6 +315,7 @@ limited to Darwin's 32 links including the original link; contained framework ch
 Archives continue to reject absolute targets, even though native tree receipts can represent contained absolute links.
 Typed archive inventories also reject entries beneath a known regular file or symlink in either entry order.
 Name-only entries retain path-only validation because they have no file-type evidence.
+Tar size/checksum text and PAX record lengths/keys must contain only ASCII bytes before decoding; valid base-256 tar numbers and UTF-8 PAX values remain supported.
 
 The script runs release preparation, builds the universal CLI and npm package, signs/notarizes/staples the macOS app
 and branded DMG, generates checksums and Sparkle metadata, and uploads a draft GitHub release. The complete preparation

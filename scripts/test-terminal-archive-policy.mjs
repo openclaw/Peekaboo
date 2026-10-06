@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { deflateRawSync, gzipSync } from 'node:zlib';
+import { deflateRawSync, gunzipSync, gzipSync } from 'node:zlib';
 import {
   validateArchiveEntries,
   validateTarGzArchive,
@@ -78,6 +78,12 @@ function tarOctal(header, offset, length, value) {
   tarField(header, offset, length, value.toString(8).padStart(length - 1, '0') + '\0');
 }
 
+function tarChecksum(header) {
+  header.fill(0x20, 148, 156);
+  const checksum = header.reduce((sum, byte) => sum + byte, 0);
+  tarField(header, 148, 8, checksum.toString(8).padStart(6, '0') + '\0 ');
+}
+
 function tarFixture(entries) {
   const chunks = [];
   for (const entry of entries) {
@@ -94,9 +100,7 @@ function tarFixture(entries) {
     if (entry.target) tarField(header, 157, 100, entry.target);
     tarField(header, 257, 6, 'ustar\0');
     tarField(header, 263, 2, '00');
-    let checksum = 0;
-    for (const byte of header) checksum += byte;
-    tarField(header, 148, 8, checksum.toString(8).padStart(6, '0') + '\0 ');
+    tarChecksum(header);
     chunks.push(header, data, Buffer.alloc((512 - (data.length % 512)) % 512));
   }
   chunks.push(Buffer.alloc(1024));
@@ -302,6 +306,63 @@ try {
     assert.equal(records[1].path, 'Fixture.app/value');
     assert.equal(records[1].type, 'file');
   }
+  const highBitTar = path.join(testDirectory, 'high-bit-octal.tar.gz');
+  const rawTar = gunzipSync(tarFixture([{ path: 'Fixture.app/', type: 'directory' }]));
+  rawTar[125] |= 0x80; // Not base-256: the first size byte remains an ASCII octal digit.
+  tarChecksum(rawTar.subarray(0, 512));
+  await writeFile(highBitTar, gzipSync(rawTar));
+  await assert.rejects(validateTarGzArchive(highBitTar, 'Fixture.app'), /non-ASCII tar size/);
+
+  const highBitChecksum = path.join(testDirectory, 'high-bit-checksum.tar.gz');
+  const rawChecksum = gunzipSync(tarFixture([{ path: 'Fixture.app/', type: 'directory' }]));
+  rawChecksum[149] |= 0x80; // Checksum bytes count as spaces; do not recompute after mutating them.
+  await writeFile(highBitChecksum, gzipSync(rawChecksum));
+  await assert.rejects(validateTarGzArchive(highBitChecksum, 'Fixture.app'), /non-ASCII tar checksum/);
+
+  const highBitLength = path.join(testDirectory, 'high-bit-pax-length.tar.gz');
+  const malformedLength = paxRecord('path', 'Fixture.app/value');
+  malformedLength[0] |= 0x80;
+  await writeFile(highBitLength, tarFixture([
+    { path: 'Fixture.app/', type: 'directory' },
+    { path: 'PaxHeader', typeFlag: 'x', data: malformedLength },
+    { path: 'Fixture.app/value', type: 'file', data: 'value' }
+  ]));
+  await assert.rejects(validateTarGzArchive(highBitLength, 'Fixture.app'), /non-ASCII PAX record length/);
+
+  const highBitPax = path.join(testDirectory, 'high-bit-pax.tar.gz');
+  const malformedPax = paxRecord('path', 'Fixture.app/value');
+  malformedPax[malformedPax.indexOf(Buffer.from('path')) + 1] |= 0x80;
+  await writeFile(highBitPax, tarFixture([
+    { path: 'Fixture.app/', type: 'directory' },
+    { path: 'PaxHeader', typeFlag: 'x', data: malformedPax },
+    { path: 'Fixture.app/value', type: 'file', data: 'value' }
+  ]));
+  await assert.rejects(validateTarGzArchive(highBitPax, 'Fixture.app'), /non-ASCII PAX key/);
+
+  const binarySize = path.join(testDirectory, 'base256-size.tar.gz');
+  const rawBinarySize = gunzipSync(tarFixture([
+    { path: 'Fixture.app/', type: 'directory' },
+    { path: 'Fixture.app/value', type: 'file', data: 'value' }
+  ]));
+  const binaryHeader = rawBinarySize.subarray(512, 1024);
+  binaryHeader.fill(0, 124, 136);
+  binaryHeader[124] = 0x80;
+  binaryHeader[135] = 5;
+  tarChecksum(binaryHeader);
+  await writeFile(binarySize, gzipSync(rawBinarySize));
+  assert.deepEqual(await validateTarGzArchive(binarySize, 'Fixture.app'), [
+    { path: 'Fixture.app', type: 'directory', target: null },
+    { path: 'Fixture.app/value', type: 'file', target: null }
+  ]);
+
+  const utf8Pax = path.join(testDirectory, 'utf8-pax-value.tar.gz');
+  await writeFile(utf8Pax, tarFixture([
+    { path: 'Fixture.app/', type: 'directory' },
+    { path: 'PaxHeader', typeFlag: 'x', data: paxRecord('path', 'Fixture.app/café-東京') },
+    { path: 'Fixture.app/value', type: 'file', data: 'value' }
+  ]));
+  assert.equal((await validateTarGzArchive(utf8Pax, 'Fixture.app'))[1].path, 'Fixture.app/café-東京');
+
   const safeZip = path.join(testDirectory, 'safe.zip');
   await writeFile(safeZip, zipFixture([
     { path: 'Fixture.app/', type: 'directory' },

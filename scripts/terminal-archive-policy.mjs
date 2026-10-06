@@ -550,6 +550,11 @@ function tarString(bytes, label, field) {
   }
 }
 
+function asciiMetadata(bytes, label, field) {
+  if (bytes.some((byte) => byte > 0x7f)) fail(label, `contains non-ASCII ${field}`);
+  return bytes.toString('ascii');
+}
+
 function tarNumber(bytes, label, field) {
   if ((bytes[0] & 0x80) !== 0) {
     if ((bytes[0] & 0x40) !== 0) fail(label, `contains a negative tar ${field}`);
@@ -557,7 +562,7 @@ function tarNumber(bytes, label, field) {
     for (const byte of bytes.subarray(1)) value = (value << 8n) | BigInt(byte);
     return safeNumber(value, label, `tar ${field}`);
   }
-  const text = bytes.toString('ascii').replace(/\0.*$/s, '').trim();
+  const text = asciiMetadata(bytes, label, `tar ${field}`).replace(/\0.*$/s, '').trim();
   if (!text) return 0;
   if (!/^[0-7]+$/.test(text)) fail(label, `contains an invalid tar ${field}`);
   return safeNumber(Number.parseInt(text, 8), label, `tar ${field}`);
@@ -599,7 +604,7 @@ function parsePaxRecords(bytes, label) {
   while (cursor < bytes.length) {
     const space = bytes.indexOf(0x20, cursor);
     if (space < 0) fail(label, 'contains malformed PAX metadata');
-    const lengthText = bytes.subarray(cursor, space).toString('ascii');
+    const lengthText = asciiMetadata(bytes.subarray(cursor, space), label, 'PAX record length');
     if (!/^[1-9][0-9]*$/.test(lengthText)) fail(label, 'contains malformed PAX record length');
     const length = Number.parseInt(lengthText, 10);
     if (!Number.isSafeInteger(length) || length <= space - cursor + 2 || cursor + length > bytes.length ||
@@ -609,7 +614,7 @@ function parsePaxRecords(bytes, label) {
     const payload = bytes.subarray(space + 1, cursor + length - 1);
     const equals = payload.indexOf(0x3d);
     if (equals <= 0) fail(label, 'contains malformed PAX metadata');
-    const key = payload.subarray(0, equals).toString('ascii');
+    const key = asciiMetadata(payload.subarray(0, equals), label, 'PAX key');
     if (!/^[A-Za-z0-9_.-]+$/.test(key) || Object.hasOwn(records, key)) {
       fail(label, 'contains an invalid or duplicate PAX key');
     }
