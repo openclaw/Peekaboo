@@ -48,11 +48,13 @@ try:
                           result.stderr, re.MULTILINE)
         assert match, "builder must reach the real download allocation"
         owned_download = Path(match.group(1))
-        assert result.returncode == 22, result.stderr
+        # CONNECT failures are reported as HTTP or proxy/transport errors by different curl versions.
+        assert result.returncode != 0, result.stderr
+        assert re.search(r"^curl: \(\d+\).*503", result.stderr, re.MULTILINE), result.stderr
         assert RejectProxy.calls == ["nodejs.org:443"], RejectProxy.calls
         assert not output.exists(), "failed download must not publish a runtime"
         assert not owned_download.exists(), "failed download leaked its owned temporary tree"
-        print("PASS native curl503: exact download directory removed; no archive fetched/runtime published")
+        print(f"PASS native curl503 (exit {result.returncode}): exact download directory removed; no archive fetched/runtime published")
 finally:
     server.shutdown()
     server.server_close()
