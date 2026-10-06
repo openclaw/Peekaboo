@@ -115,6 +115,8 @@ public final class SnapshotManager: SnapshotManagerProtocol {
             snapshotData.screenshotPath = result.screenshotPath
         }
         snapshotData.lastUpdateTime = Date()
+        snapshotData.detectionIsDialog = result.metadata.isDialog
+        snapshotData.detectionTruncationInfo = result.metadata.truncationInfo
         snapshotData.captureCoordinateContext = result.metadata.captureCoordinateContext ?? snapshotData
             .captureCoordinateContext
 
@@ -216,8 +218,8 @@ public final class SnapshotManager: SnapshotManagerProtocol {
             method: "snapshot-cache",
             warnings: self.buildWarnings(from: snapshotData),
             windowContext: self.windowContext(from: snapshotData),
-            isDialog: false,
-            truncationInfo: nil,
+            isDialog: snapshotData.detectionIsDialog ?? false,
+            truncationInfo: snapshotData.detectionTruncationInfo,
             captureCoordinateContext: snapshotData.captureCoordinateContext)
 
         return ElementDetectionResult(
