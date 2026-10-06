@@ -21,6 +21,7 @@
 - Resolve composed symlink targets before accepting artifact trees and archives, refusing root escapes and native-unreadable chains beyond 32 traversals while preserving contained framework and dangling links. Thanks @rudycelekli! #954.
 - Reject archive entries nested beneath regular files as well as symlinks, independent of entry order, before extraction. Thanks @rudycelekli! #955.
 - Avoid redundant PNG encoding for unchanged live capture frames, preserving original bytes and metadata while retaining transformed-frame encoding, actual-byte caps, and artifact validation.
+- Tailor Agent and learn guidance to the available tool catalog, removing irrelevant recipes while preserving execution authority, observation requirements and session history.
 - Show eligible visualizer overlays from a hidden companion app without unhiding or activating it, accepting input, or changing background-input suppression.
 - Fix the Playground log wrapper's moved script path and clarify repository-root examples, preserving arguments and exit status. Thanks @rudycelekli! #933.
 - Fix signed Bridge typing receipts after already-empty clears and already-satisfied caret moves, preserving zero-dispatch no-ops and strict key, delivery and dispatch-count validation.

@@ -236,9 +236,10 @@ test('generated guidance sources retain CLI and policy distinctions', () => {
 
   assert.match(learn, /fresh exact non-dialog snapshot form/);
   assert.match(learn, /dialog input.*background AXValue/);
-  assert.match(learn, /Foreground-only CLI pointer.*move and cross-window drag require explicit `--foreground` consent/);
-  assert.match(learn, /Background drag.*one fresh explicit snapshot window/);
-  assert.doesNotMatch(learn, /\*\*UI Automation\*\*:.*\bdrag\b/);
+  assert.match(learn, /Shared-pointer `move` requires explicit `--foreground` consent/);
+  assert.match(learn, /Background drag uses an explicit fresh `--snapshot`/);
+  assert.match(learn, /bounded linear path wholly inside that exact window/);
+  assert.match(learn, /categoryTools\.map\(\\\.name\)\.sorted\(\)/);
   assert.doesNotMatch(learn, /\*\*System\*\*:\s*shell/);
   assert.doesNotMatch(learn, /type --app/);
   assert.doesNotMatch(toolRegistry, /peekaboo type .*--app/);
