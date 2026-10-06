@@ -583,10 +583,16 @@ public struct PeekabooBridgeMenuClickByNameRequest: Codable, Sendable {
 public struct PeekabooBridgeMenuBarClickByNameRequest: Codable, Sendable {
     public let name: String
     public let expectedLeafEvidence: DesktopSelectedLeafEvidence?
+    public let applicationScope: MenuBarApplicationScope?
 
-    public init(name: String, expectedLeafEvidence: DesktopSelectedLeafEvidence? = nil) {
+    public init(
+        name: String,
+        expectedLeafEvidence: DesktopSelectedLeafEvidence? = nil,
+        applicationScope: MenuBarApplicationScope? = nil)
+    {
         self.name = name
         self.expectedLeafEvidence = expectedLeafEvidence
+        self.applicationScope = applicationScope
     }
 }
 

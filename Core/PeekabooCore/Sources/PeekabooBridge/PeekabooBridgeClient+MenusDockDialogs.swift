@@ -163,27 +163,27 @@ extension PeekabooBridgeClient {
         }
     }
 
-    public func prepareMenuBarItem(named name: String) async throws -> MenuBarItemInfo {
-        try self.requireNamedMenuBarPreparation()
-        let response = try await self.send(.prepareMenuBarItemNamed(name))
+    public func prepareMenuBarItem(_ request: MenuBarItemPreparationRequest) async throws -> MenuBarItemInfo {
+        try self.requireScopedMenuBarActions()
+        let response = try await self.send(.prepareMenuBarItem(request))
         switch response {
         case let .menuBarItems(items):
-            return try Self.validatedNamedMenuBarPreparation(items, named: name)
+            return try Self.validatedMenuBarPreparation(items, request: request)
         case let .error(envelope):
             throw envelope
         default:
             throw PeekabooBridgeErrorEnvelope(
                 code: .invalidRequest,
-                message: "Unexpected named menu bar preparation response")
+                message: "Unexpected scoped menu bar preparation response")
         }
     }
 
-    func requireNamedMenuBarPreparation() throws {
-        guard self.namedMenuBarPreparationEnabled else {
+    func requireScopedMenuBarActions() throws {
+        guard self.scopedMenuBarActionsEnabled else {
             throw DesktopActionFailure.preDispatchRefusal(
                 route: .bridge,
                 reason: .runtimeIncompatible,
-                message: "Bridge host does not advertise named menu bar preparation; no click was sent.",
+                message: "Bridge host does not advertise scoped menu bar actions; no click was sent.",
                 hint: "Update the Bridge host before retrying.")
         }
     }
@@ -199,14 +199,18 @@ extension PeekabooBridgeClient {
 
     public func clickMenuBarItemResult(named name: String) async throws -> UIAutomationActionResult<ClickResult> {
         try self.requireAttestedMenuResultTransport(expectedResponse: "named menu bar click")
-        let item = try await self.prepareMenuBarItem(named: name)
-        guard let evidence = item.selectionEvidence else {
+        let items = try await self.listMenuBarItems(includeRaw: true)
+        let selection = try Self.resolveMenuBarSelection(named: name, items: items)
+        guard let baseEvidence = selection.candidate.value.selectionEvidence else {
             throw DesktopActionFailure.preDispatchRefusal(
                 route: .bridge,
                 reason: .targetUnavailable,
                 message: "The selected menu bar item has no exact leaf evidence.",
                 hint: "Refresh the menu bar inventory and update the Bridge host before retrying.")
         }
+        let evidence = try baseEvidence.selecting(
+            normalizedSelector: selection.normalizedSelector,
+            matchKind: selection.matchKind)
         return try await self.clickMenuBarItemResult(request: MenuBarItemActionRequest(
             named: name,
             expectedLeafEvidence: evidence))
@@ -233,7 +237,8 @@ extension PeekabooBridgeClient {
         }
         payload = PeekabooBridgeMenuBarClickByNameRequest(
             name: name,
-            expectedLeafEvidence: request.expectedLeafEvidence)
+            expectedLeafEvidence: request.expectedLeafEvidence,
+            applicationScope: request.applicationScope)
         return try await self.actionResult(
             for: .clickMenuBarItemNamed(payload),
             expectedResponse: "named menu bar click",
@@ -279,17 +284,41 @@ extension PeekabooBridgeClient {
             expectedLeafEvidence: evidence))
     }
 
-    nonisolated static func validatedNamedMenuBarPreparation(
+    private nonisolated static func resolveMenuBarSelection(
+        named name: String,
+        items: [MenuBarItemInfo]) throws
+        -> DeterministicDesktopLeafSelector.Selection<MenuBarItemInfo>
+    {
+        do {
+            return try MenuBarItemSelector.select(named: name, from: items)
+        } catch let error as DesktopLeafSelectionError {
+            let reason: DesktopActionOutcome.RefusalReason = switch error {
+            case .ambiguous: .invalidRequest
+            case .notFound, .invalidIndex: .targetUnavailable
+            }
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: reason,
+                message: error.localizedDescription,
+                hint: "Use an exact current status-item name or list index.")
+        }
+    }
+
+    nonisolated static func validatedMenuBarPreparation(
         _ items: [MenuBarItemInfo],
-        named name: String) throws -> MenuBarItemInfo
+        request: MenuBarItemPreparationRequest) throws -> MenuBarItemInfo
     {
         guard items.count == 1,
               let item = items.first,
               let evidence = item.selectionEvidence,
               evidence.isCanonical,
               evidence.kind == .menuBarItem,
-              evidence.normalizedSelector == DeterministicDesktopLeafSelector.normalized(name),
+              evidence.normalizedSelector == DeterministicDesktopLeafSelector.normalized(request.name),
               evidence.matchKind != .index,
+              evidence.selectedTargetReceipt.windowID == nil,
+              request.applicationScope.explicitProcessIdentifier.map({
+                  $0 == evidence.selectedTargetReceipt.processIdentifier
+              }) ?? true,
               evidence.selectedIndex == item.index,
               evidence.winningCandidateCount == 1,
               !evidence.hasWinningTie
@@ -297,7 +326,7 @@ extension PeekabooBridgeClient {
             throw DesktopActionFailure.preDispatchRefusal(
                 route: .bridge,
                 reason: .invalidRequest,
-                message: "Bridge host returned invalid named menu bar preparation evidence; no click was sent.",
+                message: "Bridge host returned invalid scoped menu bar preparation evidence; no click was sent.",
                 hint: "Refresh the menu bar target and update the Bridge host before retrying.")
         }
         return item

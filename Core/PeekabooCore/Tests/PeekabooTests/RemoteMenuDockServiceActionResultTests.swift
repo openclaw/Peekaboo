@@ -320,7 +320,7 @@ struct RemoteMenuDockServiceActionResultTests {
 
 @MainActor
 final class RemoteResultMenuFixture: MenuServiceGenerationPinnedActionResultProviding,
-    MenuServiceExactLeafActionResultProviding, MenuServiceNamedMenuBarPreparationProviding
+    MenuServiceExactLeafActionResultProviding, MenuServiceScopedMenuBarPreparationProviding
 {
     let outcome = DesktopActionOutcome.dispatchedUnverified(
         delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
@@ -330,7 +330,7 @@ final class RemoteResultMenuFixture: MenuServiceGenerationPinnedActionResultProv
     private(set) var actionCount = 0
     private(set) var pinnedDeliveryModes: [DesktopActionOutcome.Delivery.Mode] = []
     private(set) var menuBarListCount = 0
-    private(set) var preparedNames: [String] = []
+    private(set) var preparationRequests: [MenuBarItemPreparationRequest] = []
     private(set) var lastMenuBarRequest: MenuBarItemActionRequest?
     var listedMenuBarItems: [MenuBarItemInfo]?
     var failMenuBarAfterDispatch = false
@@ -466,9 +466,9 @@ final class RemoteResultMenuFixture: MenuServiceGenerationPinnedActionResultProv
             evidence: self.menuLeaf(selector: "3", matchKind: .index, index: 3))]
     }
 
-    func prepareMenuBarItem(named name: String) async throws -> MenuBarItemInfo {
-        self.preparedNames.append(name)
-        return try self.menuItem(evidence: self.namedMenuLeaf(name))
+    func prepareMenuBarItem(_ request: MenuBarItemPreparationRequest) async throws -> MenuBarItemInfo {
+        self.preparationRequests.append(request)
+        return try self.menuItem(evidence: self.namedMenuLeaf(request.name))
     }
 
     private func namedMenuLeaf(_ name: String) throws -> DesktopSelectedLeafEvidence {
@@ -506,6 +506,7 @@ final class RemoteResultMenuFixture: MenuServiceGenerationPinnedActionResultProv
             normalizedSelector: DeterministicDesktopLeafSelector.normalized(selector),
             matchKind: matchKind,
             selectedProcessIdentity: self.target.processIdentity,
+            selectedWindowIdentity: self.target.exactWindow?.identity,
             selectedIndex: index,
             selectedTitle: "Clock",
             selectedIdentifier: "fixture.clock",

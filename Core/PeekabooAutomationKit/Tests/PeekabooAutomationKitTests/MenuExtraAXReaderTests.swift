@@ -35,23 +35,19 @@ struct MenuExtraAXReaderTests {
     }
 
     @Test
-    func `malformed system root result reports only its type and never changes global timeout`() throws {
+    func `malformed application root result reports only its type`() throws {
         let fixture = Fixture()
         let sensitive = "PRIVATE-SYNTHETIC-MENU-BAR"
         let message = try Self.refusalMessage {
             _ = try MenuExtraAXReader.readSynchronously(
                 owner: fixture.owner,
-                systemWide: true,
                 deadline: .now.advanced(by: .seconds(1)),
                 copyAttribute: { _, _ in (sensitive as CFString, .success) },
                 processGeneration: { _ in fixture.owner.processStartIdentity },
-                setMessagingTimeout: { _, _ in
-                    Issue.record("System root diagnosis changed the global timeout")
-                    return .failure
-                })
+                setMessagingTimeout: { _, _ in .success })
         }
-        #expect(message.contains("scope=system scan_pid=42 owner_pid=none"))
-        #expect(message.contains("node=root phase=attribute attribute=AXMenuBar"))
+        #expect(message.contains("scope=application scan_pid=42 owner_pid=42"))
+        #expect(message.contains("node=root phase=attribute attribute=AXExtrasMenuBar"))
         #expect(message.contains("native_error=0 expected=ax_element actual=string"))
         #expect(!message.contains(sensitive))
     }
@@ -334,35 +330,6 @@ struct MenuExtraAXReaderTests {
         #expect(overrides.count == 3)
         #expect(overrides.values.allSatisfy { $0 == 0 })
         #expect(overrides[snapshots[0].identity] == 0)
-    }
-
-    @Test
-    func `system-wide root never changes global timeout while returned bar reads remain scoped`() throws {
-        let fixture = Fixture()
-        let root = AXUIElementCreateSystemWide()
-        var timeouts: [Float] = []
-        let result = try MenuExtraAXReader.readSynchronously(
-            owner: fixture.owner,
-            systemWide: true,
-            deadline: .now.advanced(by: .seconds(1)),
-            copyAttribute: { element, name in
-                if name == kAXMenuBarAttribute {
-                    #expect(CFEqual(element, root))
-                    #expect(timeouts.isEmpty)
-                    return (fixture.bar, .success)
-                }
-                #expect(name == kAXChildrenAttribute)
-                #expect(timeouts.count == 1 && timeouts[0] > 0)
-                return (NSArray(), .success)
-            },
-            processGeneration: { _ in fixture.owner.processStartIdentity },
-            setMessagingTimeout: { element, timeout in
-                #expect(!CFEqual(element, root))
-                timeouts.append(timeout)
-                return .success
-            })
-        #expect(result.isEmpty)
-        #expect(timeouts.count == 2 && timeouts.last == 0)
     }
 
     private enum ReadFailure: Error { case injected }

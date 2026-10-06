@@ -10,10 +10,98 @@ import Testing
 struct MenuBarCommandConsentTests {
     @Test
     @MainActor
+    func `unscoped names use the displayed inventory even when scoped preparation would fail`() async throws {
+        let menu = PreparingMenuBarService(prepared: Self.item, missing: true, listedItems: [Self.item])
+        let result = try await InProcessCommandRunner.run(
+            ["menubar", "click", "Wi-Fi", "--foreground", "--json"],
+            services: TestServicesFactory.makePeekabooServices(menu: menu)
+        )
+        #expect(result.exitStatus == 0)
+        #expect(menu.prepareCalls.isEmpty)
+        #expect(menu.listCallCount == 1)
+        #expect(menu.namedClickCalls == ["Wi-Fi"])
+        #expect(menu.indexClickCalls.isEmpty)
+    }
+
+    @Test(arguments: [
+        ["Wi-Fi", "--app", "Fixture App", "--pid", "42"],
+        ["--index", "2", "--app", "Fixture App"],
+        ["--index", "2", "--pid", "42"],
+        ["Wi-Fi", "--pid", "0"],
+        ["Wi-Fi", "--pid", "-1"],
+        ["Wi-Fi", "--pid", "2147483648"],
+        ["Wi-Fi", "--app", ""],
+        ["Wi-Fi", "--app", "PID:0"],
+        [" ", "--pid", "42"],
+        ["--app", "Fixture App"],
+        ["Wi-Fi", "--index", "2"],
+    ])
+    @MainActor
+    func `invalid scoped and name-index combinations refuse before all lookups`(_ selectors: [String]) async throws {
+        let menu = PreparingMenuBarService(prepared: Self.item)
+        let result = try await InProcessCommandRunner.run(
+            ["menubar", "click"] + selectors + ["--foreground", "--json"],
+            services: TestServicesFactory.makePeekabooServices(menu: menu)
+        )
+        #expect(result.exitStatus != 0)
+        #expect(menu.prepareCalls.isEmpty && menu.listCallCount == 0)
+        #expect(menu.namedClickCalls.isEmpty && menu.indexClickCalls.isEmpty && menu.exactRequests.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `provider without scoped preparation refuses instead of global lookup`() async throws {
+        let menu = RecordingMenuBarService(items: [Self.item])
+        let result = try await InProcessCommandRunner.run(
+            ["menubar", "click", "Wi-Fi", "--pid", "42", "--foreground", "--json"],
+            services: TestServicesFactory.makePeekabooServices(menu: menu)
+        )
+        #expect(result.exitStatus == 1)
+        #expect(menu.listCallCount == 0)
+        #expect(menu.namedClickCalls.isEmpty && menu.indexClickCalls.isEmpty && menu.exactRequests.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `scoped preparation cannot substitute another requested PID`() async throws {
+        let evidence = try Self.evidence(index: 2, digest: "a").selecting(
+            normalizedSelector: "wi-fi", matchKind: .exact
+        )
+        let menu = PreparingMenuBarService(prepared: Self.item(selectionEvidence: evidence))
+        let result = try await InProcessCommandRunner.run(
+            ["menubar", "click", "Wi-Fi", "--pid", "43", "--foreground", "--json"],
+            services: TestServicesFactory.makePeekabooServices(menu: menu)
+        )
+        #expect(result.exitStatus == 1)
+        #expect(menu.prepareCalls.count == 1 && menu.listCallCount == 0)
+        #expect(menu.exactRequests.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    @MainActor
+    func `scoped preflight refuses tied or index-inconsistent provider evidence`(tied: Bool) async throws {
+        let evidence = try Self.evidence(index: tied ? 2 : 3, digest: "a").selecting(
+            normalizedSelector: "wi-fi",
+            matchKind: .exact,
+            winningCandidateCount: tied ? 2 : 1,
+            hasWinningTie: tied
+        )
+        let menu = PreparingMenuBarService(prepared: Self.item(selectionEvidence: evidence))
+        let result = try await InProcessCommandRunner.run(
+            ["menubar", "click", "Wi-Fi", "--pid", "42", "--foreground", "--json"],
+            services: TestServicesFactory.makePeekabooServices(menu: menu)
+        )
+        #expect(result.exitStatus == 1)
+        #expect(menu.prepareCalls.count == 1 && menu.listCallCount == 0)
+        #expect(menu.exactRequests.isEmpty)
+    }
+
+    @Test
+    @MainActor
     func `missing explicitly prepared name retains typed pre-dispatch output`() async throws {
         let menu = PreparingMenuBarService(prepared: Self.item, missing: true)
         let result = try await InProcessCommandRunner.run(
-            ["menubar", "click", "Missing", "--foreground", "--json"],
+            ["menubar", "click", "Missing", "--app", "Fixture App", "--foreground", "--json"],
             services: TestServicesFactory.makePeekabooServices(menu: menu)
         )
         let payload = try self.decodeResponse(result)
@@ -25,21 +113,30 @@ struct MenuBarCommandConsentTests {
         #expect(menu.exactRequests.isEmpty)
     }
 
-    @Test
+    @Test(arguments: [false, true])
     @MainActor
-    func `named click prepares AX owner evidence without consulting the ordinary list`() async throws {
+    func `scoped click preserves app or PID scope without consulting the ordinary list`(usePID: Bool) async throws {
         let evidence = try Self.evidence(index: 2, digest: "a").selecting(
             normalizedSelector: "wi-fi", matchKind: .exact
         )
         let menu = PreparingMenuBarService(prepared: Self.item(selectionEvidence: evidence))
+        let ownerFlags = usePID ? ["--pid", "42"] : ["--app", "Fixture App"]
+        let scope: MenuBarApplicationScope = if usePID {
+            try .init(processIdentifier: 42)
+        } else {
+            try .init(applicationIdentifier: "Fixture App")
+        }
+        let preparation = try MenuBarItemPreparationRequest(name: "Wi-Fi", applicationScope: scope)
         let result = try await InProcessCommandRunner.run(
-            ["menubar", "click", "Wi-Fi", "--foreground", "--json"],
+            ["menubar", "click", "Wi-Fi", "--foreground", "--json"] + ownerFlags,
             services: TestServicesFactory.makePeekabooServices(menu: menu)
         )
         #expect(result.exitStatus == 0)
-        #expect(menu.prepareCalls == ["Wi-Fi"])
+        #expect(menu.prepareCalls == [preparation])
         #expect(menu.listCallCount == 0)
         #expect(menu.exactRequests.first?.expectedLeafEvidence == evidence)
+        #expect(menu.exactRequests.first?.applicationScope == scope)
+        #expect(menu.exactRequests.count == 1)
     }
 
     @Test
@@ -47,7 +144,7 @@ struct MenuBarCommandConsentTests {
     func `foreground consent precedes explicit named preparation`() async throws {
         let menu = PreparingMenuBarService(prepared: Self.item)
         let result = try await InProcessCommandRunner.run(
-            ["menubar", "click", "Wi-Fi", "--json"],
+            ["menubar", "click", "Wi-Fi", "--app", "Fixture App", "--json"],
             services: TestServicesFactory.makePeekabooServices(menu: menu)
         )
         #expect(result.exitStatus == 1)
@@ -252,13 +349,17 @@ struct MenuBarCommandConsentTests {
     }
 
     @Test
-    func `click help exposes foreground while list does not`() async throws {
+    func `click help exposes foreground and owner scope while list does not`() async throws {
         let click = try await InProcessCommandRunner.runShared(["menubar", "click", "--help"])
         let list = try await InProcessCommandRunner.runShared(["menubar", "list", "--help"])
 
         #expect(click.stdout.contains("--foreground"))
+        #expect(click.stdout.contains("--app"))
+        #expect(click.stdout.contains("--pid"))
         #expect(click.stdout.contains("required"))
         #expect(!list.stdout.contains("--foreground"))
+        #expect(!list.stdout.contains("--app"))
+        #expect(!list.stdout.contains("--pid"))
     }
 
     @MainActor
@@ -314,21 +415,21 @@ struct MenuBarCommandConsentTests {
 }
 
 @MainActor
-private final class PreparingMenuBarService: RecordingMenuBarService, MenuServiceNamedMenuBarPreparationProviding {
+private final class PreparingMenuBarService: RecordingMenuBarService, MenuServiceScopedMenuBarPreparationProviding {
     let prepared: MenuBarItemInfo
     let missing: Bool
-    private(set) var prepareCalls: [String] = []
+    private(set) var prepareCalls: [MenuBarItemPreparationRequest] = []
 
-    init(prepared: MenuBarItemInfo, missing: Bool = false) {
+    init(prepared: MenuBarItemInfo, missing: Bool = false, listedItems: [MenuBarItemInfo] = []) {
         self.prepared = prepared
         self.missing = missing
-        super.init()
+        super.init(items: listedItems)
     }
 
-    func prepareMenuBarItem(named name: String) async throws -> MenuBarItemInfo {
-        self.prepareCalls.append(name)
+    func prepareMenuBarItem(_ request: MenuBarItemPreparationRequest) async throws -> MenuBarItemInfo {
+        self.prepareCalls.append(request)
         if self.missing {
-            throw PeekabooError.menuItemNotFound(name)
+            throw PeekabooError.menuItemNotFound(request.name)
         }
         return self.prepared
     }

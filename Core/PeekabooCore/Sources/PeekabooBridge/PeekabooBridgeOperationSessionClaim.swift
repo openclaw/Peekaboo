@@ -9,6 +9,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
     let nativeBrowserConnectionBinding: Bool
     let browserConnectionHandoff: Bool
     let producerBoundSnapshotReferences: Bool
+    let scopedMenuBarActions: Bool
     let targetedClickAccessibilityValueDelivery: Bool
     let requestPinnedExactWindowScrollReceipt: Bool
     let backgroundCoordinateScroll: Bool
@@ -34,6 +35,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         nativeBrowserConnectionBinding: true,
         browserConnectionHandoff: true,
         producerBoundSnapshotReferences: true,
+        scopedMenuBarActions: true,
         targetedClickAccessibilityValueDelivery: true,
         requestPinnedExactWindowScrollReceipt: true,
         backgroundCoordinateScroll: true,
@@ -52,6 +54,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         nativeBrowserConnectionBinding: Bool = false,
         browserConnectionHandoff: Bool = false,
         producerBoundSnapshotReferences: Bool = false,
+        scopedMenuBarActions: Bool = false,
         targetedClickAccessibilityValueDelivery: Bool = false,
         requestPinnedExactWindowScrollReceipt: Bool = false,
         backgroundCoordinateScroll: Bool = false,
@@ -70,6 +73,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         self.nativeBrowserConnectionBinding = nativeBrowserConnectionBinding
         self.browserConnectionHandoff = browserConnectionHandoff
         self.producerBoundSnapshotReferences = producerBoundSnapshotReferences
+        self.scopedMenuBarActions = scopedMenuBarActions
         self.targetedClickAccessibilityValueDelivery = targetedClickAccessibilityValueDelivery
         self.requestPinnedExactWindowScrollReceipt = requestPinnedExactWindowScrollReceipt
         self.backgroundCoordinateScroll = backgroundCoordinateScroll

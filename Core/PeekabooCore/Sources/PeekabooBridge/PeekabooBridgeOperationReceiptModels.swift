@@ -453,6 +453,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
             return
         }
 
+        try self.validateScopedMenuBarSelectedLeaf(request)
         let expected: [ExpectedSelectedLeaf]? = switch request {
         case let .clickMenuExtra(value):
             [.init(
@@ -550,6 +551,16 @@ enum PeekabooBridgeOperationReceiptSemantics {
             }
         }
         try self.validateSelectedLeafTarget(evidence, receiptTarget: payload.target)
+    }
+
+    private static func validateScopedMenuBarSelectedLeaf(_ request: PeekabooBridgeRequest) throws {
+        guard case let .clickMenuBarItemNamed(value) = request, let scope = value.applicationScope else { return }
+        guard let leaf = value.expectedLeafEvidence,
+              leaf.selectedTargetReceipt.windowID == nil,
+              scope.explicitProcessIdentifier.map({ $0 == leaf.selectedTargetReceipt.processIdentifier }) ?? true
+        else {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch("menu bar application scope")
+        }
     }
 
     private static func desktopObservationSelectedLeafExpectation(

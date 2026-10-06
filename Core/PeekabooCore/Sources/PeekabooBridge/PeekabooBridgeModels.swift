@@ -123,7 +123,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case clickMenuExtra
     case menuExtraOpenMenuFrame
     case listMenuBarItems
-    case prepareMenuBarItemNamed
+    case prepareMenuBarItem
     case clickMenuBarItemNamed
     case clickMenuBarItemIndex
     // Dock
@@ -291,8 +291,8 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
             compatible.remove(.browserSessionBootstrap)
             compatible.remove(.browserSessionControl)
         }
-        if version < PeekabooBridgeConstants.namedMenuBarPreparationVersion {
-            compatible.remove(.prepareMenuBarItemNamed)
+        if version < PeekabooBridgeConstants.scopedMenuBarActionsVersion {
+            compatible.remove(.prepareMenuBarItem)
         }
         return compatible
     }
@@ -384,7 +384,7 @@ public struct PeekabooBridgeHostIdentity: Codable, Sendable, Equatable {
 /// Stable raw capability names advertised by current hosts. The wire representation remains an
 /// array of strings so clients can safely ignore capabilities introduced by later builds.
 public enum PeekabooBridgeHostCapability {
-    public static let namedMenuBarPreparation = "namedMenuBarPreparation"
+    public static let scopedMenuBarActions = "scopedMenuBarActions"
     public static let systemAlertDialogDiscovery = "systemAlertDialogDiscovery"
     public static let hostGenerationIdentity = "hostGenerationIdentity"
     public static let codeSignatureBuildIdentity = "codeSignatureBuildIdentity"
@@ -432,10 +432,10 @@ public enum PeekabooBridgeHostCapability {
 }
 
 /// Stable raw capabilities a client may offer during handshake. Raw strings keep additions
-/// decodable by already-shipped hosts while the offer prevents new 1.34 operations or semantics
-/// from being advertised to already-shipped 1.34 clients.
+/// decodable by already-shipped hosts while the offer prevents new operations or semantics
+/// from being advertised to already-shipped clients at the same protocol version.
 public enum PeekabooBridgeClientCapability {
-    public static let namedMenuBarPreparation = "namedMenuBarPreparation"
+    public static let scopedMenuBarActions = "scopedMenuBarActions"
     public static let screenCaptureKitOwnershipDiagnostics = "screenCaptureKitOwnershipDiagnostics"
     public static let setValueVerification = "setValueVerification"
     public static let producerBoundSnapshotReferences = "producerBoundSnapshotReferences"
@@ -477,12 +477,14 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
             (self.enabledOperations ?? self.supportedOperations).contains(.targetedScroll)
     }
 
-    public var supportsNamedMenuBarPreparation: Bool {
-        self.negotiatedVersion >= PeekabooBridgeConstants.namedMenuBarPreparationVersion &&
+    public var supportsScopedMenuBarActions: Bool {
+        self.negotiatedVersion >= PeekabooBridgeConstants.scopedMenuBarActionsVersion &&
             self.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
-            self.hostCapabilities?.contains(PeekabooBridgeHostCapability.namedMenuBarPreparation) == true &&
-            self.supportedOperations.contains(.prepareMenuBarItemNamed) &&
-            (self.enabledOperations ?? self.supportedOperations).contains(.prepareMenuBarItemNamed)
+            self.hostCapabilities?.contains(PeekabooBridgeHostCapability.scopedMenuBarActions) == true &&
+            Set([PeekabooBridgeOperation.prepareMenuBarItem, .clickMenuBarItemNamed])
+            .isSubset(of: Set(self.supportedOperations)) &&
+            Set([PeekabooBridgeOperation.prepareMenuBarItem, .clickMenuBarItemNamed])
+            .isSubset(of: Set(self.enabledOperations ?? self.supportedOperations))
     }
 
     public var supportsRequestPinnedExactWindowScrollReceipt: Bool {

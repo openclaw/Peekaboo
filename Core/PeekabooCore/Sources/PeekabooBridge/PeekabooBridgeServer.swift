@@ -1453,7 +1453,7 @@ extension PeekabooBridgeServer {
         supportedVersions: ClosedRange<PeekabooBridgeProtocolVersion>,
         allowedOperations: Set<PeekabooBridgeOperation>)
     {
-        self.updateNamedMenuBarPreparationCapability(
+        self.updateScopedMenuBarActionsCapability(
             to: &resolvedHostCapabilities,
             services: services,
             supportedVersions: supportedVersions,

@@ -52,7 +52,6 @@ enum MenuExtraAXReader {
 
     static func read(
         owner: ApplicationProcessIdentity,
-        systemWide: Bool = false,
         deadline: ContinuousClock.Instant) async throws -> [MenuExtraAXSnapshot]
     {
         try self.check(deadline)
@@ -64,7 +63,7 @@ enum MenuExtraAXReader {
                 seconds: Double(remaining.seconds) + Double(remaining.attoseconds) / 1e18,
                 maximumPendingOperationCount: 1)
             {
-                try self.readSynchronously(owner: owner, systemWide: systemWide, deadline: deadline)
+                try self.readSynchronously(owner: owner, deadline: deadline)
             }
             try self.check(deadline)
             return result
@@ -75,7 +74,6 @@ enum MenuExtraAXReader {
 
     static func readSynchronously(
         owner: ApplicationProcessIdentity,
-        systemWide: Bool = false,
         deadline: ContinuousClock.Instant,
         copyAttribute: AttributeCopy = Self.copyAttribute,
         copyActions: ActionCopy = Self.copyActions,
@@ -84,9 +82,8 @@ enum MenuExtraAXReader {
         setMessagingTimeout: MessagingTimeoutSet = AXUIElementSetMessagingTimeout) throws
         -> [MenuExtraAXSnapshot]
     {
-        let root = systemWide ? AXUIElementCreateSystemWide() : AXUIElementCreateApplication(owner.processIdentifier)
-        let scope = systemWide ? "system" : "application"
-        var nativeOwnerPID: pid_t? = systemWide ? nil : owner.processIdentifier
+        let root = AXUIElementCreateApplication(owner.processIdentifier)
+        var nativeOwnerPID: pid_t? = owner.processIdentifier
         func failure(
             _ phase: String,
             node: String = "leaf",
@@ -96,7 +93,7 @@ enum MenuExtraAXReader {
             actual: String = "none") -> PeekabooError
         {
             .accessibilityIncomplete(
-                "\(self.incompleteMessage) [scope=\(scope) scan_pid=\(owner.processIdentifier) " +
+                "\(self.incompleteMessage) [scope=application scan_pid=\(owner.processIdentifier) " +
                     "owner_pid=\(nativeOwnerPID.map { String($0) } ?? "none") " +
                     "node=\(node) phase=\(phase) attribute=\(attribute) " +
                     "native_error=\(error.map { String($0.rawValue) } ?? "none") " +
@@ -105,7 +102,6 @@ enum MenuExtraAXReader {
         func value<Value>(_ name: String, on element: AXUIElement, node: String = "leaf") throws -> Value? {
             let (raw, nativeError) = try self.withReadTimeout(
                 on: element,
-                systemWideRoot: systemWide ? root : nil,
                 deadline: deadline,
                 setMessagingTimeout: setMessagingTimeout,
                 timeoutFailure: { restoring, error in
@@ -134,27 +130,14 @@ enum MenuExtraAXReader {
         guard processGeneration(owner.processIdentifier) == owner.processStartIdentity else {
             throw failure("owner_before", node: "root")
         }
-        let bar: AXUIElement? = try value(systemWide ? kAXMenuBarAttribute : "AXExtrasMenuBar", on: root, node: "root")
+        let bar: AXUIElement? = try value("AXExtrasMenuBar", on: root, node: "root")
         guard let bar else {
             guard processGeneration(owner.processIdentifier) == owner.processStartIdentity else {
                 throw failure("owner_after_absence", node: "root")
             }
             return []
         }
-        let barChildren: [AXUIElement] = try value(kAXChildrenAttribute, on: bar, node: "bar") ?? []
-        var elements: [AXUIElement] = []
-        if systemWide {
-            for child in barChildren {
-                let role: String? = try value(kAXRoleAttribute, on: child, node: "bar_child")
-                guard let role else { throw failure("required_role", node: "bar_child", attribute: kAXRoleAttribute) }
-                if role == "AXGroup" {
-                    let children: [AXUIElement] = try value(kAXChildrenAttribute, on: child, node: "group") ?? []
-                    elements.append(contentsOf: children)
-                }
-            }
-        } else {
-            elements = barChildren
-        }
+        let elements: [AXUIElement] = try value(kAXChildrenAttribute, on: bar, node: "bar") ?? []
         var seen: Set<MenuExtraAXIdentity> = []
         var snapshots: [MenuExtraAXSnapshot] = []
         for element in elements {
@@ -163,7 +146,7 @@ enum MenuExtraAXReader {
             guard seen.insert(identity).inserted else { continue }
             nativeOwnerPID = processIdentifier(element)
             guard let pid = nativeOwnerPID, pid > 0,
-                  systemWide || pid == owner.processIdentifier,
+                  pid == owner.processIdentifier,
                   let generation = processGeneration(pid)
             else { throw failure("leaf_owner") }
             let role: String? = try value(kAXRoleAttribute, on: element)
@@ -195,7 +178,6 @@ enum MenuExtraAXReader {
             guard dimensions.width > 0, dimensions.height > 0 else { throw failure("geometry_nonpositive_size") }
             let (rawActions, actionError) = try self.withReadTimeout(
                 on: element,
-                systemWideRoot: systemWide ? root : nil,
                 deadline: deadline,
                 setMessagingTimeout: setMessagingTimeout,
                 timeoutFailure: { restoring, error in
@@ -237,7 +219,6 @@ enum MenuExtraAXReader {
 
     static func withReadTimeout<Output>(
         on element: AXUIElement,
-        systemWideRoot: AXUIElement? = nil,
         deadline: ContinuousClock.Instant,
         setMessagingTimeout: MessagingTimeoutSet,
         now: () -> ContinuousClock.Instant = { .now },
@@ -248,29 +229,23 @@ enum MenuExtraAXReader {
         let startedAt = now()
         guard startedAt < deadline else { throw self.timeout }
         let result: Output
-        if let systemWideRoot, CFEqual(element, systemWideRoot) {
-            // A timeout on this root changes process-global policy. Only this read relies on the
-            // outer deadline/occupied-worker bound; an abandoned RPC retains its slot until it returns.
+        let remaining = startedAt.duration(to: deadline).components
+        let seconds = min(0.1, Double(remaining.seconds) + Double(remaining.attoseconds) / 1e18)
+        let rounded = Float(seconds)
+        let timeout = Double(rounded) > seconds ? rounded.nextDown : rounded
+        guard timeout > 0 else { throw self.timeout }
+        var restoration = AXError.failure
+        do {
+            // This reader creates only application/child references, never the process-global system root.
+            // Zero clears the private override before a reference can be retained for mutation.
+            defer { restoration = setMessagingTimeout(element, 0) }
+            let installed = setMessagingTimeout(element, timeout)
+            guard installed == .success else { throw timeoutFailure(false, installed) }
+            try Task.checkCancellation()
+            guard now() < deadline else { throw self.timeout }
             result = try read()
-        } else {
-            let remaining = startedAt.duration(to: deadline).components
-            let seconds = min(0.1, Double(remaining.seconds) + Double(remaining.attoseconds) / 1e18)
-            let rounded = Float(seconds)
-            let timeout = Double(rounded) > seconds ? rounded.nextDown : rounded
-            guard timeout > 0 else { throw self.timeout }
-            var restoration = AXError.failure
-            do {
-                // These references are created/returned inside this reader. Zero removes only this
-                // object's override, so retained mutation references inherit the unchanged global default.
-                defer { restoration = setMessagingTimeout(element, 0) }
-                let installed = setMessagingTimeout(element, timeout)
-                guard installed == .success else { throw timeoutFailure(false, installed) }
-                try Task.checkCancellation()
-                guard now() < deadline else { throw self.timeout }
-                result = try read()
-            }
-            guard restoration == .success else { throw timeoutFailure(true, restoration) }
         }
+        guard restoration == .success else { throw timeoutFailure(true, restoration) }
         try Task.checkCancellation()
         guard now() < deadline else { throw self.timeout }
         return result

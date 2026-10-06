@@ -3,6 +3,17 @@ import PeekabooAutomationKit
 import PeekabooFoundation
 
 extension PeekabooBridgeRequest {
+    var requiresScopedMenuBarActions: Bool {
+        switch self.unwrappedOperationRequest {
+        case .prepareMenuBarItem:
+            true
+        case let .clickMenuBarItemNamed(payload), let .clickMenuExtra(payload):
+            payload.applicationScope != nil
+        default:
+            false
+        }
+    }
+
     /// The one canonical request-unwrapping path used by semantic planning and receipt validation.
     /// Invalid projected carriage remains wrapped so its validation failure cannot be reinterpreted
     /// as an authorized inner request.

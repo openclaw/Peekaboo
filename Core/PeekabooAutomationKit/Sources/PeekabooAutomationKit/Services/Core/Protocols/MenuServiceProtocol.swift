@@ -90,9 +90,9 @@ public protocol MenuServiceGenerationPinnedMenuBarActionResultProviding: MenuSer
         -> UIAutomationActionResult<ClickResult>
 }
 
-/// Explicit read-only discovery for a named mutation; ordinary listing retains its displayed index inventory.
-public protocol MenuServiceNamedMenuBarPreparationProviding: MenuServiceProtocol {
-    func prepareMenuBarItem(named name: String) async throws -> MenuBarItemInfo
+/// Explicit read-only discovery within one application; ordinary names and indices retain the displayed inventory.
+public protocol MenuServiceScopedMenuBarPreparationProviding: MenuServiceProtocol {
+    func prepareMenuBarItem(_ request: MenuBarItemPreparationRequest) async throws -> MenuBarItemInfo
 }
 
 /// A menu-bar mutation bound to the exact status item returned by a prior inventory read.
@@ -100,14 +100,27 @@ public struct MenuBarItemActionRequest: Sendable, Codable, Equatable {
     public let name: String?
     public let index: Int?
     public let expectedLeafEvidence: DesktopSelectedLeafEvidence
+    public let applicationScope: MenuBarApplicationScope?
 
-    public init(named name: String, expectedLeafEvidence: DesktopSelectedLeafEvidence) throws {
+    public init(
+        named name: String,
+        expectedLeafEvidence: DesktopSelectedLeafEvidence,
+        applicationScope: MenuBarApplicationScope? = nil) throws
+    {
         guard expectedLeafEvidence.kind == .menuBarItem else {
             throw PeekabooError.invalidInput("Expected leaf evidence is not a menu bar item")
+        }
+        if let applicationScope {
+            _ = try MenuBarItemPreparationRequest(name: name, applicationScope: applicationScope)
+            guard expectedLeafEvidence.selectedTargetReceipt.windowID == nil,
+                  applicationScope.explicitProcessIdentifier
+                      .map({ $0 == expectedLeafEvidence.selectedProcessIdentity.processIdentifier }) ?? true
+            else { throw PeekabooError.invalidInput("Scoped menu bar evidence contradicts its application owner") }
         }
         self.name = name
         self.index = nil
         self.expectedLeafEvidence = expectedLeafEvidence
+        self.applicationScope = applicationScope
     }
 
     public init(index: Int, expectedLeafEvidence: DesktopSelectedLeafEvidence) throws {
@@ -120,12 +133,14 @@ public struct MenuBarItemActionRequest: Sendable, Codable, Equatable {
         self.name = nil
         self.index = index
         self.expectedLeafEvidence = expectedLeafEvidence
+        self.applicationScope = nil
     }
 
     private enum CodingKeys: String, CodingKey {
         case name
         case index
         case expectedLeafEvidence
+        case applicationScope
     }
 
     public init(from decoder: any Decoder) throws {
@@ -133,10 +148,11 @@ public struct MenuBarItemActionRequest: Sendable, Codable, Equatable {
         let name = try container.decodeIfPresent(String.self, forKey: .name)
         let index = try container.decodeIfPresent(Int.self, forKey: .index)
         let evidence = try container.decode(DesktopSelectedLeafEvidence.self, forKey: .expectedLeafEvidence)
+        let scope = try container.decodeIfPresent(MenuBarApplicationScope.self, forKey: .applicationScope)
         do {
             if let name, index == nil {
-                try self.init(named: name, expectedLeafEvidence: evidence)
-            } else if let index, name == nil {
+                try self.init(named: name, expectedLeafEvidence: evidence, applicationScope: scope)
+            } else if let index, name == nil, scope == nil {
                 try self.init(index: index, expectedLeafEvidence: evidence)
             } else {
                 throw PeekabooError.invalidInput("Menu bar action requires exactly one selector")

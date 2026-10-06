@@ -7,7 +7,7 @@ import PeekabooFoundation
 
 @MainActor
 public final class RemoteMenuService: MenuServiceProtocol, MenuServiceGenerationPinnedActionResultProviding,
-    MenuServiceExactLeafActionResultProviding, MenuServiceNamedMenuBarPreparationProviding
+    MenuServiceExactLeafActionResultProviding, MenuServiceScopedMenuBarPreparationProviding
 {
     private let client: PeekabooBridgeClient
 
@@ -81,8 +81,8 @@ public final class RemoteMenuService: MenuServiceProtocol, MenuServiceGeneration
         try await self.client.listMenuBarItems(includeRaw: includeRaw)
     }
 
-    public func prepareMenuBarItem(named name: String) async throws -> MenuBarItemInfo {
-        try await self.client.prepareMenuBarItem(named: name)
+    public func prepareMenuBarItem(_ request: MenuBarItemPreparationRequest) async throws -> MenuBarItemInfo {
+        try await self.client.prepareMenuBarItem(request)
     }
 
     public func clickMenuBarItem(named name: String) async throws -> ClickResult {

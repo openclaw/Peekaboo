@@ -106,7 +106,7 @@ extension PeekabooBridgeServer {
              .hideApplication, .unhideApplication, .hideOtherApplications, .showAllApplications:
             return try await self.handleApplicationRequest(request)
         case .listMenus, .listFrontmostMenus, .clickMenuItem, .clickMenuItemByName, .listMenuExtras,
-             .clickMenuExtra, .menuExtraOpenMenuFrame, .listMenuBarItems, .prepareMenuBarItemNamed,
+             .clickMenuExtra, .menuExtraOpenMenuFrame, .listMenuBarItems, .prepareMenuBarItem,
              .clickMenuBarItemNamed,
              .clickMenuBarItemIndex:
             return try await self.handleMenuRequest(request)

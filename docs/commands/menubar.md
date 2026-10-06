@@ -13,13 +13,15 @@ read_when:
 | Subcommand | Description |
 | --- | --- |
 | `list` | Prints every visible status item with its index. `--json` emits the same data plus bundle IDs and AX identifiers. |
-| `click` | Clicks an item by name (case-insensitive fuzzy match) or via `--index <n>`. |
+| `click` | Clicks a displayed item by name or index, or an application-owned item by name with `--app`/`--pid`. |
 
 ## Key options
 | Flag | Description |
 | --- | --- |
 | `[itemName]` | Optional positional argument passed to `click`. |
 | `--index <n>` | Target by numeric index (matches the ordering from `menubar list`). |
+| `--app <name-or-bundle-id>` | For named `click` only: inspect AX extras in one exact application. Mutually exclusive with `--pid` and `--index`. |
+| `--pid <pid>` | For named `click` only: inspect AX extras in one exact positive PID. Mutually exclusive with `--app` and `--index`. |
 | `--foreground` | Required for `click`; permits Peekaboo to open global status-item UI and interrupt the current foreground workflow. |
 | `--verify` | After clicking, confirm a popover owned by the same PID appears, or that focus moved to the owning app/window (fallback OCR). OCR requires the popover text to include the target title/owner name and anchors verification to the clicked item’s X position when available. |
 | Global flags | `--json` returns structured payloads; `--verbose` adds descriptions when listing. |
@@ -29,8 +31,9 @@ read_when:
 - Listing uses `MenuServiceBridge.listMenuBarItems`, and verbose mode prints extra diagnostics (owner name, hidden state). JSON mode always includes the raw title, bundle ID, owner name, identifier, visibility, and description.
 - `click` refuses before status-item lookup unless `--foreground` is present. Missing names and stale indices then fail before dispatch as `MENU_ITEM_NOT_FOUND` with `effect: refused`, `retry_safe: true`, and `mutation_dispatched: false` in JSON.
 - Clicking resolves either `--index` or item text (case-insensitive). Name-based targets remain name-based at dispatch so a status-item reorder cannot redirect the click to a different index.
-- Named clicks explicitly prepare a complete, deadline-bounded Accessibility inventory before dispatch. Application-owned `AXExtrasMenuBar` items use their actual process generation and native frame, without borrowing a Control Center proxy's window ID. Preparation is read-only, never activates an app, and refuses unreadable or ambiguous ownership. Dispatch revalidates the same selected leaf; an uncertain AX action is never retried through another route.
-- Ordinary listing keeps its WindowServer-only fast path and displayed indices. `--index` continues to use that inventory and its exact window route; named preparation does not reorder the list. Bridge named preparation requires its explicitly advertised capability and operation; an older host refuses before mutation instead of silently falling back.
+- Unscoped names and indices retain the displayed WindowServer inventory and exact window route. A unique displayed name does not trigger a global AX sweep; unrelated graphics helpers cannot block that route. Ambiguous or stale displayed evidence still refuses before dispatch.
+- `click <name> --app ...` or `--pid ...` prepares a deadline-bounded `AXExtrasMenuBar` inventory only inside that exact application generation. It retains the original owner selector and native leaf through dispatch, without borrowing a Control Center proxy's window ID. Preparation never focuses the app. Missing, unreadable, changed or ambiguous targets refuse; an uncertain AX submission is never retried through another route.
+- Scoped clicks require explicit `--foreground` just like unscoped clicks, and cannot use `--index`. They never fall back to another application or the global inventory. Bridge hosts and clients must negotiate `scopedMenuBarActions`, the scoped preparation operation and attested receipts; older hosts refuse rather than ignore the owner scope.
 - `--verify` waits briefly for a popover owned by the same PID, checks for a focused-window change for the owning app, then falls back to any visible owner window (layer 0). OCR verification is on by default (set `PEEKABOO_MENUBAR_OCR_VERIFY=0` to disable) and now requires the popover text to include the target title/owner; AX menu checks remain opt-in via `PEEKABOO_MENUBAR_AX_VERIFY=1` (OCR requires Screen Recording permission).
 - Coordinate data (if available) is recorded in the click result so you can correlate where on screen the interaction happened.
 
@@ -47,6 +50,12 @@ peekaboo menubar click "Wi-Fi" --verify --foreground
 
 # Click the third item regardless of name and capture JSON output
 peekaboo menubar click --index 3 --foreground --json
+
+# Address a third-party app's AX-owned status item explicitly
+peekaboo menubar click "Status Item" --app com.example.StatusApp --foreground --json
+
+# Bind the named item to a PID obtained from app list
+peekaboo menubar click "Status Item" --pid 12345 --foreground --json
 ```
 
 ## Troubleshooting

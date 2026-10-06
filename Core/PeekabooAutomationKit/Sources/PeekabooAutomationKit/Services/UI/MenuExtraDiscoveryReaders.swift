@@ -4,54 +4,27 @@ import PeekabooFoundation
 
 @MainActor
 struct MenuExtraDiscoveryReaders {
-    var snapshots: @MainActor () async throws -> [MenuExtraAXSnapshot] = Self.readSnapshots
+    var resolveOwner: @MainActor (
+        MenuBarApplicationScope, any ApplicationServiceProtocol, ApplicationProcessIdentity?) async throws
+        -> ServiceApplicationInfo = { scope, applications, expected in
+            let planner = DesktopTargetPlanning.ApplicationMutationPlanner(applications: applications)
+            let plan = try await planner.plan(identifier: scope.identifier, expectedIdentity: expected)
+            return plan.application
+        }
+
+    var snapshots: @MainActor (
+        ApplicationProcessIdentity, ContinuousClock.Instant) async throws -> [MenuExtraAXSnapshot] = {
+        try await MenuExtraAXReader.read(owner: $0, deadline: $1)
+    }
+
     var windowExtras: (@MainActor () -> [MenuExtraInfo])?
     var windowIdentity: @MainActor (CGWindowID) -> WindowMutationIdentity? = {
         SystemIdentityResolver.windowMutationIdentity(windowID: $0)
     }
 
     var processGeneration: @MainActor (pid_t) -> UInt64? = SystemIdentityResolver.processStartIdentity
-    var application: @MainActor (pid_t) -> (name: String?, bundle: String?) = {
-        let app = NSRunningApplication(processIdentifier: $0)
-        return (app?.localizedName, app?.bundleIdentifier)
-    }
-
     var displayBounds: (@MainActor () -> [CGRect])?
     var submit: @MainActor (MenuExtraAXSnapshot, Bool) throws -> Void = { snapshot, showMenu in
         try Element(snapshot.identity.element).performAction(showMenu ? .showMenu : .press)
-    }
-
-    static func permitsApplicationExtrasScan(
-        activationPolicy: NSApplication.ActivationPolicy,
-        isTerminated: Bool) -> Bool
-    {
-        // AppKit prohibits BackgroundOnly agents from creating windows or activating. The separate
-        // system-wide inventory remains authoritative for system-hosted status items.
-        !isTerminated && (activationPolicy == .regular || activationPolicy == .accessory)
-    }
-
-    private static func readSnapshots() async throws -> [MenuExtraAXSnapshot] {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-        let applications = NSWorkspace.shared.runningApplications.filter {
-            self.permitsApplicationExtrasScan(activationPolicy: $0.activationPolicy, isTerminated: $0.isTerminated)
-        }.sorted { $0.processIdentifier < $1.processIdentifier }
-        guard let ownGeneration = SystemIdentityResolver.processStartIdentity(getpid()) else {
-            throw MenuExtraAXReader.incomplete
-        }
-        var snapshots = try await MenuExtraAXReader.read(
-            owner: .init(processIdentifier: getpid(), processStartIdentity: ownGeneration),
-            systemWide: true,
-            deadline: deadline)
-        for app in applications {
-            try MenuExtraAXReader.check(deadline)
-            guard let generation = SystemIdentityResolver.processStartIdentity(app.processIdentifier) else {
-                throw MenuExtraAXReader.incomplete
-            }
-            snapshots += try await MenuExtraAXReader.read(
-                owner: .init(processIdentifier: app.processIdentifier, processStartIdentity: generation),
-                deadline: deadline)
-        }
-        var seen: Set<MenuExtraAXIdentity> = []
-        return snapshots.filter { seen.insert($0.identity).inserted }
     }
 }

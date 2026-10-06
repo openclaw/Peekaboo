@@ -14,7 +14,7 @@ import PeekabooFoundation
 @MainActor
 public final class MenuService: MenuServiceProtocol, MenuServiceGenerationPinnedActionResultProviding,
     MenuServiceGenerationPinnedMenuBarActionResultProviding, MenuServiceExactLeafActionResultProviding,
-    MenuServiceNamedMenuBarPreparationProviding
+    MenuServiceScopedMenuBarPreparationProviding
 {
     let applicationService: any ApplicationServiceProtocol
     let logger: Logger

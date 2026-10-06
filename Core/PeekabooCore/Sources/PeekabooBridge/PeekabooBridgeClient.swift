@@ -115,8 +115,8 @@ public actor PeekabooBridgeClient {
         self.inputCapabilities.producerBoundSnapshotReferencesEnabled
     }
 
-    var namedMenuBarPreparationEnabled: Bool {
-        self.inputCapabilities.namedMenuBarPreparationEnabled
+    var scopedMenuBarActionsEnabled: Bool {
+        self.inputCapabilities.scopedMenuBarActionsEnabled
     }
 
     var targetedClickAccessibilityValueDeliveryEnabled: Bool {
@@ -800,8 +800,8 @@ public actor PeekabooBridgeClient {
         if protocolVersion >= PeekabooBridgeConstants.browserConnectionHandoffVersion {
             capabilities.append(PeekabooBridgeClientCapability.browserConnectionHandoff)
         }
-        if protocolVersion >= PeekabooBridgeConstants.namedMenuBarPreparationVersion {
-            capabilities.append(PeekabooBridgeClientCapability.namedMenuBarPreparation)
+        if protocolVersion >= PeekabooBridgeConstants.scopedMenuBarActionsVersion {
+            capabilities.append(PeekabooBridgeClientCapability.scopedMenuBarActions)
         }
         return capabilities
     }
@@ -949,7 +949,7 @@ public actor PeekabooBridgeClient {
                 Self.supportsBrowserConnectionHandoff(handshake),
                 producerBoundSnapshotReferencesEnabled:
                 Self.supportsProducerBoundSnapshotReferences(handshake),
-                namedMenuBarPreparationEnabled: handshake.supportsNamedMenuBarPreparation,
+                scopedMenuBarActionsEnabled: handshake.supportsScopedMenuBarActions,
                 targetedClickAccessibilityValueDeliveryEnabled:
                 Self.supportsTargetedClickAccessibilityValueDelivery(handshake),
                 requestPinnedExactWindowScrollReceiptEnabled:
@@ -1549,7 +1549,7 @@ private struct PeekabooBridgeClientInputCapabilities: Sendable {
     var nativeBrowserConnectionBindingEnabled = false
     var browserConnectionHandoffEnabled = false
     var producerBoundSnapshotReferencesEnabled = false
-    var namedMenuBarPreparationEnabled = false
+    var scopedMenuBarActionsEnabled = false
     var targetedClickAccessibilityValueDeliveryEnabled = false
     var requestPinnedExactWindowScrollReceiptEnabled = false
     var backgroundCoordinateScrollEnabled = false

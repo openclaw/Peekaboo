@@ -2,8 +2,7 @@
 
 ## Unreleased
 
-- Discover application-owned menu extras through explicit, bounded named preparation, retaining actual AX owner receipts and refusing incomplete or ambiguous inventories while preserving ordinary listing and displayed indices. Thanks @buremba! #953.
-
+- Add exact app/PID-scoped menu-extra clicks with bounded AX owner preparation and revalidation, preserving displayed-CG names and indices without scanning unrelated applications. Thanks @buremba! #953.
 - Retain failed browser connection attempts across ordinary provider tools and invalidate cached verification after socket loss, preventing implicit reconnects and stale success. Thanks @rudycelekli! #949.
 - Honor cancellation and connection deadlines during browser application-metadata reads; reconcile failures without repeating a blocked lookup, retaining connected or uncertain provider ownership. Thanks @rudycelekli! #950.
 - Preserve literal log-helper search and filter text without shell re-parsing, including quotes, backslashes and trailing newlines; retain output, streaming and private-mode arguments. Thanks @rudycelekli! #934.

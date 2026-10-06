@@ -107,7 +107,7 @@ struct PeekabooBridgeRequestPlanTests {
             .clickMenuExtra,
             .menuExtraOpenMenuFrame,
             .listMenuBarItems,
-            .prepareMenuBarItemNamed,
+            .prepareMenuBarItem,
             .clickMenuBarItemNamed,
             .listDockItems,
             .launchDockItem,

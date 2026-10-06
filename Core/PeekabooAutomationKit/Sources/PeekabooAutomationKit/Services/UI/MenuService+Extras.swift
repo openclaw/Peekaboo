@@ -308,26 +308,14 @@ extension MenuService {
         -> UIAutomationActionResult<ClickResult>
     {
         try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
-            if let name = request.name {
-                if request.expectedLeafEvidence.selectedTargetReceipt.windowID != nil,
-                   let selection = try await self.displayedMenuBarSelection(
-                       named: name, expectedEvidence: request.expectedLeafEvidence)
-                {
-                    return try await self.clickMenuBarItemActionResultWithOwnedLane(
-                        at: selection.candidate.value.index,
-                        expectedEvidence: request.expectedLeafEvidence,
-                        normalizedSelector: selection.normalizedSelector,
-                        matchKind: selection.matchKind)
-                }
-                let target = try await self.resolveNamedMenuBarTarget(named: name)
-                guard request.expectedLeafEvidence.hasSameResolvedLeaf(as: target.evidence) else {
-                    throw Self.changedMenuExtraTarget()
-                }
-                return try await self.dispatchNamedMenuBarTarget(target, named: name)
+            if request.applicationScope != nil {
+                return try await self.executeScopedMenuBarAction(request)
             }
             let items = try await self.listMenuBarItems(includeRaw: true)
             let selection: DeterministicDesktopLeafSelector.Selection<MenuBarItemInfo>
-            if let index = request.index {
+            if let name = request.name {
+                selection = try Self.resolveDisplayedMenuBarSelection(named: name, items: items)
+            } else if let index = request.index {
                 selection = try MenuBarItemSelector.select(index: index, from: items)
             } else {
                 throw PeekabooError.invalidInput("Menu bar action request has no selector")
@@ -355,8 +343,41 @@ extension MenuService {
     func clickMenuBarItemActionResultWithOwnedLane(
         named name: String) async throws -> UIAutomationActionResult<ClickResult>
     {
-        let target = try await self.resolveNamedMenuBarTarget(named: name)
-        return try await self.dispatchNamedMenuBarTarget(target, named: name)
+        let selection = try await self.displayedMenuBarSelection(named: name)
+        guard let evidence = selection.candidate.value.selectionEvidence else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "The displayed menu bar item has no exact window evidence.",
+                hint: "Refresh the menu bar list before retrying.")
+        }
+        return try await self.clickMenuBarItemActionResultWithOwnedLane(
+            at: selection.candidate.value.index,
+            expectedEvidence: evidence,
+            normalizedSelector: selection.normalizedSelector,
+            matchKind: selection.matchKind)
+    }
+
+    func displayedMenuBarSelection(named name: String) async throws
+        -> DeterministicDesktopLeafSelector.Selection<MenuBarItemInfo>
+    {
+        let items = try await self.listMenuBarItems(includeRaw: true)
+        return try Self.resolveDisplayedMenuBarSelection(named: name, items: items)
+    }
+
+    private static func resolveDisplayedMenuBarSelection(named name: String, items: [MenuBarItemInfo]) throws
+        -> DeterministicDesktopLeafSelector.Selection<MenuBarItemInfo>
+    {
+        do {
+            return try MenuBarItemSelector.select(named: name, from: items)
+        } catch let error as DesktopLeafSelectionError {
+            if case .notFound = error {
+                throw PeekabooError.menuItemNotFound(name)
+            }
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: error.localizedDescription,
+                hint: "Use one exact displayed name or a current list index.")
+        }
     }
 
     public func clickMenuBarItem(at index: Int) async throws -> ClickResult {

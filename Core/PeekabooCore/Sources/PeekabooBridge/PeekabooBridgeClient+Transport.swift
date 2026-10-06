@@ -189,8 +189,8 @@ extension PeekabooBridgeClient {
     }
 
     private func requireNegotiatedInputCapabilities(for request: PeekabooBridgeRequest) throws {
-        if request.unwrappedOperationRequest.operation == .prepareMenuBarItemNamed {
-            try self.requireNamedMenuBarPreparation()
+        if request.requiresScopedMenuBarActions {
+            try self.requireScopedMenuBarActions()
         }
         if request.requiresPreparedClipboardGuardedExactWindowHotkey,
            !self.preparedClipboardGuardedExactWindowHotkeysEnabled
