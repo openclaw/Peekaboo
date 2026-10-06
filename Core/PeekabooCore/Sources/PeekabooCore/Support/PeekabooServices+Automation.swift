@@ -18,6 +18,12 @@ extension PeekabooServices {
         self.logger.info("\(AgentDisplayTokens.Status.running) Starting automation for app: \(appIdentifier)")
         self.logger.debug("Number of actions: \(actions.count)")
 
+        for action in actions {
+            if case let .wait(milliseconds) = action, milliseconds < 0 {
+                throw PeekabooError.invalidInput("Automation wait duration cannot be negative")
+            }
+        }
+
         let preparation = try await self.prepareAutomationSnapshot(appIdentifier: appIdentifier)
         let executedActions = try await self.executeAutomationActions(actions, snapshotId: preparation.snapshotId)
 
@@ -121,7 +127,7 @@ extension PeekabooServices {
         case let .hotkey(keys):
             try await self.automation.hotkey(keys: keys, holdDuration: 100)
         case let .wait(milliseconds):
-            try await Task.sleep(nanoseconds: UInt64(milliseconds) * 1_000_000)
+            try await Task.sleep(for: .milliseconds(milliseconds))
         }
     }
 
