@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { css, faviconSvg, js } from "./docs-site-assets.mjs";
-import { renderedHeadingText } from "./docs-site-toc.mjs";
+import { decodeRenderedEntities, renderedHeadingText } from "./docs-site-toc.mjs";
 
 const root = process.cwd();
 const docsDir = path.join(root, "docs");
@@ -221,6 +221,7 @@ function copyTree(src, dest) {
 }
 
 function parseFrontmatter(raw) {
+  raw = raw.replace(/\r\n/g, "\n");
   const match = raw.match(/^---\n([\s\S]*?)\n---\n?/);
   if (!match) return { frontmatter: {}, body: raw };
   const fm = {};
@@ -273,7 +274,7 @@ function titleize(input) {
   return input.replaceAll("-", " ").replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
-function markdownToHtml(markdown, currentRel) {
+function markdownToHtml(markdown, currentRel, nested = false) {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   const html = [];
   let paragraph = [];
@@ -293,7 +294,7 @@ function markdownToHtml(markdown, currentRel) {
   };
   const flushBlockquote = () => {
     if (!blockquote.length) return;
-    const inner = markdownToHtml(blockquote.join("\n"), currentRel);
+    const inner = markdownToHtml(blockquote.join("\n"), currentRel, true);
     html.push(`<blockquote>${inner}</blockquote>`);
     blockquote = [];
   };
@@ -438,10 +439,38 @@ function markdownToHtml(markdown, currentRel) {
     }
     paragraph.push(line.trim());
   }
+  if (fence) {
+    const body = highlightCode(fence.lines.join("\n"), fence.lang);
+    html.push(`<pre><code class="language-${escapeAttr(fence.lang)}">${body}</code></pre>`);
+  }
   flushParagraph();
   closeList();
   flushBlockquote();
-  return html.join("\n");
+  const rendered = html.join("\n");
+  return nested ? rendered : uniqueHeadingIDs(rendered);
+}
+
+function uniqueHeadingIDs(html) {
+  // Reserve natural slugs before allocating duplicate suffixes, including headings
+  // rendered inside blockquotes. Existing incoming anchors must keep their owner.
+  const naturalIDs = new Set([...html.matchAll(/<h[1-4] id="([^"]*)">/g)].map((match) => match[1]));
+  const used = new Set();
+  const nextSuffix = new Map();
+  return html.replace(/<h([1-4]) id="([^"]*)">([\s\S]*?)<\/h\1>/g, (_, level, original, body) => {
+    const base = original || "section";
+    let id = base;
+    if (used.has(id) || (!original && naturalIDs.has(id))) {
+      let suffix = nextSuffix.get(base) || 1;
+      for (; ; suffix += 1) {
+        id = `${base}-${suffix}`;
+        if (!used.has(id) && !naturalIDs.has(id)) break;
+      }
+      nextSuffix.set(base, suffix + 1);
+    }
+    used.add(id);
+    const inner = body.replace(/^<a class="anchor" href="#[^"]*"/, () => `<a class="anchor" href="#${id}"`);
+    return `<h${level} id="${id}">${inner}</h${level}>`;
+  });
 }
 
 function inline(text, currentRel) {
@@ -456,7 +485,7 @@ function inline(text, currentRel) {
     .replace(/(^|[^_])_([^_\s][^_]*?)_(?!_)/g, "$1<em>$2</em>")
     .replace(
       /\[([^\]]+)\]\(([^)]+)\)/g,
-      (_, label, href) => `<a href="${escapeAttr(rewriteHref(href, currentRel))}">${label}</a>`,
+      (_, label, href) => `<a href="${escapeAttr(rewriteHref(decodeRenderedEntities(href), currentRel))}">${label}</a>`,
     )
     .replace(/&lt;(https?:\/\/[^\s<>]+)&gt;/g, '<a href="$1">$1</a>');
   out = out.replace(/\\\|/g, "|");
@@ -466,8 +495,9 @@ function inline(text, currentRel) {
 
 function rewriteHref(href, currentRel) {
   if (/^(https?:|mailto:|tel:|#)/.test(href)) return href;
-  const [raw, hash = ""] = href.split("#");
-  if (!raw) return hash ? `#${hash}` : "";
+  const suffixStart = href.search(/[?#]/);
+  const raw = suffixStart < 0 ? href : href.slice(0, suffixStart);
+  const suffix = suffixStart < 0 ? "" : href.slice(suffixStart);
   if (raw.startsWith("/")) return href;
   if (!raw.endsWith(".md")) return href;
   const from = path.posix.dirname(currentRel);
@@ -475,7 +505,7 @@ function rewriteHref(href, currentRel) {
   let rewritten = pageMap.get(target)?.outRel || outPath(target);
   const currentOut = pageMap.get(currentRel)?.outRel || outPath(currentRel);
   rewritten = hrefToOutRel(rewritten, currentOut);
-  return `${rewritten}${hash ? `#${hash}` : ""}`;
+  return `${rewritten}${suffix}`;
 }
 
 function tocFromHtml(html) {
@@ -724,28 +754,35 @@ function highlightCode(code, lang) {
   return escapeHtml(code);
 }
 
-function stashToken(idx) {
-  return String.fromCharCode(0xe000 + idx);
-}
-
-function restoreStashTokens(value, stash) {
-  return value.replace(/[-]/g, (token) => {
-    const idx = token.charCodeAt(0) - 0xe000;
-    return stash[idx] ?? "";
+// Keep highlighted fragments separate from source text so code never doubles
+// as an internal placeholder, and the number of matches is unbounded.
+function highlightFragments(fragments, pattern, renderMatch) {
+  return fragments.flatMap((fragment) => {
+    if (typeof fragment !== "string") return [fragment];
+    const result = [];
+    let previous = 0;
+    fragment.replace(pattern, (...args) => {
+      const match = args[0];
+      const offset = args.at(-2);
+      result.push(fragment.slice(previous, offset), { html: renderMatch(...args) });
+      previous = offset + match.length;
+      return match;
+    });
+    result.push(fragment.slice(previous));
+    return result;
   });
 }
 
-function withStash(code, patterns) {
-  const stash = [];
-  let working = code;
-  for (const [re, cls] of patterns) {
-    working = working.replace(re, (match) => {
-      const idx = stash.length;
-      stash.push(`<span class="${cls}">${escapeHtml(match)}</span>`);
-      return stashToken(idx);
-    });
+function renderFragments(fragments) {
+  return fragments.map((fragment) => typeof fragment === "string" ? escapeHtml(fragment) : fragment.html).join("");
+}
+
+function highlightWithPatterns(code, patterns) {
+  let fragments = [code];
+  for (const [pattern, cls] of patterns) {
+    fragments = highlightFragments(fragments, pattern, (match) => `<span class="${cls}">${escapeHtml(match)}</span>`);
   }
-  return restoreStashTokens(escapeHtml(working), stash);
+  return renderFragments(fragments);
 }
 
 function highlightShell(code) {
@@ -764,26 +801,21 @@ function highlightShell(code) {
 }
 
 function highlightShellLine(line) {
-  const stash = [];
-  const stashAdd = (match, cls) => {
-    const idx = stash.length;
-    stash.push(`<span class="${cls}">${escapeHtml(match)}</span>`);
-    return stashToken(idx);
-  };
-  let working = line;
-  working = working.replace(/(?:'[^']*'|"[^"]*")/g, (m) => stashAdd(m, "hl-s"));
-  working = working.replace(/\s#.*$/g, (m) => stashAdd(m, "hl-c"));
-  working = working.replace(/(^|\s)(--?[A-Za-z][A-Za-z0-9-]*)/g, (_, lead, flag) => `${escapeHtml(lead)}${stashAdd(flag, "hl-f")}`);
-  working = working.replace(
+  const span = (match, cls) => `<span class="${cls}">${escapeHtml(match)}</span>`;
+  let fragments = [line];
+  fragments = highlightFragments(fragments, /(?:'[^']*'|"[^"]*")/g, (match) => span(match, "hl-s"));
+  fragments = highlightFragments(fragments, /\s#.*$/g, (match) => span(match, "hl-c"));
+  fragments = highlightFragments(fragments, /(^|\s)(--?[A-Za-z][A-Za-z0-9-]*)/g,
+    (_, lead, flag) => `${escapeHtml(lead)}${span(flag, "hl-f")}`);
+  fragments = highlightFragments(fragments,
     /\b(peekaboo|brew|npx|npm|pnpm|yarn|node|swift|git|gh|make|sudo|cd|export|cat|curl|jq|ls|mv|cp|rm|mkdir|docker|tail)\b/g,
-    (m) => stashAdd(m, "hl-cmd"),
-  );
-  working = working.replace(/\b(\d+(?:\.\d+)?)\b/g, (m) => stashAdd(m, "hl-n"));
-  return restoreStashTokens(escapeHtml(working), stash);
+    (match) => span(match, "hl-cmd"));
+  fragments = highlightFragments(fragments, /\b(\d+(?:\.\d+)?)\b/g, (match) => span(match, "hl-n"));
+  return renderFragments(fragments);
 }
 
 function highlightJson(code) {
-  return withStash(code, [
+  return highlightWithPatterns(code, [
     [/"(?:\\.|[^"\\])*"\s*:/g, "hl-k"],
     [/"(?:\\.|[^"\\])*"/g, "hl-s"],
     [/\b(true|false|null)\b/g, "hl-m"],
@@ -792,7 +824,7 @@ function highlightJson(code) {
 }
 
 function highlightJs(code) {
-  return withStash(code, [
+  return highlightWithPatterns(code, [
     [/\/\/[^\n]*/g, "hl-c"],
     [/\/\*[\s\S]*?\*\//g, "hl-c"],
     [/`(?:\\.|[^`\\])*`/g, "hl-s"],
@@ -807,7 +839,7 @@ function highlightJs(code) {
 }
 
 function highlightSwift(code) {
-  return withStash(code, [
+  return highlightWithPatterns(code, [
     [/\/\/[^\n]*/g, "hl-c"],
     [/\/\*[\s\S]*?\*\//g, "hl-c"],
     [/"(?:\\.|[^"\\])*"/g, "hl-s"],
@@ -856,10 +888,12 @@ function validateLinks(outputDir) {
   for (const file of allHtml(outputDir)) {
     const html = fs.readFileSync(file, "utf8");
     for (const match of html.matchAll(/href="([^"]+)"/g)) {
-      const href = match[1];
+      const href = decodeRenderedEntities(match[1]);
       if (/^(#|https?:|mailto:|tel:|javascript:)/.test(href)) continue;
       if (placeholderHrefs.test(href)) continue;
-      const [rawPath, anchor = ""] = href.split("#");
+      const [rawPath] = href.split(/[?#]/, 1);
+      const hashStart = href.indexOf("#");
+      const anchor = hashStart < 0 ? "" : href.slice(hashStart + 1);
       const targetPath = rawPath
         ? rawPath.startsWith("/")
           ? path.join(outputDir, rawPath.slice(1))

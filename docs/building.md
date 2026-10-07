@@ -23,6 +23,11 @@ Swift packages, source builds, and pnpm helper scripts.
 
 ## Common Builds
 
+Build the documentation site with `pnpm run docs:site` and run its renderer regressions with
+`pnpm run test:docs-site`. The shared gate also runs in normal macOS CI and `test:safe`.
+Rendering preserves CRLF front matter, literal code characters, unterminated fenced code at EOF, and link query
+parameters. Heading permalinks are unique across the complete page, including nested blockquotes.
+
 ```bash
 # Clone
 git clone --recurse-submodules https://github.com/openclaw/Peekaboo.git

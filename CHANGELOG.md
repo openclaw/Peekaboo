@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Prepare the final-qualification launcher's atomic receipt publisher before spawning the suspended coordinator, so loaded release Macs no longer spend the identity-acknowledgement window compiling Swift; each use still re-verifies the exact executable, and the exit receipt keeps a fresh build.
+- Preserve documentation source text through syntax highlighting, parse CRLF metadata, render unfinished EOF fences, retain link entities/query parameters, and assign unique heading targets. Thanks @rudycelekli! #931, #939, #940, #969, #971.
 - Add exact app/PID-scoped menu-extra clicks with bounded AX owner preparation and revalidation, preserving displayed-CG names and indices without scanning unrelated applications. Thanks @buremba! #953.
 - Reject negative SDK automation waits before preparation or earlier input, and keep large positive waits safely cancellable without integer overflow. Thanks @rudycelekli! #973.
 - Preserve literal environment values inside configuration JSON strings and omit expanded documents from decode warnings; retain numeric substitutions and credential references. Thanks @rudycelekli! #972.
