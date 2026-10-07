@@ -19,13 +19,10 @@ private final class BrowserFixtureAgentEventDelegate: AgentEventDelegate {
     func agentDidEmitEvent(_: AgentEvent) {}
 }
 
+@Suite(AuthorityTestIsolation())
 @MainActor
 // swiftlint:disable:next type_body_length
 struct BrowserMCPSessionManagerTests {
-    init() throws {
-        try AuthorityTestSupport.prepare()
-    }
-
     @Test(arguments: [nil, "background_only", "foreground_allowed"] as [String?])
     func `legacy disk sessions resume without clipboard permission and resave compatibly`(
         legacyPolicy: String?) async throws

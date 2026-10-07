@@ -7,12 +7,9 @@ import Testing
 @testable import PeekabooAgentRuntime
 @testable import PeekabooCore
 
+@Suite(AuthorityTestIsolation())
 @MainActor
 struct MCPToolExecutionAuthorityTests {
-    init() throws {
-        try AuthorityTestSupport.prepare()
-    }
-
     @Test
     func `only the explicit bounded snapshot payload is added to background policy`() {
         let authority = MCPToolExecutionAuthority(temporaryClipboardPasteGranted: true)

@@ -6,12 +6,9 @@ import Testing
 @testable import PeekabooAgentRuntime
 @testable import PeekabooCLI
 
+@Suite(AuthorityTestIsolation())
 @MainActor
 struct AgentCommandExecutionPolicyTests {
-    init() throws {
-        try AuthorityTestSupport.prepare()
-    }
-
     @Test(arguments: [false, true])
     func `all Agent invocation forms bind temporary clipboard independently of foreground`(foreground: Bool) throws {
         let flags = ["--allow-temporary-clipboard"] + (foreground ? ["--allow-foreground"] : [])

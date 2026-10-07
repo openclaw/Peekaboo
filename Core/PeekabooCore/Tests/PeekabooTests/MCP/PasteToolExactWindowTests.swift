@@ -10,13 +10,9 @@ import Testing
 import UniformTypeIdentifiers
 @testable import PeekabooAgentRuntime
 
-@Suite(.serialized)
+@Suite(.serialized, AuthorityTestIsolation())
 @MainActor
 struct PasteToolExactWindowTests {
-    init() throws {
-        try AuthorityTestSupport.prepare()
-    }
-
     private let firstWindow = ServiceWindowInfo(
         windowID: 41,
         title: "First Document",

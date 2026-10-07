@@ -7,6 +7,7 @@ import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
 
+@Suite(AuthorityTestIsolation())
 @MainActor
 struct AgentExecutionTraceTests {
     @Test
@@ -28,10 +29,6 @@ struct AgentExecutionTraceTests {
                 startTime: Date(),
                 endTime: Date()))
         #expect(try #require(result.executionTrace().entries.first).mutationDispatch == .possiblyDispatched)
-    }
-
-    init() throws {
-        try AuthorityTestSupport.prepare()
     }
 
     @Test

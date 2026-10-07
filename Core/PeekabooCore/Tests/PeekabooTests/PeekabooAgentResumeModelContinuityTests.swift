@@ -369,8 +369,8 @@ private final class CountingContinuityProvider: ModelProvider, @unchecked Sendab
     }
 }
 
-/// These tests resolve real local providers through the process default configuration. Synthetic authority suites in
-/// the same serial test process replace that default with a provider-forbidding one, so own it for this suite.
+/// Continuity resolution constructs local providers through `.current`. Supply an environment-free default so a nil
+/// process default cannot fall back to the auto singleton and load the developer's environment or saved credentials.
 private struct EnvironmentFreeTachikomaConfiguration: SuiteTrait, TestScoping {
     typealias TestBody = @concurrent @Sendable () async throws -> Void
 

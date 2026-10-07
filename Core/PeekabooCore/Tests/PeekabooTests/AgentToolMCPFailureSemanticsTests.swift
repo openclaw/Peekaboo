@@ -9,12 +9,9 @@ import Testing
 @testable import PeekabooAgentRuntime
 @testable import PeekabooCore
 
+@Suite(AuthorityTestIsolation())
 @MainActor
 struct AgentToolMCPFailureSemanticsTests {
-    init() throws {
-        try AuthorityTestSupport.prepare()
-    }
-
     @Test
     func `Canonical outcomes drive custom tool trace classification without reconstruction`() throws {
         for (index, outcome) in DesktopActionOutcomeFixtures.canonicalOutcomes.enumerated() {

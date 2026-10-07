@@ -182,20 +182,21 @@ including the normal entrypoint's five-second deadline. It does not send desktop
 
 Run the temporary-clipboard authority, session-policy, context, paste, and browser-lifecycle regression suites serially
 with `--no-parallel`, with provider API-key/OAuth variables and `PEEKABOO_AI_PROVIDERS` absent from the test process.
-Do not change `HOME`. The selected suites initialize `AuthorityTestSupport` from the test-only
-`PeekabooAgentRuntimeTestSupport` module before constructing services. Its shared
-test-only storage owner creates a private process configuration directory with empty config and credentials files,
-disables legacy configuration migration, and installs `TachikomaConfiguration(loadFromEnvironment: false)` without
-touching `.current`. The empty primary credentials file also closes Tachikoma's legacy-file fallback. A provider
-factory override admits only the explicitly supplied custom fixture providers, not built-in remote/local providers.
-The two nested Agent attenuation cases temporarily replace that already-synthetic default with the existing fixture
-provider so public MCP can resolve a model string for a real continuation; they restore `.default` with `defer` and
-never read `.current` to save it. This scoped exception also requires serial execution.
+Do not change `HOME`. The selected suites use the non-recursive `AuthorityTestIsolation()` suite trait from the test-only
+`PeekabooAgentRuntimeTestSupport` module. Each scope creates a fresh private configuration directory with empty config
+and credentials files, points `PEEKABOO_CONFIG_DIR` and Tachikoma's profile directory at it, disables legacy
+configuration migration, and installs `TachikomaConfiguration(loadFromEnvironment: false)` without touching `.current`.
+The empty primary credentials file also closes Tachikoma's legacy-file fallback. A provider factory override admits
+only the explicitly supplied custom fixture providers, not built-in remote/local providers. The two nested Agent
+attenuation cases temporarily replace that already-synthetic default with the existing fixture provider so public MCP
+can resolve a model string for a real continuation; they restore `.default` with `defer` and never read `.current` to
+save it. On success or throw, the trait restores the previous optional `.default`, both configuration environment
+variables, and the profile directory, resets cached configuration/credentials, and removes its temporary storage, so
+later suites in the same process never inherit the synthetic configuration. Nested scopes restore the outer scope.
 
 Base services skip automatic Agent creation and use in-memory snapshots. Every explicit fixture Agent receives a
 private session manager. Browser-lifecycle calls use `.minimal` enhancements so they do not collect frontmost-window,
 cursor, application-list, or General-clipboard context. Paste tests inject their scripted clipboard and native-input
-services. The process logs its owned storage directory once; retain it for diagnosis, then remove that exact directory
-after the test process and its asynchronous cleanup have finished. Do not run unrelated configuration-mutating suites
-concurrently and do not treat `PEEKABOO_CONFIG_DIR` alone as credential isolation. This is bounded fixture isolation,
-not a claim that the entire repository's test suite is hermetic.
+services. Do not run unrelated configuration-mutating suites concurrently and do not treat `PEEKABOO_CONFIG_DIR` alone
+as credential isolation. This is bounded fixture isolation, not a claim that the entire repository's test suite is
+hermetic.

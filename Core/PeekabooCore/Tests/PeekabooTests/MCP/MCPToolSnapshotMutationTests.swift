@@ -9,13 +9,9 @@ import Testing
 @testable import PeekabooAgentRuntime
 @testable import PeekabooCore
 
-@Suite(.serialized)
+@Suite(.serialized, AuthorityTestIsolation())
 @MainActor
 struct MCPToolSnapshotMutationTests {
-    init() throws {
-        try AuthorityTestSupport.prepare()
-    }
-
     private let uiSnapshots = MCPToolUISnapshotStore(owner: MCPToolSnapshotOwner())
 
     @Test

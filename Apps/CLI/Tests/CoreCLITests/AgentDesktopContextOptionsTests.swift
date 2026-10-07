@@ -4,13 +4,9 @@ import PeekabooAgentRuntimeTestSupport
 import Testing
 @testable import PeekabooCLI
 
-@Suite(.tags(.safe))
+@Suite(.tags(.safe), AuthorityTestIsolation())
 @MainActor
 struct AgentDesktopContextOptionsTests {
-    init() throws {
-        try AuthorityTestSupport.prepare()
-    }
-
     @Test(arguments: [false, true])
     func `all execution modes bind the desktop context choice`(disabled: Bool) throws {
         let arguments = disabled ? ["--no-desktop-context"] : []

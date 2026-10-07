@@ -9,13 +9,9 @@ import Testing
 @testable import PeekabooAgentRuntime
 @testable import PeekabooCore
 
-@Suite(.serialized)
+@Suite(.serialized, AuthorityTestIsolation())
 @MainActor
 struct MCPToolExecutionPolicyTests {
-    init() throws {
-        try AuthorityTestSupport.prepare()
-    }
-
     @Test
     @MainActor
     func `Tool handling context defaults to background only`() {

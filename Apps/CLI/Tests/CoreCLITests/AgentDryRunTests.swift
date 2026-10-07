@@ -6,13 +6,9 @@ import PeekabooFoundation
 import Testing
 @testable import PeekabooCLI
 
-@Suite(.tags(.safe))
+@Suite(.tags(.safe), AuthorityTestIsolation())
 @MainActor
 struct AgentDryRunTests {
-    init() throws {
-        try AuthorityTestSupport.prepare()
-    }
-
     @Test(arguments: [false, true])
     func `preview normalizes instruction and exposes background authority with zero execution`(
         noDesktopContext: Bool

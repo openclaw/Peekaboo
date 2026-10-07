@@ -9,13 +9,9 @@ import Testing
 @testable import PeekabooCore
 @testable import PeekabooFoundation
 
-@Suite(.serialized)
+@Suite(.serialized, AuthorityTestIsolation())
 @MainActor
 struct MCPToolContextTests {
-    init() throws {
-        try AuthorityTestSupport.prepare()
-    }
-
     @Test
     @MainActor
     func `shared resolves the configured services`() async {

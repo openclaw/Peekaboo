@@ -5,12 +5,9 @@ import Testing
 @testable import PeekabooCLI
 @testable import PeekabooCore
 
+@Suite(AuthorityTestIsolation())
 @MainActor
 struct MCPWrapperCommandBindingTests {
-    init() throws {
-        try AuthorityTestSupport.prepare()
-    }
-
     @Test
     func `MCP temporary clipboard opt in is explicit and does not enable foreground`() throws {
         let flag = try #require(MCPCommand.Serve.commanderSignature().flags.first {

@@ -6,13 +6,9 @@ import Testing
 @testable import PeekabooAgentRuntime
 @testable import PeekabooCore
 
-@Suite(.serialized)
+@Suite(.serialized, AuthorityTestIsolation())
 @MainActor
 struct AgentSessionExecutionPolicyTests {
-    init() throws {
-        try AuthorityTestSupport.prepare()
-    }
-
     @Test
     func `catalog prompt refresh preserves first system identity and every other history message`() throws {
         let firstSystem = ModelMessage(
