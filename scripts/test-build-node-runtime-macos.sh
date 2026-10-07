@@ -57,4 +57,5 @@ if NODE_RUNTIME_ARM64_ARCHIVE="$TEST_DIR/arm64.tar.gz" \
   printf 'test-build-node-runtime-macos: production accepted input override\n' >&2
   exit 1
 fi
+python3 "$ROOT_DIR/scripts/test-node-runtime-download-cleanup.py"
 printf 'test-build-node-runtime-macos: ok\n'

@@ -20,6 +20,101 @@ struct ConfigurationManagerEnvironmentTests {
         #expect(expanded == "peekaboo-success")
     }
 
+    @Test(arguments: ["prefix", "escaped\"quote\\", "\u{0301}//literal/*path*/"])
+    func `configuration interpolation preserves JSON strings and scalar quote boundaries`(prefix: String) throws {
+        let key = "PEEKABOO_OWNED_QUOTED_FOLDER"
+        let missing = "PEEKABOO_OWNED_UNSET_FOLDER_972"
+        let folder = "/owned/folder\"quoted\\name\nnext\t🦞e\u{0301}"
+        setenv(key, folder, 1)
+        unsetenv(missing)
+        defer { unsetenv(key); unsetenv(missing) }
+
+        try withIsolatedConfigurationEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.withoutEscapingSlashes]
+            let template = "\(prefix)/${\(key)}${\(key)}/suffix/${\(missing)}"
+            let json = try encoder.encode(["defaults": ["savePath": template]])
+            try json.write(to: configPath)
+            let config = self.manager.loadConfiguration()
+            #expect(config?.defaults?.savePath == "\(prefix)/\(folder)\(folder)/suffix/${\(missing)}")
+        }
+    }
+
+    @Test(arguments: ["\u{0301}leading", "\u{FE0F}variation", "🦞e\u{0301}", ""])
+    func `configuration interpolation retains leading environment scalars`(value: String) throws {
+        let key = "PEEKABOO_OWNED_LEADING_SCALAR_972"
+        let previous = getenv(key).map { String(cString: $0) }
+        setenv(key, value, 1)
+        defer {
+            if let previous {
+                setenv(key, previous, 1)
+            } else {
+                unsetenv(key)
+            }
+        }
+
+        try withIsolatedConfigurationEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let json = try JSONEncoder().encode(["defaults": ["savePath": "${\(key)}"]])
+            try json.write(to: configPath)
+            #expect(self.manager.loadConfiguration()?.defaults?.savePath == value)
+        }
+    }
+
+    @Test
+    func `configuration interpolation keeps numeric environment substitutions unquoted`() throws {
+        let key = "PEEKABOO_OWNED_NUMERIC_LIMIT"
+        setenv(key, "42", 1)
+        defer { unsetenv(key) }
+
+        try withIsolatedConfigurationEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            try "{\"agent\":{\"maxTokens\":${\(key)}}}"
+                .write(to: configPath, atomically: true, encoding: .utf8)
+            #expect(self.manager.loadConfiguration()?.agent?.maxTokens == 42)
+        }
+    }
+
+    @Test(arguments: ["type", "syntax", "number"])
+    func `configuration decoding warnings omit expanded credential values`(failure: String) throws {
+        let key = "PEEKABOO_OWNED_FAKE_CONFIG_TOKEN"
+        let token = "OWNED_NOT_A_REAL_CREDENTIAL"
+        setenv(key, token, 1)
+        defer { unsetenv(key) }
+
+        try withIsolatedConfigurationEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let credential = #"{"aiProviders":{"openaiApiKey":"${PEEKABOO_OWNED_FAKE_CONFIG_TOKEN}"}"#
+            let suffix = switch failure {
+            case "type": #","agent":{"maxTokens":"wrong-shape"}}"#
+            case "number": #","agent":{"maxTokens":1e999999}}"#
+            default: #","agent":]"#
+            }
+            let json = credential + suffix
+            try json.write(to: configPath, atomically: true, encoding: .utf8)
+            var loaded = true
+            let warning = try captureConfigurationWarnings(in: configDir) {
+                loaded = self.manager.loadConfigurationFromPath(configPath.path) != nil
+            }
+            #expect(!loaded)
+            #expect(warning.contains(failure == "type" ? "agent.maxTokens" : "Data corrupted"))
+            #expect(!warning.contains(token))
+            #expect(!warning.contains("Cleaned JSON"))
+            #expect(!warning.contains("Underlying error"))
+        }
+    }
+
+    @Test
+    func `plain text interpolation does not JSON escape environment values`() {
+        let key = "PEEKABOO_OWNED_PLAIN_FOLDER"
+        let value = "folder\"quoted\\name\nnext"
+        setenv(key, value, 1)
+        defer { unsetenv(key) }
+
+        #expect(self.manager.expandEnvironmentVariables(in: "prefix ${\(key)} suffix") == "prefix \(value) suffix")
+    }
+
     @Test
     func `getValue prefers environment before defaults`() {
         let key = "PEEKABOO_ENV_CHOICE"
@@ -238,6 +333,26 @@ struct ConfigurationManagerEnvironmentTests {
             #expect(self.manager.resolveCredentialReference("literal-secret") == "literal-secret")
         }
     }
+}
+
+private func captureConfigurationWarnings(in directory: URL, _ body: () throws -> Void) throws -> String {
+    let path = directory.appendingPathComponent("owned-warning-output")
+    try Data().write(to: path)
+    defer { try? FileManager.default.removeItem(at: path) }
+    let output = try FileHandle(forUpdating: path)
+    defer { try? output.close() }
+    func capture() throws {
+        let original = dup(STDOUT_FILENO)
+        guard original >= 0 else { throw POSIXError(.EIO) }
+        defer { close(original) }
+        fflush(nil)
+        guard dup2(output.fileDescriptor, STDOUT_FILENO) >= 0 else { throw POSIXError(.EIO) }
+        defer { fflush(nil); #expect(dup2(original, STDOUT_FILENO) >= 0) }
+        try body()
+    }
+    try capture()
+    try output.seek(toOffset: 0)
+    return try String(data: output.readToEnd() ?? Data(), encoding: .utf8) ?? ""
 }
 
 private func withIsolatedConfigurationEnvironment(_ body: (URL) throws -> Void) throws {

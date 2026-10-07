@@ -39,6 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bound npm MCP wrapper shutdown: cancel pending restarts, allow five seconds for the owned server to exit after SIGTERM, then terminate that same child if necessary. Thanks @rudycelekli! #947.
 - Keep MCP wrapper imports free of server-start side effects for eval, print and stdin consumers, including arguments matching its own path or symlink; preserve real entrypoints and unrelated filesystem errors. Thanks @rudycelekli! #948.
 - Keep Playground log filters and message text literal, reject missing option values, preserve export failures and complete JSON/live output, and match native error severity. Thanks @rudycelekli! #968.
+- Validate smooth duration and step overrides for the human MCP move profile, which forces smooth movement but previously dispatched out-of-range overrides. Thanks @rudycelekli! #970.
+- Report MCP cursor movement directions in screen coordinates, where eastward movement was previously reported as west. Thanks @rudycelekli! #960.
+- Report dialog classification and truncation from cached snapshots instead of always returning a non-dialog, untruncated result. Thanks @rudycelekli! #989.
+- Restore clipboard slots from the current persisted contents instead of a stale per-process cache, and keep multi-item clipboards' item order and boundaries through save and restore. Thanks @rudycelekli! #990.
+- Install the Swift compatibility libraries that standalone CLI builds need next to the binary, so a standalone install loads after moving; release builds keep the mandatory older-SDK runtime audit. Thanks @rudycelekli! #982.
+- Render capture-timeout and rate-limit retry durations that cannot be represented as integers without trapping. Thanks @rudycelekli! #981.
+- Preserve managed screenshots when a snapshot reuses its own stored image as input, copying through a staged file before replacing the artifact. Thanks @rudycelekli! #987.
 
 ## 4.8.0 - 2026-10-03
 
