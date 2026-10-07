@@ -69,7 +69,35 @@ private final class BoundedPipeOutput: @unchecked Sendable {
     nonisolated func finish() -> (String, Bool) {
         self.lock.lock()
         defer { self.lock.unlock() }
-        return (String(bytes: self.data, encoding: .utf8) ?? "", self.truncated)
+        if let output = String(bytes: self.data, encoding: .utf8) {
+            return (output, self.truncated)
+        }
+        guard self.truncated else { return ("", false) }
+
+        // The byte limit can retain only part of the last scalar. Recover a valid
+        // prefix only in that case; invalid binary data and incomplete EOF stay strict.
+        for suffixBytes in 1...3 {
+            let suffix = self.data.suffix(suffixBytes)
+            guard let first = suffix.first else { continue }
+            let scalarBytes: Int
+            switch first {
+            case 0xC2...0xDF: scalarBytes = 2
+            case 0xE0...0xEF: scalarBytes = 3
+            case 0xF0...0xF4: scalarBytes = 4
+            default: continue
+            }
+            guard suffixBytes < scalarBytes else { continue }
+
+            // A valid completion also checks overlong, surrogate and out-of-range
+            // prefixes. E0 and F0 need a larger first continuation byte.
+            let continuation: UInt8 = first == 0xE0 ? 0xA0 : first == 0xF0 ? 0x90 : 0x80
+            let completed = Array(suffix) + Array(repeating: continuation, count: scalarBytes - suffixBytes)
+            guard String(bytes: completed, encoding: .utf8) != nil,
+                  let output = String(bytes: self.data.dropLast(suffixBytes), encoding: .utf8)
+            else { continue }
+            return (output, true)
+        }
+        return ("", true)
     }
 }
 
