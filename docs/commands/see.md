@@ -26,6 +26,10 @@ means the evidence is unknown or not applicable. Freshness does not mean complet
 retain their existing warnings and targeting restrictions. Text-selection range readback remains limited to the
 focused field; `--fresh` does not make unfocused ranges available.
 
+Disk-backed snapshot readback preserves the dialog and truncation information recorded by detection.
+Replacing a raw screenshot clears this classification together with the old element map; storing another detection
+replaces those values. Older stored records without these fields keep their existing defaults.
+
 Pixels and Accessibility metadata are collected at different times, not as one atomic application-state snapshot.
 During asynchronous UI updates, an image can still show the old value while AX already reports the new value.
 Atomic snapshot publication binds the returned artifacts; it does not make their acquisition simultaneous. After

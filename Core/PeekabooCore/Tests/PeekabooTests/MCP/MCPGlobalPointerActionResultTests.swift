@@ -18,7 +18,8 @@ struct MCPGlobalPointerActionResultTests {
     func `move response reports direction in screen coordinate space`(_ vector: (Double, Double, String)) async throws {
         let start = CGPoint(x: 100, y: 200)
         let automation = MockAutomationService(accessibilityGranted: true, currentMouseLocation: start)
-        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation, executionPolicy: .foregroundAllowed)
         let target = CGPoint(x: start.x + vector.0, y: start.y + vector.1)
         let response = try await MoveTool(context: context).execute(arguments: ToolArguments(raw: [
             "to": "\(target.x),\(target.y)", "foreground": true,

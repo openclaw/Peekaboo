@@ -18,6 +18,11 @@ Peekaboo's `human` profile makes cursor motion look hand-driven without forcing 
 - **CLI**: use `--smooth` for a natural `peekaboo move`, or add `--profile human` to `move` or `drag`. Duration/sample counts pick sensible defaults per distance. Explicit `--duration` and `--steps` values are honored; human paths never emit more than 96 samples.
 - **Agents / MCP**: include `"profile": "human"` in move/drag tool arguments. Optional `duration` and `steps` fields work the same way as in the CLI—you only need them when you want to clamp the adaptive heuristics.
 
+MCP `move` requires `foreground: true`. Smooth movement accepts a duration of 1–30000 ms and 1–100 steps,
+including the human profile; invalid overrides are rejected before delivery. Foreground MCP move/drag coordinates
+accept values from -20000 to 20000 on either axis, including displays left of or above the primary display.
+Compass direction metadata uses screen coordinates: positive x points east and positive y points south.
+
 ## Defaults at a glance
 
 | Distance | Typical Duration | Typical Steps | Notes |

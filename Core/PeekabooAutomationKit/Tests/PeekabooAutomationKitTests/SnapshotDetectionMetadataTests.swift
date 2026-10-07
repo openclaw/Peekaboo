@@ -22,6 +22,25 @@ struct SnapshotDetectionMetadataTests {
     }
 
     @Test
+    func `complete detection replaces prior dialog and truncation classification`() async throws {
+        let storage = Self.storage()
+        defer { try? FileManager.default.removeItem(at: storage) }
+        let manager = SnapshotManager(snapshotStorageURL: storage)
+        let id = try await manager.createExplicitSnapshot()
+        try await manager.storeDetectionResult(
+            snapshotId: id,
+            result: Self.result(id, dialog: true, truncation: DetectionTruncationInfo(deadlineReached: true)))
+        try await manager.storeDetectionResult(
+            snapshotId: id,
+            result: Self.result(id, dialog: false, truncation: nil))
+
+        let loaded = try #require(try await SnapshotManager(snapshotStorageURL: storage)
+            .getDetectionResult(snapshotId: id))
+        #expect(loaded.metadata.isDialog == false)
+        #expect(loaded.metadata.truncationInfo == nil)
+    }
+
+    @Test
     func `legacy version one record without classification remains readable`() async throws {
         let storage = Self.storage()
         defer { try? FileManager.default.removeItem(at: storage) }
