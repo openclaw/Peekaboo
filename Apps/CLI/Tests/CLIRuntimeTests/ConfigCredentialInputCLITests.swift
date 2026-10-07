@@ -444,6 +444,9 @@ struct ConfigCredentialInputCLITests {
 }
 
 extension ConfigCredentialInputCLITests {
+    /// Hang detector for one PTY run, not a performance bound: the guarded failures never exit at all.
+    private nonisolated static let ttyHangGuardSeconds: TimeInterval = 60
+
     fileprivate struct TTYResult {
         let output: String
         let terminationStatus: TerminationStatus
@@ -594,8 +597,11 @@ extension ConfigCredentialInputCLITests {
         action: TTYAction,
         primaryDescriptor: Int32
     ) throws -> TTYInteraction {
+        // CPU starvation can delay startup and exit arbitrarily, so both are awaited as events under one hang
+        // guard. Only a CLI blocked on terminal input never exits; the watchdog backstops the graceful path.
+        let hangDeadline = Date().addingTimeInterval(Self.ttyHangGuardSeconds)
         let watchdog = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
-        watchdog.schedule(deadline: .now() + 20)
+        watchdog.schedule(deadline: .now() + Self.ttyHangGuardSeconds + 5)
         watchdog.setEventHandler {
             let foregroundProcessGroup = tcgetpgrp(primaryDescriptor)
             if foregroundProcessGroup > 0 {
@@ -611,7 +617,7 @@ extension ConfigCredentialInputCLITests {
             supervisorIdentifier: supervisorIdentifier,
             fileDescriptor: primaryDescriptor,
             output: &output,
-            timeout: 5
+            deadline: hangDeadline
         ) else {
             _ = kill(supervisorIdentifier, SIGKILL)
             return TTYInteraction(
@@ -689,7 +695,7 @@ extension ConfigCredentialInputCLITests {
             supervisorIdentifier,
             fileDescriptor: primaryDescriptor,
             output: &output,
-            timeout: 15
+            timeout: hangDeadline.timeIntervalSinceNow
         )
         if !exitedWithinDeadline {
             _ = kill(processIdentifier, SIGTERM)
@@ -757,17 +763,17 @@ extension ConfigCredentialInputCLITests {
         supervisorIdentifier: pid_t,
         fileDescriptor: Int32,
         output: inout Data,
-        timeout: TimeInterval
+        deadline: Date
     ) -> pid_t? {
         let marker = "PEEKABOO_CHILD_PID="
-        let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             self.drainTTY(fileDescriptor: fileDescriptor, into: &output)
             if let text = String(data: output, encoding: .utf8),
                let markerRange = text.range(of: marker) {
                 let suffix = text[markerRange.upperBound...]
                 let digits = suffix.prefix(while: { $0.isNumber })
-                if let identifier = pid_t(digits) {
+                // A partial read can split the report; only a terminated line carries the whole PID.
+                if suffix.dropFirst(digits.count).first?.isNewline == true, let identifier = pid_t(digits) {
                     return identifier
                 }
             }

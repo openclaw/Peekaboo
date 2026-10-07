@@ -66,6 +66,7 @@
 - Render capture-timeout and rate-limit retry durations that cannot be represented as integers without trapping. Thanks @rudycelekli! #981.
 - Preserve managed screenshots when a snapshot reuses its own stored image as input, copying through a staged file before replacing the artifact. Thanks @rudycelekli! #987.
 - Require canonical lowercase ASCII hex selected-leaf candidate digests, rejecting full-width digits and letters that Swift's hex check accepted. Thanks @rudycelekli! #983.
+- Report the qualification guardian's own failure when the managed launcher's identity acknowledgement reaches an exited guardian, instead of crashing on an uncaught EPIPE before cleanup; guardian deadlines and the acknowledgement protocol are unchanged.
 - Link the npm version page from the published GitHub release body, keeping scoped package paths literal and requiring the registry package name to match the local package before rendering.
 
 ## 4.8.0 - 2026-10-03
