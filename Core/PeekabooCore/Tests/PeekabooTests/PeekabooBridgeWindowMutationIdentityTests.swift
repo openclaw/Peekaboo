@@ -235,6 +235,7 @@ struct PeekabooBridgeWindowMutationIdentityTests {
             allowlistedBundles: [],
             allowedOperations: [.backgroundCloseWindow],
             windowOwnerProcessIdentifierProvider: { _ in nil },
+            windowBoundsProvider: { _ in nil },
             processStartIdentityProvider: { _ in 9001 })
         let request = PeekabooBridgeRequest.backgroundCloseWindow(.init(
             target: .windowId(77),
