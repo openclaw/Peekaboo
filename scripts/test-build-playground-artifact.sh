@@ -110,7 +110,17 @@ PLIST
 EOF
 chmod 755 "$TEST_DIR/xcodebuild"
 
-mkdir -p "$TEST_DIR/Developer"
+# Apple's Git shim invokes the selected developer directory's xcrun. Keep that
+# host-tool dispatch real while the explicit Xcode/Swift fixture commands stay inert.
+make_fixture_developer_dir() {
+  mkdir -p "$1/usr/bin"
+  cat > "$1/usr/bin/xcrun" <<'EOF'
+#!/bin/bash
+exec /usr/bin/env -u DEVELOPER_DIR /usr/bin/xcrun "$@"
+EOF
+  chmod 755 "$1/usr/bin/xcrun"
+}
+make_fixture_developer_dir "$TEST_DIR/Developer"
 cat > "$TEST_DIR/xcode-select" <<'EOF'
 #!/bin/bash
 [[ "$*" == -p ]] || exit 90
