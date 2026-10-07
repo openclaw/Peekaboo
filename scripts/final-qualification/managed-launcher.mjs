@@ -435,7 +435,8 @@ export async function runManagedLaunch(specPath, testHooks = {}) {
       fix.spec.invocation_receipt_path,
       invocation,
     );
-    testHooks.beforeAcknowledgement?.({
+    await testHooks.beforeAcknowledgement?.({
+      guardian: helper,
       childPID: identity.pid,
       startIdentity: identity.start_identity,
       invocationSHA256: invocationPublished.sha256,
@@ -453,15 +454,13 @@ export async function runManagedLaunch(specPath, testHooks = {}) {
       startIdentity: identity.start_identity,
       invocationSHA256: invocationPublished.sha256,
     };
-    await new Promise((resolve, reject) => {
-      const onError = (error) => reject(error);
-      helper.stdin.once('error', onError);
+    // Only an exited guardian closes this channel; a closed peer reports EPIPE to the end callback and then
+    // emits 'error', so stay subscribed and let the guardian's own exit status explain the failure.
+    const acknowledgementError = await new Promise((resolve) => {
+      helper.stdin.on('error', resolve);
       helper.stdin.end(
         `ACK 1 ${identity.pid} ${identity.start_identity} ${invocationPublished.sha256}\n`,
-        () => {
-          helper.stdin.off('error', onError);
-          resolve();
-        },
+        (error) => resolve(error ?? null),
       );
     });
     const helperResult = await helperClosed;
@@ -470,6 +469,8 @@ export async function runManagedLaunch(specPath, testHooks = {}) {
     if (protocolError !== null) throw protocolError;
     requireCondition(helperResult.code === 0 && helperResult.signal === null,
       `guardian failed (${helperResult.code ?? helperResult.signal}): ${helperStderr.trim()}`);
+    requireCondition(acknowledgementError === null,
+      `guardian acknowledgement write failed: ${acknowledgementError?.message}`);
     requireCondition(releaseEvent !== null && sameJSON(releaseEvent, expectedRelease),
       'guardian omitted the exact authenticated release authority');
     requireCondition(exitEvent && exitEvent.pid === identity.pid && positiveInteger(exitEvent.completedAt),

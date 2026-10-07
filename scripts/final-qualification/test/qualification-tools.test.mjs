@@ -3765,7 +3765,9 @@ function managedLaunchSpec(root, kind, planPath, executablePath, arguments_, con
     exit_receipt_path: path.join(root, `${prefix}-exit.json`),
     stdout_path: path.join(root, `${prefix}.stdout`),
     stderr_path: path.join(root, `${prefix}.stderr`),
-    start_timeout_seconds: 10,
+    // The SPAWNED-to-ACK window compiles two atomic publishers; under CPU contention that alone exceeded 10 s.
+    // These tests do not prove the start deadline, so give it the validated maximum as a hang guard.
+    start_timeout_seconds: 120,
     run_timeout_seconds: 10,
     context,
   };
@@ -3959,6 +3961,40 @@ test('managed launcher suspends the coordinator until signed-monitor identity an
     const orphanPID = JSON.parse(fs.readFileSync(orphanSpec.pid_path)).pid;
     assert.throws(() => process.kill(orphanPID, 0), /ESRCH/);
     assert.equal(fs.existsSync(orphanSpec.exit_receipt_path), false);
+
+    const expiredSpec = managedLaunchSpec(
+      root,
+      'coordinator',
+      planPath,
+      process.execPath,
+      [coordinatorSource, '--plan', planPath],
+      { coordinator_source_path: coordinatorSource },
+      'expired',
+    );
+    await assert.rejects(
+      runManagedLaunch(
+        writeJSON(path.join(root, 'expired-spec.json'), expiredSpec),
+        {
+          // Fail the guardian's acknowledgement wait, as an expired start window does, and let it exit
+          // before this event loop observes that exit: the ACK write then reaches a closed pipe (EPIPE).
+          beforeAcknowledgement: ({ guardian }) => {
+            guardian.kill('SIGTERM');
+            const guardianState = () => spawnSync('/bin/ps', ['-o', 'stat=', '-p', String(guardian.pid)], {
+              encoding: 'utf8',
+            }).stdout.trim();
+            const hangGuard = Date.now() + 60_000;
+            for (let state = guardianState(); state !== '' && !state.startsWith('Z'); state = guardianState()) {
+              assert.ok(Date.now() < hangGuard, `guardian did not exit after SIGTERM (${state})`);
+            }
+          },
+        },
+      ),
+      /guardian failed \(2\): managed-launch-suspended: identity acknowledgement timed out or launcher exited/,
+    );
+    const expiredPID = JSON.parse(fs.readFileSync(expiredSpec.pid_path)).pid;
+    assert.throws(() => process.kill(expiredPID, 0), /ESRCH/);
+    assert.equal(fs.existsSync(expiredSpec.exit_receipt_path), false);
+    assert.equal(fs.existsSync(childMarker), false);
 
     const noHandshakePlan = writeJSON(path.join(root, 'no-handshake-plan.json'), {
       version: 1,
