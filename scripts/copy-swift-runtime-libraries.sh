@@ -1,8 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
+VERIFIER_ARGS=()
+if [ "${1:-}" = --standalone ]; then
+    VERIFIER_ARGS=(--standalone)
+    shift
+fi
+
 if [ "$#" -ne 2 ]; then
-    echo "Usage: $0 <executable> <destination-directory>" >&2
+    echo "Usage: $0 [--standalone] <executable> <destination-directory>" >&2
     exit 2
 fi
 
@@ -79,4 +85,4 @@ if [ -n "$SIGN_IDENTITY" ]; then
     done
 fi
 
-"$(dirname "$0")/verify-swift-runtime-libraries.sh" "$EXECUTABLE_PATH" "$DESTINATION_DIR"
+"$(dirname "$0")/verify-swift-runtime-libraries.sh" ${VERIFIER_ARGS[@]+"${VERIFIER_ARGS[@]}"} "$EXECUTABLE_PATH" "$DESTINATION_DIR"

@@ -441,11 +441,22 @@ function checkSwiftCLIIntegration(binaryPath) {
   const run = (args) => spawnSync(binaryPath, args, {
     cwd: projectRoot,
     encoding: 'utf8',
-    stdio: 'pipe'
+    stdio: 'pipe',
+    timeout: 30_000,
+    killSignal: 'SIGKILL'
   });
+  const probeFailed = (result, args) => {
+    if (!result.error) return false;
+    const reason = result.error.code === 'ETIMEDOUT'
+      ? 'timed out after 30 seconds'
+      : result.error.message;
+    logError(`CLI probe failed for '${args.join(' ')}': ${reason}`);
+    return true;
+  };
   const combinedOutput = (result) => `${result.stdout || ''}\n${result.stderr || ''}`;
 
   const invalid = run(['invalid-command']);
+  if (probeFailed(invalid, ['invalid-command'])) return false;
   if (invalid.status === 0 || !combinedOutput(invalid).includes("Unknown command 'invalid-command'")) {
     logError('Unknown commands must fail with the Commander unknown-command diagnostic');
     return false;
@@ -470,6 +481,7 @@ function checkSwiftCLIIntegration(binaryPath) {
       return false;
     }
     const result = run([command, '--help']);
+    if (probeFailed(result, [command, '--help'])) return false;
     if (result.status === 0) {
       logError(`Removed command unexpectedly resolved: peekaboo ${command}`);
       return false;
@@ -507,6 +519,7 @@ function checkSwiftCLIIntegration(binaryPath) {
 
   for (const contract of helpContracts) {
     const result = run(contract.args);
+    if (probeFailed(result, contract.args)) return false;
     const output = combinedOutput(result);
     if (result.status !== 0 || !contract.required.every((token) => output.includes(token))) {
       logError(`CLI help contract failed: peekaboo ${contract.args.join(' ')}`);
@@ -526,6 +539,7 @@ function checkSwiftCLIIntegration(binaryPath) {
   ];
   for (const contract of jsonContracts) {
     const result = run(contract.args);
+    if (probeFailed(result, contract.args)) return false;
     try {
       const payload = JSON.parse(result.stdout);
       if (result.status !== 0 || payload.success !== true || !(contract.field in payload.data)) {
@@ -693,7 +707,9 @@ function buildAndVerifyPackage() {
     const lipoOutput = execFileSync('lipo', ['-info', binaryPath], {
       cwd: projectRoot,
       stdio: 'pipe',
-      encoding: 'utf8'
+      encoding: 'utf8',
+      timeout: 30_000,
+      killSignal: 'SIGKILL'
     }).trim();
     const hasArm64 = lipoOutput.includes('arm64');
     const hasX86 = lipoOutput.includes('x86_64');
@@ -722,7 +738,9 @@ function buildAndVerifyPackage() {
     const helpOutput = execFileSync(binaryPath, ['--help'], {
       cwd: projectRoot,
       stdio: 'pipe',
-      encoding: 'utf8'
+      encoding: 'utf8',
+      timeout: 30_000,
+      killSignal: 'SIGKILL'
     }).trim();
     if (!helpOutput || helpOutput.length === 0) {
       logError('peekaboo binary does not respond to --help command');
