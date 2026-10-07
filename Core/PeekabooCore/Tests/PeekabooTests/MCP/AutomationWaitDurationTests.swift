@@ -6,13 +6,9 @@ import PeekabooFoundation
 import Testing
 @testable import PeekabooCore
 
-@Suite(.serialized)
+@Suite(.serialized, AuthorityTestIsolation())
 @MainActor
 struct AutomationWaitDurationTests {
-    init() throws {
-        try AuthorityTestSupport.prepare()
-    }
-
     @Test(arguments: [-1, Int.min])
     func `negative waits refuse the whole sequence before preparation or input`(duration: Int) async throws {
         for withPrefix in [false, true] {
