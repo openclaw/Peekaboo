@@ -84,7 +84,7 @@ export function validateAppcast(xml, expected) {
   const item = current[0];
   const required = [
     [attribute(item, 'sparkle:version'), expected.buildNumber, 'build number'],
-    [attribute(item, 'sparkle:minimumSystemVersion'), expected.minimumSystemVersion, 'minimum system version'],
+    [element(item, 'sparkle:minimumSystemVersion'), expected.minimumSystemVersion, 'minimum system version'],
     [attribute(item, 'url'), expected.assetUrl, 'asset URL'],
     [attribute(item, 'length'), expected.zipLength, 'asset length'],
     [attribute(item, 'sparkle:edSignature'), expected.edSignature, 'signature'],
@@ -107,11 +107,11 @@ ${childIndent}<title>Peekaboo ${escaped.version}</title>
 ${childIndent}<link>${escaped.releaseUrl}</link>
 ${childIndent}<sparkle:releaseNotesLink>${escaped.releaseUrl}</sparkle:releaseNotesLink>
 ${childIndent}<pubDate>${escaped.pubDate}</pubDate>
+${childIndent}<sparkle:minimumSystemVersion>${escaped.minimumSystemVersion}</sparkle:minimumSystemVersion>
 ${childIndent}<enclosure
 ${childIndent}  url="${escaped.assetUrl}"
 ${childIndent}  sparkle:version="${escaped.buildNumber}"
 ${childIndent}  sparkle:shortVersionString="${escaped.version}"
-${childIndent}  sparkle:minimumSystemVersion="${escaped.minimumSystemVersion}"
 ${childIndent}  length="${escaped.zipLength}"
 ${childIndent}  type="application/octet-stream"
 ${childIndent}  sparkle:edSignature="${escaped.edSignature}" />

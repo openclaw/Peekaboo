@@ -15,13 +15,15 @@ const original = `<?xml version="1.0" encoding="utf-8"?>
         <item>
             <title>3.9.4</title>
             <sparkle:shortVersionString>3.9.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure url="https://example.invalid/3.9.4.zip" sparkle:version="3090499"
-              sparkle:minimumSystemVersion="15.0" length="40" sparkle:edSignature="old-394" />
+              length="40" sparkle:edSignature="old-394" />
         </item>
         <item>
             <title>Peekaboo 3.9.2</title>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure url="https://example.invalid/3.9.2.zip" sparkle:version="3090299"
-              sparkle:shortVersionString="3.9.2" sparkle:minimumSystemVersion="15.0"
+              sparkle:shortVersionString="3.9.2"
               length="20" sparkle:edSignature="old-392" />
         </item>
     </channel>
@@ -43,6 +45,11 @@ const updated = updateAppcastEntry(original, entry);
 assert.equal(updated.match(/sparkle:shortVersionString="3\.9\.5"/g)?.length, 1);
 assert.match(updated, /length="17009920"/);
 assert.match(updated, /sparkle:edSignature="test-signature"/);
+const expectedMinimumPlacement = `<pubDate>${entry.pubDate}</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure`;
+assert.ok(updated.includes(expectedMinimumPlacement));
+assert.doesNotMatch(updated, /sparkle:minimumSystemVersion\s*=/);
 assert.match(updated, /<sparkle:shortVersionString>3\.9\.4<\/sparkle:shortVersionString>/);
 assert.match(updated, /sparkle:shortVersionString="3\.9\.2"/);
 assert.ok(updated.indexOf("3.9.5") < updated.indexOf("3.9.4"));
@@ -61,8 +68,13 @@ assert.throws(() => updateAppcastEntry(original, { ...entry, buildNumber: "30904
 assert.throws(() => updateAppcastEntry(updated, { ...entry, buildNumber: "3090598" }), /changed/);
 assert.throws(() => validateAppcast(updated.replace('sparkle:version="3090299"',
   'sparkle:version="3090499"'), entry), /duplicated|descending/);
-assert.throws(() => validateAppcast(updated.replace('sparkle:minimumSystemVersion="15.0"',
-  'sparkle:minimumSystemVersion="14.0"'), entry), /minimum system version/);
+assert.throws(() => validateAppcast(updated.replace('<sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>',
+  '<sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>'), entry), /minimum system version/);
+const missingMinimum = updated.replace(
+  '            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>\n', '');
+assert.throws(() => validateAppcast(missingMinimum, entry), /minimum system version/);
+const attributeOnly = missingMinimum.replace('<enclosure', '<enclosure sparkle:minimumSystemVersion="15.0"');
+assert.throws(() => validateAppcast(attributeOnly, entry), /minimum system version/);
 assert.throws(() => validateAppcast(updated.replaceAll(entry.releaseUrl,
   'https://example.invalid/wrong-release'), entry), /release link|release notes link/);
 
@@ -118,6 +130,9 @@ try {
   rmSync(directory, { recursive: true, force: true });
 }
 
+const checkedInAppcast = readFileSync(new URL("../appcast.xml", import.meta.url), "utf8");
+assert.doesNotMatch(checkedInAppcast, /sparkle:minimumSystemVersion\s*=/);
+
 console.log("test-update-appcast-entry: ok");
 
 function assertUrlRoundTrip(xml, expected) {
@@ -126,6 +141,10 @@ import sys, xml.etree.ElementTree as ET
 item = ET.fromstring(sys.stdin.read()).find('channel/item')
 assert item.find('link').text == sys.argv[1]
 assert item.find('enclosure').attrib['url'] == sys.argv[2]
-`, expected.releaseUrl, expected.assetUrl], { input: xml, encoding: "utf8", timeout: 5000 });
+minimum = '{http://www.andymatuschak.org/xml-namespaces/sparkle}minimumSystemVersion'
+assert len(item.findall(minimum)) == 1
+assert item.find(minimum).text == sys.argv[3]
+assert minimum not in item.find('enclosure').attrib
+`, expected.releaseUrl, expected.assetUrl, expected.minimumSystemVersion], { input: xml, encoding: "utf8", timeout: 5000 });
   assert.equal(parsed.status, 0, parsed.stderr);
 }
