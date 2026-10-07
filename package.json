@@ -33,7 +33,7 @@
     "test:guidance": "node --test tests/background-capability-guidance.test.mjs tests/subprocess-integration-guidance.test.mjs",
     "test:codeql-build-graph": "node --test tests/codeql-build-graph.test.mjs",
     "test:release-validation": "node --test tests/release-validation-workflow.test.mjs",
-    "test:docs-site": "node --test tests/docs-site-toc.test.mjs",
+    "test:docs-site": "node --test tests/docs-site-*.test.mjs",
     "test:release-preflight": "node --test tests/release-preflight-contract.test.mjs",
     "test:background-certification": "scripts/test-background-certification.sh",
     "test:automation": "pnpm run setup:swift && PEEKABOO_INCLUDE_AUTOMATION_TESTS=true swift test --package-path Apps/CLI --no-parallel",

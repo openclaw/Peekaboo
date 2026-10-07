@@ -49,7 +49,7 @@ jobs:
         run: |
           node scripts/docs-lint.mjs
           pnpm run test:docs
-          node --test tests/docs-site-toc.test.mjs
+          pnpm run test:docs-site
           pnpm run test:guidance
           node --test tests/ambient-state-test-policy.test.mjs
 
