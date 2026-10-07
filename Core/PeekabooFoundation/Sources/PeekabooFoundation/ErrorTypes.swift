@@ -138,8 +138,8 @@ public enum CaptureError: Error, LocalizedError, Sendable {
         if seconds < 1 {
             return "\(max(1, Int((seconds * 1000).rounded())))ms"
         }
-        if seconds.rounded() == seconds, seconds <= TimeInterval(Int.max) {
-            return "\(Int(seconds))s"
+        if let wholeSeconds = Int(exactly: seconds) {
+            return "\(wholeSeconds)s"
         }
         return String(format: "%.1fs", seconds)
     }

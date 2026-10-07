@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -o pipefail
+
 # Peekaboo Playground Log Viewer
 # A pblog-inspired utility for viewing Playground app logs
 
@@ -28,6 +30,14 @@ NC='\033[0m' # No Color
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
+    case $1 in
+        -n|--lines|-l|--last|-c|--category|-s|--search|-o|--output)
+            if [[ $# -lt 2 ]]; then
+                printf 'playground-log.sh: %s requires a value\n' "$1" >&2
+                exit 2
+            fi
+            ;;
+    esac
     case $1 in
         -n|--lines)
             LINES="$2"
@@ -80,7 +90,7 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: playground-log.sh [options]"
             echo ""
             echo "Options:"
-            echo "  -n, --lines NUM      Number of lines to show (default: 50)"
+            echo "  -n, --lines NUM      Completed text-query line limit (default: 50)"
             echo "  -l, --last TIME      Time range to search (default: 5m)"
             echo "  -c, --category CAT   Filter by category (Click, Text, Menu, etc.)"
             echo "  -s, --search TEXT    Search for specific text"
@@ -89,7 +99,7 @@ while [[ $# -gt 0 ]]; do
             echo "  -f, --follow         Stream logs continuously"
             echo "  -e, --errors         Show only errors"
             echo "  --all                Show all logs without tail limit"
-            echo "  --json               Output in JSON format"
+            echo "  --json               Preserve JSON framing without a line limit"
             echo "  --categories         List available categories"
             echo "  -h, --help           Show this help"
             echo ""
@@ -146,80 +156,94 @@ if [[ "$SHOW_ALL_CATEGORIES" == true ]]; then
     exit 0
 fi
 
+predicate_literal() {
+    PREDICATE_LITERAL="${1//\\/\\\\}"
+    PREDICATE_LITERAL="${PREDICATE_LITERAL//\"/\\\"}"
+}
+
 # Build predicate - using PeekabooPlayground's subsystem
 PREDICATE="subsystem == \"boo.peekaboo.playground\""
 
 if [[ -n "$CATEGORY" ]]; then
-    PREDICATE="$PREDICATE AND category == \"$CATEGORY\""
+    predicate_literal "$CATEGORY"
+    PREDICATE="$PREDICATE AND category == \"$PREDICATE_LITERAL\""
 fi
 
 if [[ -n "$SEARCH" ]]; then
-    PREDICATE="$PREDICATE AND eventMessage CONTAINS[c] \"$SEARCH\""
+    predicate_literal "$SEARCH"
+    PREDICATE="$PREDICATE AND eventMessage CONTAINS[c] \"$PREDICATE_LITERAL\""
 fi
 
 # Build command
 if [[ "$FOLLOW" == true ]]; then
-    CMD="log stream --predicate '$PREDICATE' --level $LEVEL"
+    CMD=(log stream --predicate "$PREDICATE" --level "$LEVEL")
 else
     # log show uses different flags for log levels
     case $LEVEL in
         debug)
-            CMD="log show --predicate '$PREDICATE' --debug --last $TIME"
+            CMD=(log show --predicate "$PREDICATE" --debug --last "$TIME")
             ;;
         error)
-            # For errors, we need to filter by eventType in the predicate
-            PREDICATE="$PREDICATE AND eventType == \"error\""
-            CMD="log show --predicate '$PREDICATE' --info --debug --last $TIME"
+            PREDICATE="$PREDICATE AND logType == \"error\""
+            CMD=(log show --predicate "$PREDICATE" --info --debug --last "$TIME")
             ;;
         *)
-            CMD="log show --predicate '$PREDICATE' --info --last $TIME"
+            CMD=(log show --predicate "$PREDICATE" --info --last "$TIME")
             ;;
     esac
 fi
 
 if [[ "$JSON" == true ]]; then
-    CMD="$CMD --style json"
+    CMD+=(--style json)
 fi
 
 # Add color formatting function for non-JSON output
 format_output() {
+    local line color
     if [[ "$JSON" == true ]]; then
         cat
     else
         while IFS= read -r line; do
             # Color-code different categories
             if [[ $line =~ \[Click\] ]]; then
-                echo -e "${BLUE}$line${NC}"
+                color="$BLUE"
             elif [[ $line =~ \[Text\] ]]; then
-                echo -e "${GREEN}$line${NC}"
+                color="$GREEN"
             elif [[ $line =~ \[Menu\] ]]; then
-                echo -e "${PURPLE}$line${NC}"
+                color="$PURPLE"
             elif [[ $line =~ \[Window\] ]]; then
-                echo -e "${YELLOW}$line${NC}"
+                color="$YELLOW"
             elif [[ $line =~ \[Scroll\] ]]; then
-                echo -e "${CYAN}$line${NC}"
+                color="$CYAN"
             elif [[ $line =~ \[Space\] ]]; then
-                echo -e "${CYAN}$line${NC}"
+                color="$CYAN"
             elif [[ $line =~ \[Drag\] ]]; then
-                echo -e "${RED}$line${NC}"
+                color="$RED"
             elif [[ $line =~ \[Keyboard\] ]]; then
-                echo -e "${YELLOW}$line${NC}"
+                color="$YELLOW"
             elif [[ $line =~ \[Focus\] ]]; then
-                echo -e "${BLUE}$line${NC}"
+                color="$BLUE"
             elif [[ $line =~ \[Gesture\] ]]; then
-                echo -e "${RED}$line${NC}"
+                color="$RED"
             elif [[ $line =~ \[Control\] ]]; then
-                echo -e "${GREEN}$line${NC}"
+                color="$GREEN"
             elif [[ $line =~ \[App\] ]]; then
-                echo -e "${PURPLE}$line${NC}"
+                color="$PURPLE"
             elif [[ $line =~ \[MCP\] ]]; then
-                echo -e "${CYAN}$line${NC}"
+                color="$CYAN"
             else
-                echo "$line"
+                printf '%s\n' "$line"
+                continue
             fi
+            printf '%b%s%b\n' "$color" "$line" "$NC"
         done
     fi
 }
+
+# Physical-line tailing corrupts JSON and holds live events until EOF.
+if [[ "$JSON" == true || "$FOLLOW" == true ]]; then
+    NO_TAIL=true
+fi
 
 # Show header unless outputting to file or JSON
 if [[ -z "$OUTPUT" && "$JSON" != true ]]; then
@@ -231,24 +255,32 @@ if [[ -z "$OUTPUT" && "$JSON" != true ]]; then
     if [[ -n "$SEARCH" ]]; then
         echo "Search: $SEARCH"
     fi
-    echo "Time range: $TIME"
-    echo "Lines: $LINES"
+    if [[ "$FOLLOW" == true ]]; then
+        echo "Mode: streaming (no line limit)"
+    else
+        echo "Time range: $TIME"
+        if [[ "$NO_TAIL" == true ]]; then
+            echo "Lines: all"
+        else
+            echo "Lines: $LINES"
+        fi
+    fi
     echo "---"
 fi
 
 # Execute command
 if [[ -n "$OUTPUT" ]]; then
     if [[ "$NO_TAIL" == true ]]; then
-        eval $CMD > "$OUTPUT"
+        "${CMD[@]}" > "$OUTPUT" || exit "$?"
         echo "Logs saved to: $OUTPUT"
     else
-        eval $CMD | tail -n $LINES > "$OUTPUT"
+        "${CMD[@]}" | tail -n "$LINES" > "$OUTPUT" || exit "$?"
         echo "Last $LINES lines saved to: $OUTPUT"
     fi
 else
     if [[ "$NO_TAIL" == true ]]; then
-        eval $CMD | format_output
+        "${CMD[@]}" | format_output
     else
-        eval $CMD | tail -n $LINES | format_output
+        "${CMD[@]}" | tail -n "$LINES" | format_output
     fi
 fi

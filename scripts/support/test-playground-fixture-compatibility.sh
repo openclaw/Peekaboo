@@ -228,7 +228,7 @@ EOF
   assert_native "$OUTPUT_APP" refuse 'current-source/toolchain v2 receipt'
   cp "$TEST_DIR/$tool.saved" "$TEST_DIR/$tool"
 done
-mkdir "$TEST_DIR/OtherDeveloper"
+make_fixture_developer_dir "$TEST_DIR/OtherDeveloper"
 DEVELOPER_DIR="$TEST_DIR/OtherDeveloper" assert_native "$OUTPUT_APP" refuse 'current-source/toolchain v2 receipt'
 # Resolve the selector's alias to the same canonical directory.
 ln -s "$FIXTURE_DEVELOPER_DIR" "$TEST_DIR/DeveloperAlias"

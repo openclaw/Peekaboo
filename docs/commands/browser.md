@@ -48,6 +48,15 @@ last confirmed connection. A failed status observation does not explain or resol
 If connect may have dispatched but cannot supply trustworthy target attribution, it remains indeterminate and unsafe
 to retry; its bounded original failure diagnostic accompanies the attribution error without creating a target receipt.
 
+Cancellation and connection deadlines stop waiting for native application metadata without waiting for an already-running
+synchronous getter to finish. Its late result is ignored. Failure cleanup reconciles the retained provider and target
+reservation without starting another metadata read; a connected provider or uncertain teardown retains ownership.
+This cleanup is not a fresh browser observation and cannot replace receipt validation on a later call.
+If a new connection has already verified and published its receipt and session epoch, cancellation of the following
+metadata observation retains that connection but reports an indeterminate, unsafe-to-retry result. This also applies to
+automatic setup before a browser leaf call: the requested leaf remains undispatched while the setup result is uncertain.
+Incomplete startup and actual authority loss still clean up; observe status before deciding whether to reconnect.
+
 `dom-click --page-id <id> --uid <uid> --foreground` invokes one synthetic `element.click()` through the pinned
 provider's `evaluate_script` route. It avoids CDP/Puppeteer pointer input, but evaluation still grants browser user
 activation: background mode refuses before provider I/O and authorized calls report foreground delivery. It is not
@@ -81,6 +90,8 @@ Chrome's approval-mode listener intentionally returns 404 for `/json/version`; u
 Explicit `--browser-url` requires HTTP discovery. Enable remote debugging at `chrome://inspect/#remote-debugging`
 and approve the connection prompt; a pipe-only launch does not expose a TCP endpoint. The provider never automatically
 reopens a failed connection or switches to another Chrome instance.
+A refused first connection remains a failed attempt for ordinary tools too. Cached connection verification stops
+reporting success after its retained socket disconnects; neither case silently opens another approval request.
 
 A Bridge host-authentication error names the socket, peer PID when available, and failed check (kernel CDHash,
 Apple-anchored signature, signature/hash binding, or allowed Team ID). Relaunch the released signed host at that socket;

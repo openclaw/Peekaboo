@@ -220,19 +220,17 @@ extension PeekabooAgentService {
         }
     }
 
-    func makeContinuationContext(
-        from session: AgentSession,
-        userMessage: String?,
-        model: LanguageModel,
-        provider: (any ModelProvider)? = nil,
-        modelIdentity: PersistedModelIdentity? = nil,
-        toolExecutionAuthority: MCPToolExecutionAuthority = .backgroundOnly,
-        executionGeneration: UUID? = nil) -> SessionContext
+    static func updatingSystemPrompt(
+        in messages: [ModelMessage],
+        for model: LanguageModel,
+        executionAuthority: MCPToolExecutionAuthority,
+        availableToolNames: Set<String>? = nil) -> [ModelMessage]
     {
-        var updatedMessages = session.messages
+        var updatedMessages = messages
         let authorityPrompt = AgentSystemPrompt.generate(
             for: model,
-            executionAuthority: toolExecutionAuthority)
+            executionAuthority: executionAuthority,
+            availableToolNames: availableToolNames)
         if let systemIndex = updatedMessages.firstIndex(where: { $0.role == .system }) {
             let existing = updatedMessages[systemIndex]
             updatedMessages[systemIndex] = ModelMessage(
@@ -245,6 +243,22 @@ extension PeekabooAgentService {
         } else {
             updatedMessages.insert(.system(authorityPrompt), at: 0)
         }
+        return updatedMessages
+    }
+
+    func makeContinuationContext(
+        from session: AgentSession,
+        userMessage: String?,
+        model: LanguageModel,
+        provider: (any ModelProvider)? = nil,
+        modelIdentity: PersistedModelIdentity? = nil,
+        toolExecutionAuthority: MCPToolExecutionAuthority = .backgroundOnly,
+        executionGeneration: UUID? = nil) -> SessionContext
+    {
+        var updatedMessages = Self.updatingSystemPrompt(
+            in: session.messages,
+            for: model,
+            executionAuthority: toolExecutionAuthority)
         if let userMessage {
             updatedMessages.append(.user(userMessage))
         }

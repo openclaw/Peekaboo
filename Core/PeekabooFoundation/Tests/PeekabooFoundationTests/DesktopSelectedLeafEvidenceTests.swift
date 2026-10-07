@@ -49,9 +49,31 @@ struct DesktopSelectedLeafEvidenceTests {
             from: JSONEncoder().encode(leaf)) == leaf)
     }
 
+    @Test(arguments: ["ａ", "１", "ｆ"])
+    func `initializer rejects nonASCII candidate digest digits`(digit: String) {
+        #expect(throws: DesktopSelectedLeafEvidenceError.invalidEvidence) {
+            try Self.leaf(frame: Self.validFrame, candidateDigest: String(repeating: digit, count: 64))
+        }
+    }
+
+    @Test(arguments: ["ａ", "１", "ｆ"])
+    func `decoder rejects nonASCII candidate digest digits`(digit: String) throws {
+        let valid = try Self.leaf(frame: Self.validFrame)
+        var object = try #require(JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(valid)) as? [String: Any])
+        object["candidateSetSHA256"] = String(repeating: digit, count: 64)
+        let encoded = try JSONSerialization.data(withJSONObject: object)
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(DesktopSelectedLeafEvidence.self, from: encoded)
+        }
+    }
+
     private static let validFrame = CGRect(x: 10, y: 10, width: 20, height: 20)
 
-    private static func leaf(frame: CGRect) throws -> DesktopSelectedLeafEvidence {
+    private static func leaf(
+        frame: CGRect,
+        candidateDigest: String = String(repeating: "a", count: 64)) throws -> DesktopSelectedLeafEvidence
+    {
         try DesktopSelectedLeafEvidence(
             kind: .dockItem,
             normalizedSelector: "safari",
@@ -62,7 +84,7 @@ struct DesktopSelectedLeafEvidenceTests {
             selectedIdentifier: "com.apple.Safari",
             selectedRole: "AXDockItem",
             selectedFrame: frame,
-            candidateSetSHA256: String(repeating: "a", count: 64),
+            candidateSetSHA256: candidateDigest,
             candidateCount: 1)
     }
 

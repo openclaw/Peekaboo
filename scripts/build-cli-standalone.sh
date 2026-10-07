@@ -41,6 +41,9 @@ if [ -f "$BUILD_PATH" ]; then
     echo -e "${GREEN}✅ Build successful!${NC}"
     echo -e "${BLUE}Binary location: $(pwd)/$BUILD_PATH${NC}"
     
+    # Collect the exact compatibility libraries required by this standalone binary.
+    ../../scripts/copy-swift-runtime-libraries.sh --standalone "$BUILD_PATH" "$(dirname "$BUILD_PATH")"
+
     # Show binary info
     echo -e "\n${BLUE}Binary info:${NC}"
     file "$BUILD_PATH"
@@ -49,13 +52,16 @@ if [ -f "$BUILD_PATH" ]; then
     # Optionally copy to a more convenient location
     if [ "$1" == "--install" ]; then
         echo -e "\n${BLUE}Installing to /usr/local/bin...${NC}"
-        sudo cp "$BUILD_PATH" /usr/local/bin/peekaboo
+        sudo install -m 755 "$BUILD_PATH" /usr/local/bin/peekaboo
+        for library in "$(dirname "$BUILD_PATH")"/libswiftCompatibility*.dylib; do
+            [ -f "$library" ] || continue
+            sudo install -m 755 "$library" /usr/local/bin/
+        done
         echo -e "${GREEN}✅ Installed to /usr/local/bin/peekaboo${NC}"
     else
         echo -e "\n${BLUE}To install system-wide, run:${NC}"
         echo "  $0 --install"
-        echo -e "\n${BLUE}Or copy manually:${NC}"
-        echo "  sudo cp $BUILD_PATH /usr/local/bin/peekaboo"
+        echo "Keep the binary and its compatibility libraries together when copying manually."
     fi
     
     echo -e "\n${BLUE}To see usage:${NC}"
