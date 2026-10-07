@@ -1,17 +1,23 @@
 # Changelog
 
-## Unreleased
+## 4.9.0 - 2026-10-06
 
-- Prepare the final-qualification launcher's atomic receipt publisher before spawning the suspended coordinator, so loaded release Macs no longer spend the identity-acknowledgement window compiling Swift; each use still re-verifies the exact executable, and the exit receipt keeps a fresh build.
+**Highlights:** Add exact app- and PID-scoped menu-bar extra clicks, keep foreground file dialogs bound to their parent window, tailor Agent guidance to the acquired tool catalog, show visualizer overlays from a hidden companion app, restore clipboard slots faithfully across processes, and harden release archive and artifact validation.
+
 - Add exact app/PID-scoped menu-extra clicks with bounded AX owner preparation and revalidation, preserving displayed-CG names and indices without scanning unrelated applications. Thanks @buremba! #953.
+- Keep targeted foreground file-dialog focus, navigation, and result receipts under one parent-window owner; negotiate exact execution with Bridge hosts and scope document reads to that parent without losing file-on-disk verification when Save closes it.
+- Fix application-targeted file sheets losing their parent-window identity; preserve compatible panels and ignore unrelated alerts when selecting a unique file panel. Thanks @buremba! #951.
+- Recognize native file-panel identifiers and reuse fresh classification evidence to avoid redundant button scans; batch strict dialog AX reads without truncating hierarchy discovery.
+- Recognize equivalent saved-file paths such as `/tmp` and `/private/tmp` in dialog diagnostics, preserving reported paths and directory-only enforcement.
+- Tailor Agent and learn guidance to the available tool catalog, removing irrelevant recipes while preserving execution authority, observation requirements and session history.
+- Show eligible visualizer overlays from a hidden companion app without unhiding or activating it, accepting input, or changing background-input suppression.
+- Avoid redundant PNG encoding for unchanged live capture frames, preserving original bytes and metadata while retaining transformed-frame encoding, actual-byte caps, and artifact validation.
+- Restore clipboard slots from the current persisted contents instead of a stale per-process cache, and keep multi-item clipboards' item order and boundaries through save and restore. Thanks @rudycelekli! #990.
+- Update AXorcist to 0.2.1 to unwrap live Accessibility values and clear inherited typing and final hotkey modifier flags. Thanks @jandubois! #797.
+- Prepare the final-qualification launcher's atomic receipt publisher before spawning the suspended coordinator, so loaded release Macs no longer spend the identity-acknowledgement window compiling Swift; each use still re-verifies the exact executable, and the exit receipt keeps a fresh build.
 - Reject negative SDK automation waits before preparation or earlier input, and keep large positive waits safely cancellable without integer overflow. Thanks @rudycelekli! #973.
 - Preserve literal environment values inside configuration JSON strings and omit expanded documents from decode warnings; retain numeric substitutions and credential references. Thanks @rudycelekli! #972.
 - Reject non-ASCII tar size/checksum text and PAX record lengths/keys before decoding can disguise malformed bytes, preserving binary tar numbers and UTF-8 values. Thanks @rudycelekli! #966.
-- Recognize equivalent saved-file paths such as `/tmp` and `/private/tmp` in dialog diagnostics, preserving reported paths and directory-only enforcement.
-- Fix application-targeted file sheets losing their parent-window identity; preserve compatible panels and ignore unrelated alerts when selecting a unique file panel. Thanks @buremba! #951.
-- Recognize native file-panel identifiers and reuse fresh classification evidence to avoid redundant button scans; batch strict dialog AX reads without truncating hierarchy discovery.
-- Keep targeted foreground file-dialog focus, navigation, and result receipts under one parent-window owner; negotiate exact execution with Bridge hosts and scope document reads to that parent without losing file-on-disk verification when Save closes it.
-
 - Retain failed browser connection attempts across ordinary provider tools and invalidate cached verification after socket loss, preventing implicit reconnects and stale success. Thanks @rudycelekli! #949.
 - Honor cancellation and connection deadlines during browser application-metadata reads; reconcile failures without repeating a blocked lookup, retaining connected or uncertain provider ownership. Thanks @rudycelekli! #950.
 - Preserve literal log-helper search and filter text without shell re-parsing, including quotes, backslashes and trailing newlines; retain output, streaming and private-mode arguments. Thanks @rudycelekli! #934.
@@ -23,9 +29,6 @@
 - Bound ZIP data descriptors before allocating or reading their untrusted gap, preserving valid descriptor checks while avoiding malformed-archive memory amplification. Thanks @rudycelekli! #967.
 - Resolve composed symlink targets before accepting artifact trees and archives, refusing root escapes and native-unreadable chains beyond 32 traversals while preserving contained framework and dangling links. Thanks @rudycelekli! #954.
 - Reject archive entries nested beneath regular files as well as symlinks, independent of entry order, before extraction. Thanks @rudycelekli! #955.
-- Avoid redundant PNG encoding for unchanged live capture frames, preserving original bytes and metadata while retaining transformed-frame encoding, actual-byte caps, and artifact validation.
-- Tailor Agent and learn guidance to the available tool catalog, removing irrelevant recipes while preserving execution authority, observation requirements and session history.
-- Show eligible visualizer overlays from a hidden companion app without unhiding or activating it, accepting input, or changing background-input suppression.
 - Fix the Playground log wrapper's moved script path and clarify repository-root examples, preserving arguments and exit status. Thanks @rudycelekli! #933.
 - Fix signed Bridge typing receipts after already-empty clears and already-satisfied caret moves, preserving zero-dispatch no-ops and strict key, delivery and dispatch-count validation.
 - Preserve accepted dispatch evidence and retry-unsafe status after unchanged readback instead of reporting a no-dispatch no-op or a safe retry; positively observed changes still confirm the action. Thanks @rudycelekli! #942.
@@ -40,7 +43,6 @@
 - Validate Swift compatibility-library loader paths and required library architectures per executable slice, so another architecture cannot hide a missing path. Thanks @rudycelekli! #937.
 - Reject ZIP entries with unconsumed trailing DEFLATE bytes before extraction, even when their inflated size and CRC match. Thanks @rudycelekli! #956.
 - Distinguish missing blank title-bar space from changed retained geometry in background paste preparation diagnostics, without relaxing clearance or input guards.
-- Update AXorcist to 0.2.1 to unwrap live Accessibility values and clear inherited typing and final hotkey modifier flags. Thanks @jandubois! #797.
 - Keep CLI and MCP action summaries explicit about unverified or unreported receiver effects, and report paste clipboard cleanup separately without changing canonical outcomes, JSON, retry rules, or exit status.
 - Strip terminal control scalars from agent/task titles before both VibeTunnel and ANSI output, preserving Unicode joiners and preventing embedded title text from injecting terminal commands. Thanks @rudycelekli! #964.
 - Avoid agent-summary crashes on unrepresentable numeric metadata, preserve each consumer's rounding and lookup rules, and report unusable shell exit codes as unavailable rather than success. Thanks @rudycelekli! #961.
@@ -60,7 +62,6 @@
 - Publish release CLI archives and the app ZIP atomically so a failed write leaves any previous artifact intact. Thanks @rudycelekli! #979.
 - Drain ZIP entry readers before the archive closes its descriptor, so a rejected payload no longer crashes later with an uncaught EBADF (#985). Thanks @rudycelekli! #986.
 - Reject release package resolution when the pinned Sparkle checkout has tracked, staged, or untracked changes. Thanks @rudycelekli! #978.
-- Restore clipboard slots from the current persisted contents instead of a stale per-process cache, and keep multi-item clipboards' item order and boundaries through save and restore. Thanks @rudycelekli! #990.
 - Install the Swift compatibility libraries that standalone CLI builds need next to the binary, so a standalone install loads after moving; release builds keep the mandatory older-SDK runtime audit. Thanks @rudycelekli! #982.
 - Bound release-preflight CLI probes with a timeout and report spawn or timeout failures instead of hanging or misreading them as contract failures. Thanks @rudycelekli! #984.
 - Clean up Node runtime build downloads and work directories when an early transfer or temporary-directory allocation fails. Thanks @rudycelekli! #980.
@@ -68,6 +69,10 @@
 - Preserve managed screenshots when a snapshot reuses its own stored image as input, copying through a staged file before replacing the artifact. Thanks @rudycelekli! #987.
 - Require canonical lowercase ASCII hex selected-leaf candidate digests, rejecting full-width digits and letters that Swift's hex check accepted. Thanks @rudycelekli! #983.
 - Report the qualification guardian's own failure when the managed launcher's identity acknowledgement reaches an exited guardian, instead of crashing on an uncaught EPIPE before cleanup; guardian deadlines and the acknowledgement protocol are unchanged.
+
+### Compatibility
+
+- App/PID-scoped `menubar click` and exact-owner file-dialog execution require a 4.9.0 GUI Bridge host that advertises those capabilities at protocol 1.43. With an older Peekaboo app as the Bridge host, these requests refuse before any input instead of falling back to a global search or unscoped dialog handling; update the app together with the CLI.
 
 ## 4.8.0 - 2026-10-03
 
