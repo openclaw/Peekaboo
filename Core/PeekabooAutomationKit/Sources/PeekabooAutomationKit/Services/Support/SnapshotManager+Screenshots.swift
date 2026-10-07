@@ -42,6 +42,8 @@ extension SnapshotManager {
         snapshotData.screenshotPath = rawPath.path
         snapshotData.annotatedPath = nil
         snapshotData.uiMap = [:]
+        snapshotData.detectionIsDialog = nil
+        snapshotData.detectionTruncationInfo = nil
         snapshotData.applicationName = request.applicationName
         snapshotData.applicationBundleId = request.applicationBundleId
         snapshotData.applicationProcessId = request.applicationProcessId

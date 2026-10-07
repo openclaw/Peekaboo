@@ -11,6 +11,25 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct MCPGlobalPointerActionResultTests {
+    @Test(arguments: [
+        (10.0, 0.0, "E"), (10.0, 10.0, "SE"), (0.0, 10.0, "S"), (-10.0, 10.0, "SW"),
+        (-10.0, 0.0, "W"), (-10.0, -10.0, "NW"), (0.0, -10.0, "N"), (10.0, -10.0, "NE"),
+    ])
+    func `move response reports direction in screen coordinate space`(_ vector: (Double, Double, String)) async throws {
+        let start = CGPoint(x: 100, y: 200)
+        let automation = MockAutomationService(accessibilityGranted: true, currentMouseLocation: start)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
+        let target = CGPoint(x: start.x + vector.0, y: start.y + vector.1)
+        let response = try await MoveTool(context: context).execute(arguments: ToolArguments(raw: [
+            "to": "\(target.x),\(target.y)", "foreground": true,
+        ]))
+        #expect(!response.isError)
+        let metadata = try #require(response.meta?.objectValue)
+        #expect(metadata["direction"] == .string(vector.2))
+        #expect(automation.lastMoveTarget == target)
+        print("MoveTool delta=\(vector.0),\(vector.1) response.direction=\(String(describing: metadata["direction"]))")
+    }
+
     @Test(arguments: [false, true])
     func `background drag dispatches exact window and consumes snapshot without foreground focus`(
         interrupted: Bool) async throws

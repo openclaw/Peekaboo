@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Add exact app/PID-scoped menu-extra clicks with bounded AX owner preparation and revalidation, preserving displayed-CG names and indices without scanning unrelated applications. Thanks @buremba! #953.
+- Reject negative SDK automation waits before preparation or earlier input, and keep large positive waits safely cancellable without integer overflow. Thanks @rudycelekli! #973.
 - Preserve literal environment values inside configuration JSON strings and omit expanded documents from decode warnings; retain numeric substitutions and credential references. Thanks @rudycelekli! #972.
 - Reject non-ASCII tar size/checksum text and PAX record lengths/keys before decoding can disguise malformed bytes, preserving binary tar numbers and UTF-8 values. Thanks @rudycelekli! #966.
 - Recognize equivalent saved-file paths such as `/tmp` and `/private/tmp` in dialog diagnostics, preserving reported paths and directory-only enforcement.
