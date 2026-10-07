@@ -8,14 +8,17 @@ import { fileURLToPath } from 'node:url';
 import {
   HEX40,
   HEX64,
+  TOOLCHAIN_BUILD_TIMEOUT_MILLISECONDS,
   canonicalBytes,
   exactKeys,
   parseOptions,
   positiveDecimal,
   positiveInteger,
+  prepareAtomicPublisher,
   publishPrivateAtomicNoReplace,
   readStableFile,
   readStableJSON,
+  releaseAtomicPublisher,
   requireCondition,
   requirePrivateDirectory,
   requireStableExecutable,
@@ -141,7 +144,7 @@ function compileGuardian() {
   ], {
     input: retainedSource.bytes,
     encoding: 'utf8',
-    timeout: 30_000,
+    timeout: TOOLCHAIN_BUILD_TIMEOUT_MILLISECONDS,
     maxBuffer: 4 * 1024 * 1024,
     env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'C', LC_ALL: 'C' },
   });
@@ -315,14 +318,17 @@ function helperArguments(fix, guardian) {
 export async function runManagedLaunch(specPath, testHooks = {}) {
   const fix = validateSpec(specPath);
   validateMonitor(fix.monitor, fix.plan.monitor.code_signature_hash);
+  const environment = closedEnvironment();
   const guardian = compileGuardian();
+  let atomicPublisher = null;
   try {
     prepareExecution(fix, guardian);
+    atomicPublisher = prepareAtomicPublisher();
   } catch (error) {
     cleanupGuardian(guardian);
+    releaseAtomicPublisher(atomicPublisher);
     throw error;
   }
-  const environment = closedEnvironment();
   const helper = spawn(guardian.binary, helperArguments(fix, guardian), {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: environment.values,
@@ -418,6 +424,7 @@ export async function runManagedLaunch(specPath, testHooks = {}) {
       );
     });
     testHooks.afterSuspendedSpawn?.({
+      atomicPublisher,
       childPID: launch.childPID,
       sourcePath: fix.details.source?.path ?? null,
       planPath: fix.planReceipt.path,
@@ -434,8 +441,10 @@ export async function runManagedLaunch(specPath, testHooks = {}) {
     const invocationPublished = publishPrivateAtomicNoReplace(
       fix.spec.invocation_receipt_path,
       invocation,
+      { publisher: atomicPublisher },
     );
     await testHooks.beforeAcknowledgement?.({
+      atomicPublisher,
       guardian: helper,
       childPID: identity.pid,
       startIdentity: identity.start_identity,
@@ -447,7 +456,9 @@ export async function runManagedLaunch(specPath, testHooks = {}) {
       start_identity: identity.start_identity,
       phase: 'start',
       invocation_sha256: invocationPublished.sha256,
-    });
+    }, { publisher: atomicPublisher });
+    // The prepared publisher never coexists with a released (running) coordinator.
+    releaseAtomicPublisher(atomicPublisher);
     expectedRelease = {
       version: 1,
       pid: identity.pid,
@@ -485,6 +496,7 @@ export async function runManagedLaunch(specPath, testHooks = {}) {
       exit_code: exitEvent.exitCode >= 0 ? exitEvent.exitCode : null,
       signal: exitEvent.signal > 0 ? exitEvent.signal : null,
     };
+    // Use a fresh build after untrusted coordinator code has executed.
     const exitPublished = publishPrivateAtomicNoReplace(fix.spec.exit_receipt_path, exitReceipt);
     return {
       kind: fix.spec.kind,
@@ -509,6 +521,7 @@ export async function runManagedLaunch(specPath, testHooks = {}) {
     stopStdout();
     stopStderr();
     cleanupGuardian(guardian);
+    releaseAtomicPublisher(atomicPublisher);
   }
 }
 

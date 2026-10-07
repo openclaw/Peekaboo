@@ -6,6 +6,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// These builds run before any protocol window, so loaded release Macs get a wider bound.
+export const TOOLCHAIN_BUILD_TIMEOUT_MILLISECONDS = 120_000;
+
+const preparedAtomicPublishers = new WeakMap();
+
 export class QualificationError extends Error {}
 
 export function requireCondition(condition, message) {
@@ -826,8 +831,76 @@ export function writePrivateExclusive(filePath, value) {
   return { path: filePath, bytes, sha256: sha256(bytes) };
 }
 
+export function prepareAtomicPublisher() {
+  let directory = null;
+  let publisherPath = null;
+  try {
+    const helperSource = path.join(path.dirname(fileURLToPath(import.meta.url)), 'atomic-publish-no-replace.swift');
+    const retainedSource = readStableFile(helperSource, 'atomic publication helper', {
+      privateFile: false,
+    });
+    directory = fs.mkdtempSync('/private/tmp/pbq-atomic-publisher-');
+    fs.chmodSync(directory, 0o700);
+    publisherPath = path.join(directory, 'atomic-publish-no-replace');
+    const build = spawnSync('/usr/bin/xcrun', ['swiftc', '-', '-o', publisherPath], {
+      input: retainedSource.bytes,
+      encoding: 'utf8',
+      timeout: TOOLCHAIN_BUILD_TIMEOUT_MILLISECONDS,
+      maxBuffer: 4 * 1024 * 1024,
+      env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'C', LC_ALL: 'C' },
+    });
+    requireCondition(!build.error && build.status === 0,
+      `atomic publication helper build failed: ${build.stderr?.trim() || build.error?.message || build.status}`);
+    fs.chmodSync(publisherPath, 0o500);
+    const executable = requireStableExecutable(
+      publisherPath,
+      'compiled atomic publication helper',
+    );
+    const directoryInfo = fs.lstatSync(directory, { bigint: true });
+    const executableInfo = fs.lstatSync(publisherPath, { bigint: true });
+    const publisher = Object.freeze({ directory, path: publisherPath, sha256: executable.sha256 });
+    preparedAtomicPublishers.set(publisher, {
+      directoryDev: directoryInfo.dev,
+      directoryIno: directoryInfo.ino,
+      executableDev: executableInfo.dev,
+      executableIno: executableInfo.ino,
+      sha256: executable.sha256,
+    });
+    return publisher;
+  } catch (error) {
+    try { fs.unlinkSync(publisherPath); } catch {}
+    try { fs.rmdirSync(directory); } catch {}
+    throw error;
+  }
+}
+
+export function releaseAtomicPublisher(publisher) {
+  if (publisher === null || publisher === undefined) return;
+  preparedAtomicPublishers.delete(publisher);
+  try { fs.unlinkSync(publisher.path); } catch {}
+  try { fs.rmdirSync(publisher.directory); } catch {}
+}
+
+function verifyPreparedAtomicPublisher(publisher, label) {
+  const recorded = preparedAtomicPublishers.get(publisher);
+  requireCondition(recorded !== undefined, `${label} is not a live prepared publisher`);
+  try {
+    requirePrivateDirectory(publisher.directory, `${label} directory`);
+    const directoryInfo = fs.lstatSync(publisher.directory, { bigint: true });
+    requireCondition(directoryInfo.dev === recorded.directoryDev && directoryInfo.ino === recorded.directoryIno,
+      'directory identity differs from the prepared build');
+    const executable = requireStableExecutable(publisher.path, label);
+    requireCondition(executable.sha256 === recorded.sha256
+      && executable.info.dev === recorded.executableDev && executable.info.ino === recorded.executableIno
+      && (executable.info.mode & 0o777n) === 0o500n,
+    'executable differs from the prepared build');
+  } catch (error) {
+    throw new QualificationError(`${label} changed: ${error.message}`);
+  }
+}
+
 // Darwin renameatx_np(RENAME_EXCL) publishes complete bytes and cannot replace an existing marker.
-export function publishPrivateAtomicNoReplace(filePath, value) {
+export function publishPrivateAtomicNoReplace(filePath, value, { publisher = null } = {}) {
   absolutePath(filePath, 'marker output');
   const parent = path.dirname(filePath);
   requirePrivateDirectory(parent, 'marker output parent');
@@ -843,48 +916,24 @@ export function publishPrivateAtomicNoReplace(filePath, value) {
   } finally {
     fs.closeSync(descriptor);
   }
-  let publisher = null;
+  let owned = null;
   try {
-    const helperSource = path.join(path.dirname(fileURLToPath(import.meta.url)), 'atomic-publish-no-replace.swift');
-    const retainedSource = readStableFile(helperSource, 'atomic publication helper', {
-      privateFile: false,
-    });
-    const publisherDirectory = fs.mkdtempSync('/private/tmp/pbq-atomic-publisher-');
-    fs.chmodSync(publisherDirectory, 0o700);
-    const publisherPath = path.join(publisherDirectory, 'atomic-publish-no-replace');
-    publisher = { directory: publisherDirectory, path: publisherPath, sha256: null };
-    const closedEnvironment = {
-      PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
-      LANG: 'C',
-      LC_ALL: 'C',
-    };
-    const build = spawnSync('/usr/bin/xcrun', ['swiftc', '-', '-o', publisherPath], {
-      input: retainedSource.bytes,
-      encoding: 'utf8',
-      timeout: 30_000,
-      maxBuffer: 4 * 1024 * 1024,
-      env: closedEnvironment,
-    });
-    requireCondition(!build.error && build.status === 0,
-      `atomic publication helper build failed: ${build.stderr?.trim() || build.error?.message || build.status}`);
-    fs.chmodSync(publisherPath, 0o500);
-    publisher.sha256 = requireStableExecutable(
-      publisherPath,
-      'compiled atomic publication helper',
-    ).sha256;
-    const publish = spawnSync(publisher.path, [temporary, filePath], {
+    const active = publisher ?? (owned = prepareAtomicPublisher());
+    verifyPreparedAtomicPublisher(active, 'atomic publication helper');
+    const publish = spawnSync(active.path, [temporary, filePath], {
       encoding: 'utf8',
       timeout: 15_000,
       maxBuffer: 1024 * 1024,
-      env: closedEnvironment,
+      env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'C', LC_ALL: 'C' },
     });
     requireCondition(!publish.error && publish.status === 0,
       `atomic marker publication failed: ${publish.stderr?.trim() || publish.error?.message || publish.status}`);
     requireCondition(!fs.existsSync(temporary) && fs.existsSync(filePath), 'atomic publication did not consume the temporary file');
-    requireCondition(requireStableExecutable(
-      publisher.path,
-      'post-publication atomic helper',
-    ).sha256 === publisher.sha256, 'compiled atomic publication helper changed during use');
+    try {
+      verifyPreparedAtomicPublisher(active, 'post-publication atomic helper');
+    } catch {
+      throw new QualificationError('compiled atomic publication helper changed during use');
+    }
     const published = readStableFile(filePath, 'published marker');
     requireCondition(published.info.dev === stagedInfo.dev && published.info.ino === stagedInfo.ino,
       'atomic publication changed the staged file identity');
@@ -894,10 +943,7 @@ export function publishPrivateAtomicNoReplace(filePath, value) {
     try { fs.unlinkSync(temporary); } catch {}
     throw new QualificationError(`marker publication failed without overwrite: ${error.message}`);
   } finally {
-    if (publisher !== null) {
-      try { fs.unlinkSync(publisher.path); } catch {}
-      try { fs.rmdirSync(publisher.directory); } catch {}
-    }
+    releaseAtomicPublisher(owned);
   }
 }
 

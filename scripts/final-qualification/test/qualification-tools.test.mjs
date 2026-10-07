@@ -44,7 +44,9 @@ import {
   aggregateSHA256,
   canonicalBytes,
   isSupportedQualificationHostProtocol,
+  prepareAtomicPublisher,
   publishPrivateAtomicNoReplace,
+  releaseAtomicPublisher,
   sha256,
   validateCurrentQualificationBridgeHandshake,
 } from '../lib.mjs';
@@ -3751,6 +3753,66 @@ test('retained atomic publisher uses a closed toolchain and revalidates publishe
   }
 });
 
+test('prepared atomic publisher is reused, re-verified before each use, and released', () => {
+  const root = fs.mkdtempSync('/private/tmp/pbq-tools-prepared-atomic-');
+  fs.chmodSync(root, 0o700);
+  let publisher = null;
+  let freshPublisher = null;
+  try {
+    publisher = prepareAtomicPublisher();
+    for (const name of ['first', 'second']) {
+      const output = path.join(root, `${name}.json`);
+      const value = { name, version: 1 };
+      const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+      const result = publishPrivateAtomicNoReplace(output, value, { publisher });
+      assert.deepEqual(result.bytes, bytes);
+      assert.deepEqual(fs.readFileSync(output), bytes);
+      assert.equal(fs.statSync(output).mode & 0o777, 0o600);
+      assert.equal(fs.existsSync(publisher.directory), true);
+    }
+
+    fs.chmodSync(publisher.path, 0o700);
+    fs.writeFileSync(publisher.path, 'tampered publisher\n');
+    fs.chmodSync(publisher.path, 0o500);
+    const tamperedOutput = path.join(root, 'third.json');
+    assert.throws(
+      () => publishPrivateAtomicNoReplace(tamperedOutput, { version: 1 }, { publisher }),
+      /changed/,
+    );
+    assert.equal(fs.existsSync(tamperedOutput), false);
+    assert.equal(fs.readdirSync(root).some((name) => name.startsWith('.third.json.') && name.endsWith('.tmp')), false);
+
+    freshPublisher = prepareAtomicPublisher();
+    fs.chmodSync(freshPublisher.directory, 0o755);
+    assert.throws(
+      () => publishPrivateAtomicNoReplace(path.join(root, 'loosened.json'), { version: 1 }, {
+        publisher: freshPublisher,
+      }),
+      /changed/,
+    );
+    fs.chmodSync(freshPublisher.directory, 0o700);
+    const forged = { directory: freshPublisher.directory, path: freshPublisher.path, sha256: freshPublisher.sha256 };
+    assert.throws(
+      () => publishPrivateAtomicNoReplace(path.join(root, 'forged.json'), { version: 1 }, { publisher: forged }),
+      /not a live prepared publisher/,
+    );
+    releaseAtomicPublisher(freshPublisher);
+    assert.equal(fs.existsSync(freshPublisher.directory), false);
+    assert.throws(
+      () => publishPrivateAtomicNoReplace(path.join(root, 'released.json'), { version: 1 }, {
+        publisher: freshPublisher,
+      }),
+      /not a live prepared publisher/,
+    );
+    assert.doesNotThrow(() => releaseAtomicPublisher(freshPublisher));
+  } finally {
+    releaseAtomicPublisher(publisher);
+    if (freshPublisher && fs.existsSync(freshPublisher.directory)) fs.chmodSync(freshPublisher.directory, 0o700);
+    releaseAtomicPublisher(freshPublisher);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function managedLaunchSpec(root, kind, planPath, executablePath, arguments_, context, prefix) {
   return {
     version: 1,
@@ -3765,9 +3827,8 @@ function managedLaunchSpec(root, kind, planPath, executablePath, arguments_, con
     exit_receipt_path: path.join(root, `${prefix}-exit.json`),
     stdout_path: path.join(root, `${prefix}.stdout`),
     stderr_path: path.join(root, `${prefix}.stderr`),
-    // The SPAWNED-to-ACK window compiles two atomic publishers; under CPU contention that alone exceeded 10 s.
-    // These tests do not prove the start deadline, so give it the validated maximum as a hang guard.
-    start_timeout_seconds: 120,
+    // Publishers are prepared before spawn, so the SPAWNED-to-ACK window holds no toolchain build.
+    start_timeout_seconds: 10,
     run_timeout_seconds: 10,
     context,
   };
@@ -3778,6 +3839,8 @@ test('managed launcher suspends the coordinator until signed-monitor identity an
   fs.chmodSync(root, 0o700);
   const priorCWD = process.cwd();
   const priorNodeOptions = process.env.NODE_OPTIONS;
+  let preparedPublisher = null;
+  let tamperedPublisher = null;
   try {
     process.chdir(root);
     const injectionMarker = path.join(root, 'node-options-injected');
@@ -3851,7 +3914,9 @@ test('managed launcher suspends the coordinator until signed-monitor identity an
     const coordinatorRun = await runManagedLaunch(
       coordinatorSpecPath,
       {
-        afterSuspendedSpawn: () => {
+        afterSuspendedSpawn: ({ atomicPublisher }) => {
+          preparedPublisher = atomicPublisher;
+          assert.equal(fs.existsSync(atomicPublisher.path), true);
           fs.chmodSync(coordinatorSource, 0o600);
           writeFile(coordinatorSource, 'process.stdout.write("replacement-source\\n");\n', 0o400);
           fs.chmodSync(planPath, 0o600);
@@ -3859,8 +3924,16 @@ test('managed launcher suspends the coordinator until signed-monitor identity an
           replacementPlan.fixture_value = 'replacement-plan';
           writeJSON(planPath, replacementPlan);
         },
+        beforeAcknowledgement: ({ atomicPublisher }) => {
+          assert.equal(atomicPublisher, preparedPublisher);
+          assert.equal(atomicPublisher.path, preparedPublisher.path);
+          assert.equal(atomicPublisher.sha256, preparedPublisher.sha256);
+          assert.equal(fs.existsSync(atomicPublisher.path), true);
+          assert.equal(sha256(fs.readFileSync(atomicPublisher.path)), atomicPublisher.sha256);
+        },
       },
     );
+    assert.equal(fs.existsSync(preparedPublisher.directory), false);
     fs.chmodSync(coordinatorSource, 0o600);
     writeFile(coordinatorSource, retainedCoordinatorSource, 0o400);
     fs.chmodSync(planPath, 0o600);
@@ -3877,6 +3950,37 @@ test('managed launcher suspends the coordinator until signed-monitor identity an
     assert.equal(fs.existsSync(injectionMarker), false);
     assert.equal(fs.readFileSync(childMarker, 'utf8'), 'ran\n');
     fs.unlinkSync(childMarker);
+
+    const tamperedPublisherSpec = managedLaunchSpec(
+      root,
+      'coordinator',
+      planPath,
+      process.execPath,
+      [coordinatorSource, '--plan', planPath],
+      { coordinator_source_path: coordinatorSource },
+      'tampered-publisher',
+    );
+    await assert.rejects(
+      runManagedLaunch(
+        writeJSON(path.join(root, 'tampered-publisher-spec.json'), tamperedPublisherSpec),
+        {
+          beforeAcknowledgement: ({ atomicPublisher }) => {
+            tamperedPublisher = atomicPublisher;
+            fs.chmodSync(atomicPublisher.path, 0o700);
+            fs.writeFileSync(atomicPublisher.path, 'tampered publisher\n');
+            fs.chmodSync(atomicPublisher.path, 0o500);
+          },
+        },
+      ),
+      /changed/,
+    );
+    assert.equal(fs.existsSync(tamperedPublisherSpec.invocation_receipt_path), true);
+    assert.equal(fs.existsSync(tamperedPublisherSpec.start_ack_path), false);
+    assert.equal(fs.existsSync(tamperedPublisherSpec.exit_receipt_path), false);
+    const tamperedPublisherPID = JSON.parse(fs.readFileSync(tamperedPublisherSpec.pid_path)).pid;
+    assert.throws(() => process.kill(tamperedPublisherPID, 0), /ESRCH/);
+    assert.equal(fs.existsSync(childMarker), false);
+    assert.equal(fs.existsSync(tamperedPublisher.directory), false);
 
     const rejectedAgentSpec = managedLaunchSpec(
       root,
@@ -4029,6 +4133,8 @@ test('managed launcher suspends the coordinator until signed-monitor identity an
     process.chdir(priorCWD);
     if (priorNodeOptions === undefined) delete process.env.NODE_OPTIONS;
     else process.env.NODE_OPTIONS = priorNodeOptions;
+    releaseAtomicPublisher(preparedPublisher);
+    releaseAtomicPublisher(tamperedPublisher);
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
