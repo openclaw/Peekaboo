@@ -14,7 +14,9 @@ read_when:
 - Python 3.9+ for the checkout-local Swift workspace setup (Xcode provides `python3`).
 - Node.js 22.13+ for the pinned pnpm source helpers (Corepack-enabled) — only needed for pnpm helper scripts; core Swift builds do not require Node.
 - pnpm (`corepack enable pnpm`)
-- SwiftLint and SwiftFormat for the repository validation helpers (`brew install swiftlint swiftformat`)
+- SwiftLint and SwiftFormat for the repository validation helpers (`brew install swiftlint swiftformat`). CI runs
+  `pnpm run format:check` with the SwiftFormat version pinned as `SWIFTFORMAT_VERSION` in
+  `.github/workflows/macos-ci.yml`; use the same version locally so formatting output matches.
 
 See [platform-support.md](platform-support.md) for the support matrix across released binaries, apps,
 Swift packages, source builds, and pnpm helper scripts.

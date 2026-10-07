@@ -16,7 +16,7 @@
 - Run tools directly (runner removed). Use pnpm (Corepack-enabled).
 - Build the CLI: `pnpm run build:cli` (debug) or `pnpm run build:swift:all` (universal release). For arm64-only: `pnpm run build:swift`.
 - Rebuild the Mac app while editing Swift: `./scripts/build-mac-debug.sh`.
-- Validate before handoff: `pnpm run lint` (SwiftLint), `pnpm run format` (SwiftFormat check/fix), then `pnpm run test:safe`. Full automation/UI tests: `pnpm run test:automation` or `pnpm run test:all`.
+- Validate before handoff: `pnpm run lint` (SwiftLint), `pnpm run format` (SwiftFormat fix; `pnpm run format:check` = CI gate), then `pnpm run test:safe`. Full automation/UI tests: `pnpm run test:automation` or `pnpm run test:all`.
 - Tachikoma live provider checks: `pnpm run tachikoma:test:integration`.
 - You may run `peekaboo` CLI commands locally for repros/debugging; be mindful they capture the host desktop (screen recording/accessibility permissions required).
 

@@ -892,3 +892,36 @@ jobs:
 
       - name: Run SwiftLint with CI config
         run: swiftlint --config .swiftlint-ci.yml
+
+  format:
+    name: SwiftFormat
+    runs-on: macos-26
+    env:
+      # Keep in sync with the SwiftFormat version used locally; rule output changes between releases.
+      SWIFTFORMAT_VERSION: "0.63.1"
+      SWIFTFORMAT_SHA256: "385ef1a263ba28685157b98c5536b9c9105e124518f28b7ef8a2bee4b167eaeb"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "26.9.0"
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Install pinned SwiftFormat
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/swiftformat.zip"
+          install_dir="$RUNNER_TEMP/swiftformat"
+          curl -fsSL --retry 3 -o "$archive" \
+            "https://github.com/nicklockwood/SwiftFormat/releases/download/${SWIFTFORMAT_VERSION}/swiftformat.zip"
+          echo "${SWIFTFORMAT_SHA256}  ${archive}" | shasum -a 256 -c -
+          mkdir -p "$install_dir"
+          unzip -q "$archive" -d "$install_dir"
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Check SwiftFormat (root and nested configs)
+        run: |
+          test "$(swiftformat --version)" = "$SWIFTFORMAT_VERSION"
+          pnpm run format:check

@@ -258,20 +258,12 @@ terminal_artifact_run_build "$@"`,
 function checkSwift() {
   logStep('Swift Checks');
 
-  // Run SwiftFormat
-  if (!execWithOutput('pnpm run format:swift', 'SwiftFormat')) {
-    logError('SwiftFormat failed');
+  // Check formatting without rewriting files (same command as the CI SwiftFormat job)
+  if (!execWithOutput('pnpm run format:check', 'SwiftFormat')) {
+    logError('SwiftFormat found unformatted files. Run `pnpm run format` and commit the result before releasing.');
     return false;
   }
-  logSuccess('SwiftFormat completed');
-
-  // Check if SwiftFormat made any changes
-  const formatChanges = exec('git status --porcelain');
-  if (formatChanges) {
-    logError('SwiftFormat made changes. Please commit them before releasing:');
-    console.log(formatChanges);
-    return false;
-  }
+  logSuccess('SwiftFormat passed');
 
   // Run SwiftLint
   if (!execWithOutput('pnpm run lint:swift', 'SwiftLint')) {

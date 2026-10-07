@@ -46,6 +46,7 @@
     "lint:swift": "swiftlint lint --config .swiftlint.yml",
     "lint": "pnpm run lint:swift",
     "format:swift": "swiftformat .",
+    "format:check": "swiftformat --lint .",
     "format": "pnpm run format:swift",
     "prepare-release": "node scripts/prepare-release.js",
     "release:mac-app": "./scripts/release-macos-app.sh",
