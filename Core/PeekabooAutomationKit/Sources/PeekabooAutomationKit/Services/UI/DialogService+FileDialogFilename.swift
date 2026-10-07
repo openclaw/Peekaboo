@@ -4,11 +4,15 @@ import PeekabooFoundation
 
 @MainActor
 extension DialogService {
-    func updateFilename(_ fileName: String, in dialog: Element) throws -> DesktopActionOutcome? {
+    func updateFilename(
+        _ fileName: String,
+        in dialog: Element,
+        execution: FileExecution? = nil) async throws -> DesktopActionOutcome?
+    {
         var sequence = DesktopActionSequenceAccumulator()
         do {
             self.logger.debug("Setting filename in dialog")
-            let textFields = self.collectTextFields(from: dialog)
+            let textFields = try await self.fileDialogControls(in: dialog, execution: execution, role: "AXTextField")
             guard !textFields.isEmpty else {
                 self.logger.error("No text fields found in file dialog")
                 throw DialogError.noTextFields
@@ -66,23 +70,21 @@ extension DialogService {
             }
 
             for (index, field) in fieldsToTry.indexed() {
+                try self.requireFileExecutionFocus(execution)
                 try sequence.record(.outcome(self.focusTextField(field)))
-                if field.isAttributeSettable(named: AXAttributeNames.kAXValueAttribute),
-                   field.setValue(fileName, forAttribute: AXAttributeNames.kAXValueAttribute)
-                {
-                    sequence.record(.outcome(.dispatchedUnverified(
-                        delivery: .init(mechanism: .accessibilityValue, mode: .background),
-                        evidence: .deliveryAccepted,
-                        unitCount: .one)))
+                if let outcome = try self.setFileDialogValue(fileName, field: field) {
+                    sequence.record(.outcome(outcome))
                     // Commit below by sending a small delay; some panels apply filename changes lazily.
                 } else {
+                    try self.requireFileExecutionFocus(execution, field: field)
                     try sequence.record(.outcome(self.fileDialogGlobalInput(operation: "select the filename field") {
                         try self.syntheticInputDriver.hotkey(keys: ["cmd", "a"], holdDuration: 0.05)
                     }))
-                    usleep(75000)
+                    try await Task.sleep(for: .milliseconds(75))
+                    try self.requireFileExecutionFocus(execution, field: field)
                     try sequence.record(.outcome(self.typeTextValue(fileName, delay: 5000)))
                 }
-                usleep(150_000)
+                try await Task.sleep(for: .milliseconds(150))
 
                 if let updatedValue = field.value() as? String {
                     let actualBaseName = URL(fileURLWithPath: updatedValue)

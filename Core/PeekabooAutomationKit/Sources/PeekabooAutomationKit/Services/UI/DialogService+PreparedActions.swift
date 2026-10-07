@@ -181,6 +181,7 @@ extension DialogService {
     enum DialogCandidateMembership: Equatable {
         case structuralMutation
         case readOnlyCompatible
+        case filePanel
     }
 
     struct TargetedDialogCandidate {
@@ -205,9 +206,21 @@ extension DialogService {
         case unreadable
     }
 
+    @MainActor
     struct FreshDialogElements {
         let structural: [Element]
         let legacy: [Element]
+        let evidence: [Element: DialogElementEvidence]
+
+        init(
+            structural: [Element],
+            legacy: [Element],
+            evidence: [Element: DialogElementEvidence] = [:])
+        {
+            self.structural = structural
+            self.legacy = legacy
+            self.evidence = evidence
+        }
     }
 
     struct DialogTargetRevalidationObservation {
@@ -329,7 +342,13 @@ extension DialogService {
                 in: handle.element,
                 owner: processIdentity,
                 budget: discoveryBudget)
-            for dialog in freshDialogs.structural {
+            let selectedDialogs = membership == .filePanel
+                ? Self.filePanelElements(
+                    in: freshDialogs,
+                    window: handle.element,
+                    matching: self.isTargetedFilePanelElement)
+                : freshDialogs.structural
+            for dialog in selectedDialogs {
                 guard dialog.pid() == processIdentity.processIdentifier else { continue }
                 structuralCandidates.append(TargetedDialogCandidate(
                     target: exactWindow,
@@ -359,7 +378,7 @@ extension DialogService {
         }
         try Task.checkCancellation()
         return switch membership {
-        case .structuralMutation:
+        case .structuralMutation, .filePanel:
             structuralCandidates
         case .readOnlyCompatible:
             DialogElementClassifier.preferredReadCandidates(
@@ -476,6 +495,7 @@ extension DialogService {
         let budget = try suppliedBudget ?? DialogOperationDeadline.resolve(operationName: "dialog hierarchy discovery")
         var structuralDialogs: [Element] = []
         var legacyDialogs: [Element] = []
+        var dialogEvidence: [Element: DialogElementEvidence] = [:]
         var visited: Set<Element> = []
         var stack = [window]
 
@@ -487,10 +507,12 @@ extension DialogService {
             let evidence = node.evidence
             if DialogElementClassifier.isStructuralDialog(evidence) {
                 structuralDialogs.append(element)
+                dialogEvidence[element] = evidence
             } else if DialogElementClassifier.permitsLegacyReadHeuristics(evidence),
                       DialogElementClassifier.isDialog(evidence)
             {
                 legacyDialogs.append(element)
+                dialogEvidence[element] = evidence
             }
             stack.append(contentsOf: node.children.reversed())
         }
@@ -498,7 +520,8 @@ extension DialogService {
             structural: DialogTraversal.preferredStructuralDialogs(
                 in: window,
                 candidates: structuralDialogs),
-            legacy: legacyDialogs)
+            legacy: legacyDialogs,
+            evidence: dialogEvidence)
     }
 
     func semanticButtons(in dialog: Element, request: DialogActionPreparationRequest) -> [Element] {
@@ -563,7 +586,8 @@ extension DialogService {
         target expected: UIAutomationTarget.ExactWindow,
         retainedWindow: Element,
         retainedDialog: Element,
-        operation: String) async throws -> TargetedDialogCandidate
+        operation: String,
+        membership: DialogCandidateMembership = .structuralMutation) async throws -> TargetedDialogCandidate
     {
         let application = try await self.applicationService.findApplication(
             identifier: "PID:\(expected.identity.ownerProcessIdentifier)")
@@ -585,6 +609,12 @@ extension DialogService {
         let freshDialogs = try await self.freshDialogElements(
             in: currentWindow.element,
             owner: expected.identity.processIdentity)
+        let selectedDialogs = membership == .filePanel
+            ? Self.filePanelElements(
+                in: freshDialogs,
+                window: currentWindow.element,
+                matching: self.isTargetedFilePanelElement)
+            : freshDialogs.structural
         guard Self.isValidDialogTargetRevalidation(
             expected: expected,
             observation: DialogTargetRevalidationObservation(
@@ -593,8 +623,8 @@ extension DialogService {
                 windowBounds: window?.bounds,
                 retainedWindowMatches: Self.sameElement(currentWindow.element, retainedWindow),
                 hierarchyReadable: true,
-                structuralDialogCount: freshDialogs.structural.count,
-                retainedDialogMatches: freshDialogs.structural.first.map {
+                structuralDialogCount: selectedDialogs.count,
+                retainedDialogMatches: selectedDialogs.first.map {
                     Self.sameElement($0, retainedDialog)
                 } ?? false))
         else {
@@ -611,7 +641,7 @@ extension DialogService {
                 application: application,
                 window: window),
             window: currentWindow.element,
-            dialog: freshDialogs.structural[0])
+            dialog: selectedDialogs[0])
     }
 
     static func isValidDialogTargetRevalidation(

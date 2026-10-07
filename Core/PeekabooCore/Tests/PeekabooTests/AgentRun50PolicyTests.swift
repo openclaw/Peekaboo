@@ -71,7 +71,7 @@ struct AgentRun50PolicyTests {
         let unrestricted = AgentSystemPrompt.generate(for: self.model, executionPolicy: .unrestricted)
 
         #expect(background.contains("immutable background-only authority"))
-        #expect(background.contains("exact targeted direct-text paste"))
+        #expect(background.contains("exact targeted direct-text `paste`"))
         #expect(!background.contains(#""foreground": true"#))
         #expect(!background.contains(#""action": "focus""#))
         #expect(!background.contains(#""action": "switch""#))

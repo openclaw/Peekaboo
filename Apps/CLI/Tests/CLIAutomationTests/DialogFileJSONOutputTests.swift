@@ -14,12 +14,10 @@ struct DialogFileJSONOutputTests {
                 role: "AXWindow",
                 subrole: "AXDialog",
                 isFileDialog: true,
-                bounds: .init(x: 0, y: 0, width: 420, height: 320)
-            ),
+                bounds: .init(x: 0, y: 0, width: 420, height: 320)),
             buttons: [],
             textFields: [],
-            staticTexts: []
-        )
+            staticTexts: [])
 
         let dialogService = StubDialogService(elements: elements)
         dialogService.handleFileDialogResult = DialogActionResult(
@@ -36,8 +34,7 @@ struct DialogFileJSONOutputTests {
                 "saved_path": "/tmp/out.txt",
                 "saved_path_verified": "true",
                 "saved_path_found_via": "expected_path",
-            ]
-        )
+            ])
 
         let services = TestServicesFactory.makePeekabooServices(dialogs: dialogService)
         let result = try await InProcessCommandRunner.run(
@@ -45,8 +42,7 @@ struct DialogFileJSONOutputTests {
                 "dialog", "file", "--path", "/tmp", "--name", "out.txt", "--select", "Save",
                 "--foreground", "--json",
             ],
-            services: services
-        )
+            services: services)
 
         struct Payload: Codable {
             let action: String
@@ -83,6 +79,7 @@ struct DialogFileJSONOutputTests {
         #expect(response.outcome?.route == .local)
         #expect(response.outcome?.deliveryMechanism == .globalEvents)
         #expect(response.outcome?.deliveryMode == .foreground)
+        #expect(dialogService.exactFileRequests.isEmpty)
     }
 
     @Test
@@ -93,12 +90,10 @@ struct DialogFileJSONOutputTests {
                 role: "AXWindow",
                 subrole: "AXDialog",
                 isFileDialog: true,
-                bounds: .init(x: 0, y: 0, width: 420, height: 320)
-            ),
+                bounds: .init(x: 0, y: 0, width: 420, height: 320)),
             buttons: [],
             textFields: [],
-            staticTexts: []
-        )
+            staticTexts: [])
 
         let dialogService = StubDialogService(elements: elements)
         dialogService.handleFileDialogDelay = 2.0
@@ -114,8 +109,7 @@ struct DialogFileJSONOutputTests {
                 "--foreground",
                 "--json",
             ],
-            services: services
-        )
+            services: services)
 
         let output = result.stdout.isEmpty ? result.stderr : result.stdout
         let response = try JSONDecoder().decode(JSONResponse.self, from: Data(output.utf8))
@@ -129,25 +123,30 @@ struct DialogFileJSONOutputTests {
         let dialogService = Self.successfulDialogService()
         dialogService.handleFileDialogResult = Self.successResult(
             targetIdentity: DialogFileFocusWindowService.identity,
-            targetBounds: DialogFileFocusWindowService.bounds
-        )
+            targetBounds: DialogFileFocusWindowService.bounds)
         let windows = DialogFileFocusWindowService()
         let services = TestServicesFactory.makePeekabooServices(
             windows: windows,
-            dialogs: dialogService
-        )
+            dialogs: dialogService)
 
         let result = try await InProcessCommandRunner.run(
             Self.targetedArguments,
-            services: services
-        )
+            services: services)
         let object = try Self.jsonObject(result.stdout)
         let target = try #require(object["target_identity"] as? [String: Any])
         let receipt = try #require(object["target_receipt"] as? [String: Any])
         let outcome = try #require(object["outcome"] as? [String: Any])
 
         #expect(result.exitStatus == 0)
-        #expect(windows.pinnedFocusCalls.count == 1)
+        #expect(windows.pinnedFocusCalls.isEmpty)
+        let request = try #require(dialogService.exactFileRequests.first)
+        #expect(request.target.windowID == DialogFileFocusWindowService.windowID)
+        #expect(request.target.processIdentifier == DialogFileFocusWindowService.processIdentifier)
+        #expect(request.path == "/tmp")
+        #expect(request.filename == "out.txt")
+        #expect(request.actionButton == "Save")
+        #expect(request.focus.timeout == 0.001)
+        #expect(request.focus.retryCount == 1)
         #expect(target["kind"] as? String == "window")
         #expect(target["pid"] as? Int == Int(DialogFileFocusWindowService.processIdentifier))
         #expect(target["process_start_identity_decimal"] as? String ==
@@ -165,21 +164,19 @@ struct DialogFileJSONOutputTests {
         let windows = DialogFileFocusWindowService()
         let services = TestServicesFactory.makePeekabooServices(
             windows: windows,
-            dialogs: dialogService
-        )
+            dialogs: dialogService)
 
         let result = try await InProcessCommandRunner.run(
             Self.targetedArguments,
-            services: services
-        )
+            services: services)
         let object = try Self.jsonObject(result.stdout)
         let outcome = try #require(object["outcome"] as? [String: Any])
 
-        #expect(result.exitStatus == 0)
-        #expect(windows.pinnedFocusCalls.count == 1)
+        #expect(result.exitStatus == 1)
+        #expect(windows.pinnedFocusCalls.isEmpty)
         #expect(object["target_identity"] == nil)
         #expect(object["target_receipt"] == nil)
-        #expect(outcome["state"] as? String == "dispatched_unverified")
+        #expect(outcome["state"] as? String == "indeterminate")
         #expect(outcome["dispatched_unit_count"] as? Int == 2)
     }
 
@@ -190,28 +187,24 @@ struct DialogFileJSONOutputTests {
             success: true,
             action: .handleFileDialog,
             details: ["button_clicked": "Save"],
-            outcome: nil,
+            outcome: Self.ownerOutcome,
             targetReceipt: DesktopActionTargetReceipt(
                 processIdentifier: DialogFileFocusWindowService.processIdentifier,
                 processStartIdentity: DialogFileFocusWindowService.processStartIdentity,
-                windowID: DialogFileFocusWindowService.windowID
-            )
-        )
+                windowID: DialogFileFocusWindowService.windowID))
         let windows = DialogFileFocusWindowService()
         let services = TestServicesFactory.makePeekabooServices(
             windows: windows,
-            dialogs: dialogService
-        )
+            dialogs: dialogService)
 
         let result = try await InProcessCommandRunner.run(
             Self.targetedArguments,
-            services: services
-        )
+            services: services)
         let object = try Self.jsonObject(result.stdout)
         let outcome = try #require(object["outcome"] as? [String: Any])
 
         #expect(result.exitStatus == 1)
-        #expect(windows.pinnedFocusCalls.count == 1)
+        #expect(windows.pinnedFocusCalls.isEmpty)
         #expect(object["target_identity"] == nil)
         #expect(object["target_receipt"] == nil)
         #expect(outcome["state"] as? String == "indeterminate")
@@ -223,12 +216,13 @@ struct DialogFileJSONOutputTests {
         [
             "dialog", "file",
             "--window-id", String(DialogFileFocusWindowService.windowID),
+            "--pid", String(DialogFileFocusWindowService.processIdentifier),
             "--path", "/tmp",
             "--name", "out.txt",
             "--select", "Save",
             "--foreground",
             "--focus-timeout", "1ms",
-            "--focus-retry-count", "0",
+            "--focus-retry-count", "1",
             "--json",
             "--no-remote",
         ]
@@ -241,31 +235,34 @@ struct DialogFileJSONOutputTests {
                 role: "AXWindow",
                 subrole: "AXDialog",
                 isFileDialog: true,
-                bounds: .init(x: 0, y: 0, width: 420, height: 320)
-            )
-        ))
+                bounds: .init(x: 0, y: 0, width: 420, height: 320))))
     }
 
     private static func successResult(
         targetIdentity: WindowMutationIdentity? = nil,
-        targetBounds: CGRect? = nil
-    ) -> DialogActionResult {
+        targetBounds: CGRect? = nil) -> DialogActionResult
+    {
         DialogActionResult(
             success: true,
             action: .handleFileDialog,
             details: ["button_clicked": "Save"],
-            outcome: nil,
+            outcome: self.ownerOutcome,
             targetReceipt: targetIdentity.map {
                 DesktopActionTargetReceipt(
                     processIdentifier: $0.ownerProcessIdentifier,
                     processStartIdentity: $0.ownerProcessStartIdentity,
-                    windowID: $0.windowID
-                )
+                    windowID: $0.windowID)
             },
             targetWindowIdentity: targetIdentity,
             targetWindowBounds: targetBounds,
-            focusedElement: nil
-        )
+            focusedElement: nil)
+    }
+
+    private static var ownerOutcome: DesktopActionOutcome {
+        .dispatchedUnverified(
+            delivery: .init(mechanism: .composite, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .init(2))
     }
 
     private static func jsonObject(_ output: String) throws -> [String: Any] {
@@ -285,8 +282,7 @@ WindowManagementPinnedFocusActionResultProviding {
         windowID: windowID,
         ownerProcessIdentifier: processIdentifier,
         ownerProcessStartIdentity: processStartIdentity,
-        capturedBounds: bounds
-    )
+        capturedBounds: bounds)
 
     private(set) var pinnedFocusCalls: [(target: WindowTarget, identity: WindowMutationIdentity)] = []
 
@@ -297,8 +293,7 @@ WindowManagementPinnedFocusActionResultProviding {
                     windowID: Self.windowID,
                     title: "Save",
                     bounds: Self.bounds,
-                    mutationIdentity: Self.identity
-                ),
+                    mutationIdentity: Self.identity),
             ],
         ])
     }
@@ -311,20 +306,17 @@ WindowManagementPinnedFocusActionResultProviding {
     @MainActor
     func focusWindowActionResult(
         target: WindowTarget,
-        expectedIdentity: WindowMutationIdentity
-    ) async throws -> UIAutomationActionResult<Void> {
+        expectedIdentity: WindowMutationIdentity) async throws -> UIAutomationActionResult<Void>
+    {
         self.pinnedFocusCalls.append((target, expectedIdentity))
-        try await self.focusWindow(target: target)
+        try await focusWindow(target: target)
         return try UIAutomationActionResult(
             payload: (),
             outcome: .confirmedChange(
                 delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
-                unitCount: .one
-            ),
+                unitCount: .one),
             targetIdentity: DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
                 identity: expectedIdentity,
-                bounds: Self.bounds
-            ))
-        )
+                bounds: Self.bounds)))
     }
 }

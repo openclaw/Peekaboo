@@ -29,6 +29,9 @@ extension PeekabooBridgeRequest {
     }
 
     var minimumNegotiatedProtocolVersion: PeekabooBridgeProtocolVersion? {
+        if self.requiresExactFileDialogExecution {
+            return PeekabooBridgeConstants.exactFileDialogExecutionVersion
+        }
         if self.requiresBackgroundCoordinateScroll {
             return PeekabooBridgeConstants.backgroundCoordinateScrollVersion
         }
@@ -79,6 +82,11 @@ extension PeekabooBridgeRequest {
         default:
             return nil
         }
+    }
+
+    var requiresExactFileDialogExecution: Bool {
+        guard case let .dialogHandleFile(payload) = self.unwrappedOperationRequest else { return false }
+        return payload.execution != nil
     }
 
     var requiresClipboardGuardedExactWindowHotkey: Bool {

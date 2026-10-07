@@ -160,6 +160,14 @@ Run these commands from the repository root:
 ./scripts/playground-log.sh -s "button"
 ```
 
+Category and search values are literal text, not shell commands or predicate expressions. Missing option values
+exit with status 2 before reading logs; supplied empty or dash-prefixed values are not missing arguments.
+`--lines` limits completed text queries only. `--json` preserves the producer's framing, and `--follow` forwards
+events without waiting for the stream to finish; neither uses the line limit. Live JSON need not be one document.
+Historical `--errors` queries use the native `logType` severity. Failed queries, invalid line limits and output-file
+errors remain nonzero, and a failed export never prints a save confirmation. Text output retains category colors
+without interpreting backslash escapes inside log messages.
+
 ### Using pblog (if available)
 ```bash
 # Stream logs

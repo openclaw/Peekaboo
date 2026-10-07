@@ -114,6 +114,22 @@ extension DialogService {
         }
     }
 
+    func setFileDialogValue(_ value: String, field: Element) throws -> DesktopActionOutcome? {
+        guard field.isAttributeSettable(named: AXAttributeNames.kAXValueAttribute) else { return nil }
+        guard field.setValue(value, forAttribute: AXAttributeNames.kAXValueAttribute) else {
+            throw DesktopActionFailure.indeterminate(
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: "File-dialog value assignment returned without acceptance evidence.",
+                hint: "Observe the field before retrying; keyboard fallback was not attempted.")
+        }
+        return .dispatchedUnverified(
+            delivery: .init(mechanism: .accessibilityValue, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+    }
+
     func collectButtons(from element: Element) -> [Element] {
         DialogTraversal.collectUniqueDepthFirst(
             from: element,

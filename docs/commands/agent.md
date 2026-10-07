@@ -28,6 +28,7 @@ read_when:
 
 ## Implementation notes
 - The command resolves output “modes” (`minimal`, `compact`, `enhanced`, `quiet`, `verbose`) using terminal detection heuristics; `--simple` and `--no-color` force minimal mode, while `--quiet` suppresses progress output entirely.
+- Task and tool text used in terminal titles has C0/C1 control scalars removed before either VibeTunnel or ANSI output. Accents, emoji and Unicode joiners remain intact; title text cannot introduce additional terminal escape commands.
 - JSON and quiet runs skip progress-event construction and rendering but retain provider streaming, typed tool results,
   usage, execution traces, safety metadata, and session history. SDK event delegates keep receiving events by default;
   `receivesAgentEvents = false` opts out for one execution without changing provider selection.
@@ -76,6 +77,10 @@ read_when:
   background-only session cannot be broadened on resume, and editing session JSON cannot authorize foreground work.
   Each continuation regenerates its system prompt for the current invocation ceiling, so a stored foreground-capable
   session resumed without the flag does not keep foreground examples or guidance.
+- Each execution tailors actionable system-prompt guidance to its acquired, filtered tool catalog. Disabled tools no
+  longer contribute recipes; authority, outcome-evidence and fresh-observation rules remain unconditional. Both
+  streaming and nonstreaming execution preserve message identity/history and use the same prompt in failure checkpoints.
+  `peekaboo learn` similarly describes its filtered catalog. Tool availability never grants additional authority.
 - Background-only Agent typing requires an explicit fresh exact non-dialog snapshot; an optional element ID must come
   from that snapshot. Snapshot typing cannot include competing app/PID/window selectors. Direct-text paste
   remains available through a generation-pinned app/PID/window authorization with a canonical background result.

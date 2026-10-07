@@ -10,8 +10,7 @@ extension DialogCommand {
     struct FileSubcommand: ConfirmedActionOutputFormattable, InjectedRuntimeBackedCommand {
         static let commandDescription = CommandDescription(
             commandName: "file",
-            abstract: "Handle file save/open dialogs using DialogService"
-        )
+            abstract: "Handle file save/open dialogs using DialogService")
 
         @Option(help: "Full file path to navigate to")
         var path: String?
@@ -42,57 +41,84 @@ extension DialogCommand {
             let name = self.name
             let select = self.select
             let ensureExpanded = self.ensureExpanded
+            let dialogTarget = try self.target.dialogTargetSelector()
+            let fileFocus = DialogForegroundFocusPolicy(
+                autoFocus: self.focusOptions.autoFocus,
+                timeout: self.focusOptions.focusTimeout ?? 5,
+                retryCount: self.focusOptions.focusRetryCount ?? 3,
+                switchSpace: self.focusOptions.spaceSwitch,
+                bringToCurrentSpace: self.focusOptions.bringToCurrentSpace)
             try await DialogCommand.execute(
                 runtime: runtime,
                 target: self.target,
-                focus: .required(self.focusOptions),
+                focus: dialogTarget.hasTarget ? .none : .required(self.focusOptions),
                 resolveWindowTitle: false,
+                resolveAppHint: !dialogTarget.hasTarget,
                 handlesPeekabooError: true,
                 validate: {
                     guard self.foreground else {
                         throw ValidationError(
-                            "dialog file uses keyboard/coordinate interaction and requires --foreground"
-                        )
+                            "dialog file uses keyboard/coordinate interaction and requires --foreground")
                     }
                 },
                 operation: { context in
                     let result = try await DialogCommand.withTimeout(
                         seconds: self.timeout.seconds,
                         operationName: "dialog file",
-                        desktopMutationWatermarkStore: DesktopMutationWatermarkStore()
-                    ) {
-                        try await context.services.dialogs.handleFileDialog(
+                        desktopMutationWatermarkStore: DesktopMutationWatermarkStore())
+                    {
+                        if context.target.hasTarget {
+                            return try await context.services.dialogs.handleFileDialog(DialogFileExecutionRequest(
+                                target: context.target,
+                                path: path,
+                                filename: name,
+                                actionButton: select,
+                                ensureExpanded: ensureExpanded,
+                                focus: fileFocus))
+                        }
+                        return try await context.services.dialogs.handleFileDialog(
                             path: path,
                             filename: name,
                             actionButton: select,
                             ensureExpanded: ensureExpanded,
-                            appName: context.appHint
-                        )
+                            appName: context.appHint)
                     }
-                    let outcome = result.foregroundOutcomeOrUnverified(
-                        route: context.services.dialogs.foregroundOutcomeRoute
-                    )
+                    let outcome: DesktopActionOutcome
+                    if context.target.hasTarget {
+                        guard result.success, result.action == .handleFileDialog, let reported = result.outcome else {
+                            throw DesktopActionFailure.indeterminate(
+                                route: context.services.dialogs.foregroundOutcomeRoute,
+                                evidence: .completionUnknown,
+                                message: "Exact file execution returned without its canonical result.",
+                                hint: "Observe the exact file dialog before retrying.").attributed(
+                                to: result.targetReceipt)
+                        }
+                        outcome = reported.routed(to: context.services.dialogs.foregroundOutcomeRoute)
+                    } else {
+                        outcome = result.foregroundOutcomeOrUnverified(
+                            route: context.services.dialogs.foregroundOutcomeRoute)
+                    }
                     let targetIdentity: DesktopTargetIdentity?
                     do {
                         targetIdentity = try DialogCommand.exactResultTargetIdentity(
                             from: result,
-                            matching: context.target
-                        )
+                            matching: context.target)
+                        guard !context.target.hasTarget || targetIdentity != nil else {
+                            throw DesktopTargetIdentityError.incompleteExactWindow
+                        }
                     } catch {
                         // The service already returned from the foreground leaf. Preserve that
                         // dispatch while refusing to project setup focus as the file-panel target.
                         try context.actionSequence.recordExactTargetLeaf(
                             outcome: outcome,
                             targetIdentity: nil,
-                            operation: "File dialog"
-                        )
+                            operation: "File dialog")
                         throw error
                     }
                     try context.actionSequence.recordExactTargetLeaf(
                         outcome: outcome,
                         targetIdentity: targetIdentity,
-                        operation: "File dialog"
-                    )
+                        operation: "File dialog")
                     let compositeResult = context.actionSequence.result(payload: ())
 
                     if self.jsonOutput {
@@ -100,13 +126,11 @@ extension DialogCommand {
                             data: self.makeOutput(from: result),
                             outcome: compositeResult.outcome,
                             targetIdentity: compositeResult.targetIdentity,
-                            logger: self.outputLogger
-                        )
+                            logger: self.outputLogger)
                     } else {
                         print(ActionOutcomeHumanRenderer.statusLine(
                             for: compositeResult.outcome ?? outcome,
-                            operation: "File dialog"
-                        ))
+                            operation: "File dialog"))
                         if let path = result.details["path"] {
                             print("  Path: \(path)")
                         }
@@ -127,10 +151,8 @@ extension DialogCommand {
                         .dialog,
                         "action=file path='\(resolvedPath)' name='\(resolvedName)' "
                             + "button='\(buttonClicked)' saved_path='\(savedPath)' "
-                            + "saved_path_verified=\(savedPathVerified) app='\(context.appHint ?? "unknown")'"
-                    )
-                }
-            )
+                            + "saved_path_verified=\(savedPathVerified) app='\(context.appHint ?? "unknown")'")
+                })
         }
 
         private func makeOutput(from result: DialogActionResult) -> FileDialogResult {
@@ -156,8 +178,7 @@ extension DialogCommand {
                 savedPathExpectedDirectory: result.details["saved_path_expected_directory"],
                 savedPathDirectory: result.details["saved_path_directory"],
                 overwriteConfirmed: result.details["overwrite_confirmed"].map { $0 == "true" },
-                ensureExpanded: result.details["ensure_expanded"].map { $0 == "true" }
-            )
+                ensureExpanded: result.details["ensure_expanded"].map { $0 == "true" })
         }
     }
 }

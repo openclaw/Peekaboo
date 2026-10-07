@@ -47,6 +47,15 @@ while (($# > 0)); do
 done
 [[ "$OUTPUT_APP" == /* && ! -e "$OUTPUT_APP" && ! -L "$OUTPUT_APP" ]] || fail 'output app must be new and absolute'
 
+# Install cleanup before allocating/downloading: curl or the second mktemp can fail.
+work_root=""
+download_root=""
+cleanup() {
+    [[ -z "$work_root" ]] || rm -rf -- "$work_root"
+    [[ -z "$download_root" ]] || rm -rf -- "$download_root"
+}
+trap cleanup EXIT
+
 case "$TEST_MODE" in
   1|true|yes|on)
     ARM64_ARCHIVE="${NODE_RUNTIME_ARM64_ARCHIVE:?test arm64 archive required}"
@@ -77,12 +86,6 @@ case "$TEST_MODE" in
 esac
 
 work_root="$(mktemp -d /tmp/peekaboo-node-runtime.XXXXXX)"
-cleanup() {
-  rm -rf -- "$work_root"
-  [[ -z "${download_root:-}" ]] || rm -rf -- "$download_root"
-}
-trap cleanup EXIT
-
 verify_sha() {
   local path="$1"
   local expected="$2"

@@ -81,6 +81,9 @@ public enum PeekabooBridgeConstants {
 
     public static let backgroundCoordinateScrollVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 43)
 
+    /// Additive, capability-gated file execution; legacy file payloads retain their existing contract.
+    public static let exactFileDialogExecutionVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 43)
+
     public static let textSelectionVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 42)
 
     /// Explicit target-only preparation before a clipboard-guarded exact-window paste.
