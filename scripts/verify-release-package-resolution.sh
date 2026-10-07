@@ -87,4 +87,10 @@ actual_revision="$($GIT_BIN -C "$sparkle_checkout" rev-parse HEAD 2>/dev/null ||
 [[ "$actual_revision" == "$expected_revision" ]] || \
   fail "Sparkle checkout revision '$actual_revision' does not match locked revision '$expected_revision'"
 
+# A matching HEAD is insufficient if Xcode compiled edited or additional source.
+# Gitignored build products are allowed; tracked, staged and untracked inputs are not.
+checkout_changes="$("$GIT_BIN" -C "$sparkle_checkout" status --porcelain --untracked-files=all)" || \
+  fail 'Could not inspect Sparkle checkout cleanliness'
+[[ -z "$checkout_changes" ]] || fail 'Sparkle checkout has local changes; rebuild from the clean pinned dependency'
+
 printf 'Verified release package resolution: Sparkle %s (%s)\n' "$expected_version" "$expected_revision"

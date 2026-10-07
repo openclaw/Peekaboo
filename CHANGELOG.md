@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reject negative SDK automation waits before preparation or earlier input, and keep large positive waits safely cancellable without integer overflow. Thanks @rudycelekli! #973.
+- Preserve literal environment values inside configuration JSON strings and omit expanded documents from decode warnings; retain numeric substitutions and credential references. Thanks @rudycelekli! #972.
 - Reject non-ASCII tar size/checksum text and PAX record lengths/keys before decoding can disguise malformed bytes, preserving binary tar numbers and UTF-8 values. Thanks @rudycelekli! #966.
 - Recognize equivalent saved-file paths such as `/tmp` and `/private/tmp` in dialog diagnostics, preserving reported paths and directory-only enforcement.
 - Fix application-targeted file sheets losing their parent-window identity; preserve compatible panels and ignore unrelated alerts when selecting a unique file panel. Thanks @buremba! #951.
@@ -52,6 +54,19 @@
 - Parse documentation front matter before rendering for both LF and CRLF files, preserving page metadata without leaking it into article text; run the complete docs-site regression gate in normal macOS CI. Thanks @rudycelekli! #939.
 - Preserve readable documentation table-of-contents labels and original link query parameters by decoding renderer-owned escapes exactly once before final output escaping; rewrite relative Markdown destinations without losing their query or fragment. Thanks @rudycelekli! #931.
 - Keep Playground log filters and message text literal, reject missing option values, preserve export failures and complete JSON/live output, and match native error severity. Thanks @rudycelekli! #968.
+- Validate smooth duration and step overrides for the human MCP move profile, which forces smooth movement but previously dispatched out-of-range overrides. Thanks @rudycelekli! #970.
+- Report MCP cursor movement directions in screen coordinates, where eastward movement was previously reported as west. Thanks @rudycelekli! #960.
+- Report dialog classification and truncation from cached snapshots instead of always returning a non-dialog, untruncated result. Thanks @rudycelekli! #989.
+- Publish release CLI archives and the app ZIP atomically so a failed write leaves any previous artifact intact. Thanks @rudycelekli! #979.
+- Drain ZIP entry readers before the archive closes its descriptor, so a rejected payload no longer crashes later with an uncaught EBADF (#985). Thanks @rudycelekli! #986.
+- Reject release package resolution when the pinned Sparkle checkout has tracked, staged, or untracked changes. Thanks @rudycelekli! #978.
+- Restore clipboard slots from the current persisted contents instead of a stale per-process cache, and keep multi-item clipboards' item order and boundaries through save and restore. Thanks @rudycelekli! #990.
+- Install the Swift compatibility libraries that standalone CLI builds need next to the binary, so a standalone install loads after moving; release builds keep the mandatory older-SDK runtime audit. Thanks @rudycelekli! #982.
+- Bound release-preflight CLI probes with a timeout and report spawn or timeout failures instead of hanging or misreading them as contract failures. Thanks @rudycelekli! #984.
+- Clean up Node runtime build downloads and work directories when an early transfer or temporary-directory allocation fails. Thanks @rudycelekli! #980.
+- Render capture-timeout and rate-limit retry durations that cannot be represented as integers without trapping. Thanks @rudycelekli! #981.
+- Preserve managed screenshots when a snapshot reuses its own stored image as input, copying through a staged file before replacing the artifact. Thanks @rudycelekli! #987.
+- Require canonical lowercase ASCII hex selected-leaf candidate digests, rejecting full-width digits and letters that Swift's hex check accepted. Thanks @rudycelekli! #983.
 
 ## 4.8.0 - 2026-10-03
 

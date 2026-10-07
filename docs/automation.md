@@ -129,6 +129,16 @@ peekaboo press cmd+s --foreground
 
 Three primitives, four lines. The agent does the same thing under the hood — it just plans the sequence for you.
 
+## Swift SDK waits
+
+Source consumers of the `PeekabooCore` package can call `PeekabooServices.automate(appIdentifier:actions:)` with
+`.wait(milliseconds:)` actions. Waits use signed integer milliseconds: zero remains a successful immediate action,
+and positive values retain the full `Int` range without an overflow-prone nanosecond conversion. Suspended waits are
+cancellable and retain the method's existing action-error wrapping.
+
+A negative wait anywhere in the sequence rejects the entire request before snapshot creation, capture, detection or
+earlier input actions. Correct the request instead of expecting a preceding action to run before the invalid wait.
+
 ## Resilience tips
 
 - Always run [`peekaboo see`](commands/see.md) when an element is unreachable. The AX tree refreshes after focus changes; capture again if a click fails.

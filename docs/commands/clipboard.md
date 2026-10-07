@@ -55,7 +55,7 @@ peekaboo clipboard restore --slot original
 ## Notes
 - Binary reads without `--output` return a summary; use `--output -` to pipe data.
 - File paths for `--file-path` and `--output` accept `~/...`.
-- Slot saves are stored in a dedicated named pasteboard so they work across separate `peekaboo clipboard` invocations.
+- Slot saves are stored in a dedicated named pasteboard so they work across separate `peekaboo clipboard` invocations. Restore reads that board’s current saved contents, preserving separate items and each item’s representations; an older service instance does not reuse a stale local copy.
 - `restore` removes the saved slot after applying it to avoid leaving clipboard snapshots around indefinitely.
 - Size guard: writes larger than 10 MB require `--allow-large`; the guard counts all representations plus any `--also-text` companion text.
 - `--text` writes both `public.plain-text` and `.string` (`public.utf8-plain-text`) for compatibility.

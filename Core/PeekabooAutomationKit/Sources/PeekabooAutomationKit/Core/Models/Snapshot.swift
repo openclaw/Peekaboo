@@ -20,6 +20,9 @@ public nonisolated struct UIAutomationSnapshot: Codable, Sendable {
     public var windowMutationIdentity: WindowMutationIdentity?
     public var focusedElement: FocusedElementIdentity?
     public var captureCoordinateContext: CaptureCoordinateContext?
+    /// Classification retained from a stored detection; absent in legacy or screenshot-only records.
+    public var detectionIsDialog: Bool?
+    public var detectionTruncationInfo: DetectionTruncationInfo?
     public var menuBar: MenuBarData?
     public var windowID: CGWindowID?
     public var windowAXIdentifier: String?
@@ -43,7 +46,9 @@ public nonisolated struct UIAutomationSnapshot: Codable, Sendable {
         menuBar: MenuBarData? = nil,
         windowID: CGWindowID? = nil,
         windowAXIdentifier: String? = nil,
-        lastFocusTime: Date? = nil)
+        lastFocusTime: Date? = nil,
+        detectionIsDialog: Bool? = nil,
+        detectionTruncationInfo: DetectionTruncationInfo? = nil)
     {
         self.version = version
         self.creatorProcessId = creatorProcessId
@@ -63,6 +68,8 @@ public nonisolated struct UIAutomationSnapshot: Codable, Sendable {
         self.windowID = windowID
         self.windowAXIdentifier = windowAXIdentifier
         self.lastFocusTime = lastFocusTime
+        self.detectionIsDialog = detectionIsDialog
+        self.detectionTruncationInfo = detectionTruncationInfo
     }
 }
 

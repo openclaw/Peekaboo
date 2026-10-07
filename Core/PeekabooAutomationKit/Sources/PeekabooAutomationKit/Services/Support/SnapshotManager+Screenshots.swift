@@ -1,4 +1,5 @@
 import CoreGraphics
+import Darwin
 import Foundation
 import PeekabooFoundation
 
@@ -27,23 +28,22 @@ extension SnapshotManager {
         guard FileManager.default.fileExists(atPath: sourceURL.path) else {
             throw CaptureError.fileIOError("Screenshot missing at \(sourceURL.path)")
         }
-        if FileManager.default.fileExists(atPath: rawPath.path) {
-            try FileManager.default.removeItem(at: rawPath)
+        do {
+            try self.copyScreenshotArtifact(from: sourceURL, to: rawPath)
+        } catch {
+            let message = "Failed to copy screenshot to snapshot storage: \(error.localizedDescription)"
+            throw CaptureError.fileIOError(message)
         }
         let annotatedPath = snapshotPath.appendingPathComponent("annotated.png")
         if FileManager.default.fileExists(atPath: annotatedPath.path) {
             try FileManager.default.removeItem(at: annotatedPath)
         }
-        do {
-            try FileManager.default.copyItem(at: sourceURL, to: rawPath)
-        } catch {
-            let message = "Failed to copy screenshot to snapshot storage: \(error.localizedDescription)"
-            throw CaptureError.fileIOError(message)
-        }
 
         snapshotData.screenshotPath = rawPath.path
         snapshotData.annotatedPath = nil
         snapshotData.uiMap = [:]
+        snapshotData.detectionIsDialog = nil
+        snapshotData.detectionTruncationInfo = nil
         snapshotData.applicationName = request.applicationName
         snapshotData.applicationBundleId = request.applicationBundleId
         snapshotData.applicationProcessId = request.applicationProcessId
@@ -80,12 +80,8 @@ extension SnapshotManager {
             throw CaptureError.fileIOError("Annotated screenshot missing at \(sourceURL.path)")
         }
 
-        if FileManager.default.fileExists(atPath: annotatedPath.path) {
-            try FileManager.default.removeItem(at: annotatedPath)
-        }
-
         do {
-            try FileManager.default.copyItem(at: sourceURL, to: annotatedPath)
+            try self.copyScreenshotArtifact(from: sourceURL, to: annotatedPath)
         } catch {
             let message = "Failed to copy annotated screenshot to snapshot storage: \(error.localizedDescription)"
             throw CaptureError.fileIOError(message)
@@ -95,5 +91,16 @@ extension SnapshotManager {
         snapshotData.lastUpdateTime = Date()
 
         try await self.snapshotActor.saveSnapshot(snapshotId: snapshotId, data: snapshotData, at: snapshotPath)
+    }
+
+    /// Finish reading the source before replacing an existing managed artifact.
+    private func copyScreenshotArtifact(from source: URL, to destination: URL) throws {
+        let staged = destination.deletingLastPathComponent()
+            .appendingPathComponent(".screenshot-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: staged) }
+        try FileManager.default.copyItem(at: source, to: staged)
+        guard rename(staged.path, destination.path) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
     }
 }

@@ -87,4 +87,11 @@ Full documentation: https://github.com/openclaw/Peekaboo
 MIT License - see LICENSE file
 EOF
 
-tar -czf "$RELEASE_DIR/$ARTIFACT_NAME.tar.gz" -C "$STAGING_DIR" "$ARTIFACT_NAME"
+ARCHIVE_PATH="$RELEASE_DIR/$ARTIFACT_NAME.tar.gz"
+[ ! -d "$ARCHIVE_PATH" ] || { echo "Archive destination is a directory: $ARCHIVE_PATH" >&2; exit 1; }
+# Publish only a completed archive, leaving any previous artifact intact on write failure.
+ARCHIVE_TEMP_DIR="$(mktemp -d "$RELEASE_DIR/.${ARTIFACT_NAME}.XXXXXX")"
+trap 'rm -rf "$ARCHIVE_TEMP_DIR"' EXIT
+ARCHIVE_TEMP="$ARCHIVE_TEMP_DIR/$ARTIFACT_NAME.tar.gz"
+tar -czf "$ARCHIVE_TEMP" -C "$STAGING_DIR" "$ARTIFACT_NAME"
+mv -f "$ARCHIVE_TEMP" "$ARCHIVE_PATH"

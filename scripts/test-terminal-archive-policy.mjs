@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -384,6 +385,24 @@ try {
       { path: 'Fixture.app/', type: 'directory' },
       { path: 'Fixture.app/value', type: 'file', data: 'payload', trailingCompressedBytes: suffix }
     ]));
+    if (name === 'multi-chunk') {
+      // A caught validation error must not leave a reader using the closed archive
+      // descriptor or emit a later uncaught inflater error in the caller's process.
+      const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
+        import assert from 'node:assert/strict';
+        const { validateZipArchive } = await import(process.argv[1]);
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          await assert.rejects(validateZipArchive(process.argv[2], 'Fixture.app'),
+            /unbound bytes after its DEFLATE stream/);
+          assert.equal((await validateZipArchive(process.argv[3], 'Fixture.app')).length, 4);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        console.log('PASS rejected payload cleanup and subsequent valid archives');
+      `, new URL('./terminal-archive-policy.mjs', import.meta.url).href, trailingZip, safeZip],
+      { encoding: 'utf8', timeout: 10000 });
+      assert.equal(child.status, 0, child.stderr || String(child.error));
+      assert.match(child.stdout, /PASS rejected payload cleanup/);
+    }
     await assert.rejects(validateZipArchive(trailingZip, 'Fixture.app'), /unbound bytes after its DEFLATE stream/);
   }
 
