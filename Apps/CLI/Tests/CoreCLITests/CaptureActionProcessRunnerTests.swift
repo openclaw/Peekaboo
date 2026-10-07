@@ -153,9 +153,10 @@ struct CaptureActionProcessRunnerTests {
 
     @Test
     func `spawn restores default TERM handling after coordinator installation`() async throws {
+        // Allow process preparation on loaded runners; this test checks TERM disposition.
         let result = try await CaptureActionProcessRunner.run(
             command: ["/bin/sleep", "30"],
-            timeoutSeconds: 0.1,
+            timeoutSeconds: 2,
             signalProcessGroup: { pid, signal in
                 _ = Darwin.kill(-pid, signal)
             },

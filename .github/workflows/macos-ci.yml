@@ -59,6 +59,12 @@ jobs:
       - name: Verify release build-number contracts
         run: bash scripts/test-release-version.sh
 
+      - name: Verify release archive and dependency contracts
+        run: |
+          node scripts/test-terminal-archive-policy.mjs
+          python3 scripts/test-release-archive-publication.py
+          bash scripts/test-release-package-resolution.sh
+
       - name: Verify log helper contracts
         run: pnpm run test:log-scripts
 

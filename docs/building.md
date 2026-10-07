@@ -141,6 +141,12 @@ Peekaboo's production graph or replace its compile, test, and release gates.
 
 ## Swift runtime compatibility
 
+Release package verification requires the pinned Sparkle checkout to have no tracked, staged, or untracked source
+changes; ignored build output is permitted. Matching the lockfile revision alone does not prove clean source.
+CLI tarballs and app ZIPs are written beside their destination and replace an existing archive only after the
+write succeeds, so a failed packaging attempt preserves the previous artifact. ZIP validation finishes each entry's
+pending reads before closing the archive, including when rejecting malformed compressed data.
+
 Swift Collections is constrained to exact 1.6.0 at the shared external-dependency boundary, including unlocked CLI
 source builds and release preflight. Version 1.7.0 can emit a strong `_swift_initBorrow` import from its
 availability-qualified borrowing helpers, causing CLI startup to fail on macOS 26 and earlier. The existing tracked
