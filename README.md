@@ -51,9 +51,9 @@ peekaboo see --app Finder --json
 
 That is the core loop: observe the current screen, choose an element from the result, and act on it.
 
-## What's new in 4.8.0
+## What's new in 4.9.0
 
-Peekaboo 4.8.0 adds exact-window background drag, text selection (`select-text`), and coordinate scrolling (`scroll --at`) to the CLI and MCP, and makes background rich paste work in freshly launched windows while fencing it against concurrent clipboard changes. Background scrolling now reaches Safari, `see --fresh` takes uncached Accessibility reads on request, observations report date-valued controls, and capture recovers when slow startup safety checks finish late. These background actions and fresh reads need the matching 4.8.0 Peekaboo app as the Bridge host; see the changelog Compatibility notes.
+Peekaboo 4.9.0 adds exact app- and PID-scoped menu-bar extra clicks (`menubar click --app` / `--pid`) and keeps foreground file dialogs bound to their parent window from focus through the saved-file receipt. Agent guidance now matches the tools each run actually has, visualizer overlays show from a hidden companion app, clipboard slots restore faithfully across processes, and release archives and artifacts are validated far more strictly. Scoped menu-bar clicks and exact file-dialog execution need the matching 4.9.0 Peekaboo app as the Bridge host; see the changelog Compatibility notes.
 
 ## Automate an app
 
