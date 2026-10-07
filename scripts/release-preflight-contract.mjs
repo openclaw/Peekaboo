@@ -260,6 +260,18 @@ function isValidCalendarDate(value) {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 
+/**
+ * Chooses the remote ref the publication preflight compares HEAD against. A release branch
+ * (`release/<version>` with --force) is frozen at its cut and must match its own pushed branch;
+ * every other checkout keeps comparing against origin/main.
+ */
+export function releaseFreshnessReference({ branch, version, force }) {
+  if (force && typeof version === 'string' && version.length > 0 && branch === `release/${version}`) {
+    return { remoteRef: `origin/${branch}`, releaseBranch: true };
+  }
+  return { remoteRef: 'origin/main', releaseBranch: false };
+}
+
 export function validateChangelogContract({ changelogSource, version, requireDatedHeading }) {
   const escapedVersion = escapeRegExp(version);
   const headingPattern = new RegExp(

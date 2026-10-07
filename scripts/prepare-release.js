@@ -18,6 +18,7 @@ import {
   MIGRATION_ADVISOR_PATH,
   REMOVED_ROOT_COMMANDS,
   parseRemovedRootReplacements,
+  releaseFreshnessReference,
   validateChangelogContract,
   validateNpmVersionAvailability,
   validateSourceDocumentationContracts,
@@ -183,13 +184,44 @@ function checkGitStatus() {
   }
   logSuccess('No uncommitted changes');
 
-  // Check if up to date with origin
+  // Check if up to date with origin. A release branch is frozen at its cut and must match its pushed branch.
   exec('git fetch');
-  const behind = exec('git rev-list HEAD..origin/main --count');
-  const ahead = exec('git rev-list origin/main..HEAD --count');
-  
+  const { version } = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8'));
+  const { remoteRef, releaseBranch } = releaseFreshnessReference({ branch: currentBranch, version, force });
+  if (releaseBranch) {
+    // Ask the live remote: `git fetch` does not prune, so a stale tracking ref could outlive the pushed branch.
+    const head = exec('git rev-parse HEAD');
+    let pushed = '';
+    try {
+      pushed = execFileSync('git', ['ls-remote', '--exit-code', 'origin', `refs/heads/${currentBranch}`], {
+        cwd: projectRoot,
+        encoding: 'utf8',
+        stdio: 'pipe'
+      }).trim().split(/\s+/)[0] ?? '';
+    } catch {
+      pushed = '';
+    }
+    if (!/^[0-9a-f]{40}$/.test(pushed)) {
+      logError(`${currentBranch} is not on origin; push it before releasing`);
+      return false;
+    }
+    if (pushed !== head) {
+      logError(`HEAD ${head.slice(0, 9)} does not match the pushed ${remoteRef} ${pushed.slice(0, 9)}`);
+      return false;
+    }
+    logSuccess(`Release branch matches the pushed ${remoteRef}`);
+    const landedAfterCut = exec('git rev-list HEAD..origin/main --count', { allowFailure: true });
+    if (landedAfterCut && landedAfterCut !== '0') {
+      logWarning(`${landedAfterCut} commits landed on origin/main after the release cut; they ship in a later release`);
+    }
+    return true;
+  }
+
+  const behind = exec(`git rev-list HEAD..${remoteRef} --count`);
+  const ahead = exec(`git rev-list ${remoteRef}..HEAD --count`);
+
   if (behind !== '0') {
-    logError(`Branch is ${behind} commits behind origin/main`);
+    logError(`Branch is ${behind} commits behind ${remoteRef}`);
     return false;
   }
   if (ahead !== '0') {

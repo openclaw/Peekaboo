@@ -14,6 +14,7 @@ import {
   REMOVED_ROOT_COMMANDS,
   parseMigrationAdvisorForms,
   parseRegistryCommands,
+  releaseFreshnessReference,
   validateChangelogContract,
   validateCommandDocsContract,
   validateMigrationGuideContract,
@@ -184,6 +185,31 @@ test('version parity reports missing and stale release surfaces', () => {
     'CLI version mismatch: expected 4.0.0, found 3.10.0',
     'Playground version field is missing'
   ]);
+});
+
+test('release freshness compares a forced release branch against its own pushed branch only', () => {
+  assert.deepEqual(releaseFreshnessReference({ branch: 'release/4.9.0', version: '4.9.0', force: true }),
+    { remoteRef: 'origin/release/4.9.0', releaseBranch: true });
+  for (const request of [
+    { branch: 'main', version: '4.9.0', force: false },
+    { branch: 'main', version: '4.9.0', force: true },
+    { branch: 'release/4.9.0', version: '4.9.0', force: false },
+    { branch: 'release/4.8.0', version: '4.9.0', force: true },
+    { branch: 'feature/x', version: '4.9.0', force: true },
+    { branch: 'release/', version: '', force: true }
+  ]) {
+    assert.deepEqual(releaseFreshnessReference(request), { remoteRef: 'origin/main', releaseBranch: false },
+      JSON.stringify(request));
+  }
+});
+
+test('publication preflight routes its freshness comparison through the release policy', () => {
+  assert.match(prepareSource, /releaseFreshnessReference\(\{ branch: currentBranch, version, force \}\)/);
+  assert.match(prepareSource, /git rev-list HEAD\.\.\$\{remoteRef\} --count/);
+  // A release branch is checked against the live remote, never a possibly stale tracking ref.
+  assert.match(prepareSource, /\['ls-remote', '--exit-code', 'origin', `refs\/heads\/\$\{currentBranch\}`\]/);
+  assert.match(prepareSource, /does not match the pushed \$\{remoteRef\}/);
+  assert.doesNotMatch(prepareSource, /git rev-list HEAD\.\.origin\/main --count'\);\n\s*const ahead/);
 });
 
 test('npm version availability fails closed on failed, empty, and malformed registry responses', () => {
