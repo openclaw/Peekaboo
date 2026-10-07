@@ -479,6 +479,48 @@ struct ActionOutcomeCommandTests {
         #expect(!humanResult.combinedOutput.contains("--force"))
     }
 
+    @Test(arguments: DesktopActionOutcomeFixtures.batchEvidenceCases)
+    func `quit batch preserves running accepted and response lost evidence`(
+        fixture: DesktopActionBatchEvidenceFixture
+    ) async throws {
+        let applications = (0..<2).map { index in
+            AutomationTestFixtures.application(
+                processIdentifier: Int32(42 + index),
+                processStartIdentity: UInt64(7 + index),
+                bundleIdentifier: "com.example.batch-\(index)",
+                name: "Batch Fixture \(index)",
+                isHiddenKnown: true,
+                activationPolicy: .regular
+            )
+        }
+        let service = OutcomeStubApplicationService(applications: applications)
+        service.quitActionSteps = try fixture.outcomes.enumerated().map { index, outcome in
+            if fixture.failingIndexes.contains(index) {
+                try .failure(#require(DesktopActionFailure(outcome: outcome, message: "Owned batch fixture")))
+            } else {
+                .result(payload: true, outcome: outcome)
+            }
+        }
+        let result = try await InProcessCommandRunner.runWithOwnedRuntime(
+            ["app", "quit", "--all", "--json", "--no-remote"],
+            services: TestServicesFactory.makePeekabooServices(applications: service)
+        )
+        let object = try Self.jsonObject(result.stdout)
+        let outcome = try #require(object["outcome"] as? [String: Any])
+        let data = try #require(object["data"] as? [String: Any])
+        let rows = try #require(data["results"] as? [[String: Any]])
+        let projection = try JSONDecoder().decode(
+            DesktopActionOutcome.Projection.self,
+            from: JSONSerialization.data(withJSONObject: outcome)
+        )
+        #expect(projection == fixture.expectedOutcome.projection)
+        #expect(result.exitStatus == (fixture.failingIndexes.isEmpty ? 0 : 1))
+        #expect(object["success"] as? Bool == fixture.failingIndexes.isEmpty)
+        #expect(service.quitActionResultCallCount == 2)
+        #expect(rows.count == 2)
+        #expect(rows.filter { $0["success"] as? Bool == true }.count == fixture.succeededCount)
+    }
+
     @Test
     func `quit batch keeps response loss unsafe when another attempt has no receipt`() async throws {
         let applications = [
@@ -694,8 +736,10 @@ struct ActionOutcomeCommandTests {
         #expect((error["message"] as? String)?.contains("cancelled after 1 of 2") == true)
     }
 
-    @Test
-    func `quit batch cancellation cannot confirm only its completed canonical prefix`() async throws {
+    @Test(arguments: [nil, .responseLost, .completionUnknown] as [DesktopActionOutcome.IndeterminateEvidence?])
+    func `quit batch cancellation preserves canonical prefix uncertainty`(
+        evidence: DesktopActionOutcome.IndeterminateEvidence?
+    ) async throws {
         let applications = [
             AutomationTestFixtures.application(
                 processIdentifier: 42,
@@ -715,7 +759,15 @@ struct ActionOutcomeCommandTests {
             ),
         ]
         let service = OutcomeStubApplicationService(applications: applications)
-        service.quitActionSteps = [
+        let prefix: OutcomeStubApplicationService.QuitActionStep = if let evidence {
+            .failure(DesktopActionFailure.indeterminate(
+                route: .bridge,
+                delivery: .init(mechanism: .nativeFramework, mode: .background),
+                evidence: evidence,
+                unitCount: .one,
+                message: "Synthetic quit response was not confirmed"
+            ))
+        } else {
             .result(
                 payload: true,
                 outcome: .confirmedChange(
@@ -723,21 +775,44 @@ struct ActionOutcomeCommandTests {
                     delivery: .init(mechanism: .nativeFramework, mode: .background),
                     unitCount: .one
                 )
-            ),
-            .failure(CancellationError()),
+            )
+        }
+        service.quitActionSteps = [
+            prefix,
+            .failureAndCancel(CancellationError()),
         ]
         let services = TestServicesFactory.makePeekabooServices(applications: service)
 
-        let result = try await InProcessCommandRunner.run(
-            ["app", "quit", "--all", "--json", "--no-remote"],
-            services: services
-        )
+        let execution = Task { @MainActor in
+            try await InProcessCommandRunner.runWithOwnedRuntime(
+                ["app", "quit", "--all", "--json", "--no-remote"],
+                services: services
+            )
+        }
+        let result = try await execution.value
         let object = try Self.jsonObject(result.stdout)
         let outcome = try #require(object["outcome"] as? [String: Any])
         let error = try #require(object["error"] as? [String: Any])
+        let data = try #require(object["data"] as? [String: Any])
+        let rows = try #require(data["results"] as? [[String: Any]])
+        let expected = DesktopActionOutcome.indeterminate(
+            route: .bridge,
+            evidence: evidence ?? .completionUnknown,
+            unitCount: DesktopActionOutcome.DispatchUnitCount(2)
+        )
+        let projected = try JSONDecoder().decode(
+            DesktopActionOutcome.Projection.self,
+            from: JSONSerialization.data(withJSONObject: outcome)
+        )
 
         #expect(result.exitStatus == 1)
         #expect(service.quitActionResultCallCount == 2)
+        #expect(execution.isCancelled)
+        #expect(rows.count == 1)
+        #expect(rows.first?["success"] as? Bool == (evidence == nil))
+        #expect(projected == expected.projection)
+        #expect(outcome["delivery_mode"] == nil)
+        #expect(outcome["delivery_mechanism"] == nil)
         #expect(object["success"] as? Bool == false)
         #expect(object["effect"] as? String == "unverifiable")
         #expect(outcome["state"] as? String == "indeterminate")

@@ -117,7 +117,11 @@ EOF
 cat >"$TEST_DIR/git" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$PACKAGE_RESOLUTION_TEST_REVISION"
+case "${3:-}" in
+  rev-parse) printf '%s\n' "$PACKAGE_RESOLUTION_TEST_REVISION" ;;
+  status) exit 0 ;;
+  *) exit 2 ;;
+esac
 EOF
 chmod 755 "$TEST_DIR/git"
 
@@ -154,5 +158,58 @@ export PACKAGE_RESOLUTION_TEST_REVISION="$EXPECTED_SPARKLE_REVISION"
 rm -f "$fixture_cli_lock"
 ln -s "$fixture_workspace_lock" "$fixture_cli_lock"
 assert_fixture_refused cli-lock-symlink 'Ignored CLI package lock is not a regular file'
+
+# Exercise the public verifier with real Git, not just a revision-printing stub.
+rm "$fixture_cli_lock"
+git -C "$fixture_checkout" init -q
+git -C "$fixture_checkout" config user.name 'Release resolution fixture'
+git -C "$fixture_checkout" config user.email 'fixture@example.invalid'
+mkdir -p "$fixture_checkout/Sources"
+printf 'public let fixture = 1\n' >"$fixture_checkout/Sources/Updater.swift"
+printf '.build/\n' >"$fixture_checkout/.gitignore"
+git -C "$fixture_checkout" add .
+git -C "$fixture_checkout" -c commit.gpgsign=false commit -qm fixture
+native_revision="$(git -C "$fixture_checkout" rev-parse HEAD)"
+jq --arg revision "$native_revision" '.pins[0].state.revision = $revision' \
+  "$fixture_workspace_lock" >"$TEST_DIR/native-lock.json"
+mv "$TEST_DIR/native-lock.json" "$fixture_workspace_lock"
+
+verify_native_fixture() {
+  "$ROOT_DIR/scripts/verify-release-package-resolution.sh" \
+    --source-root "$fixture_root" --derived-data "$fixture_derived" --app "$fixture_app"
+}
+assert_native_dirty_refused() {
+  local label="$1"
+  if verify_native_fixture >"$TEST_DIR/$label.out" 2>"$TEST_DIR/$label.err"; then
+    fail "$label dirty dependency checkout unexpectedly passed"
+  fi
+  grep -Fq 'Sparkle checkout has local changes' "$TEST_DIR/$label.err" || fail "$label returned wrong refusal"
+}
+verify_native_fixture >/dev/null
+printf 'public let fixture = 2\n' >"$fixture_checkout/Sources/Updater.swift"
+assert_native_dirty_refused tracked-change
+git -C "$fixture_checkout" add Sources/Updater.swift
+assert_native_dirty_refused staged-change
+git -C "$fixture_checkout" reset -q --hard HEAD
+printf 'public let extra = 3\n' >"$fixture_checkout/Sources/Extra.swift"
+assert_native_dirty_refused untracked-source
+rm "$fixture_checkout/Sources/Extra.swift"
+mkdir -p "$fixture_checkout/.build"
+printf 'generated output\n' >"$fixture_checkout/.build/output"
+verify_native_fixture >/dev/null
+cat >"$TEST_DIR/failed-status-git" <<'EOF'
+#!/usr/bin/env bash
+case "${3:-}" in
+  status) exit 19 ;;
+  *) exec /usr/bin/git "$@" ;;
+esac
+EOF
+chmod 755 "$TEST_DIR/failed-status-git"
+if MAC_RELEASE_GIT_BIN="$TEST_DIR/failed-status-git" verify_native_fixture \
+  >"$TEST_DIR/failed-status.out" 2>"$TEST_DIR/failed-status.err"; then
+  fail 'failed Git status unexpectedly passed'
+fi
+grep -Fq 'Could not inspect Sparkle checkout cleanliness' "$TEST_DIR/failed-status.err" || \
+  fail 'failed Git status returned wrong refusal'
 
 printf 'test-release-package-resolution: ok\n'

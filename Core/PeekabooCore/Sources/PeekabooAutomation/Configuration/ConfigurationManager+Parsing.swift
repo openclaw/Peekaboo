@@ -10,13 +10,12 @@ extension ConfigurationManager {
                 return nil
             }
 
-            var expandedJSON = ""
-
             do {
                 let data = try Data(contentsOf: URL(fileURLWithPath: configPath))
                 let jsonString = String(data: data, encoding: .utf8) ?? ""
                 let cleanedJSON = self.stripJSONComments(from: jsonString)
-                expandedJSON = self.expandEnvironmentVariables(in: cleanedJSON, preservingKeys: ["apiKey"])
+                let expandedJSON = self.expandEnvironmentVariables(
+                    in: cleanedJSON, preservingKeys: ["apiKey"], escapingJSONStringContents: true)
 
                 if let expandedData = expandedJSON.data(using: .utf8) {
                     let config = try JSONCoding.decoder.decode(Configuration.self, from: expandedData)
@@ -24,7 +23,7 @@ extension ConfigurationManager {
                     return config
                 }
             } catch let error as DecodingError {
-                self.printDecodingWarning(error, expandedJSON: expandedJSON)
+                self.printDecodingWarning(error)
             } catch {
                 self.printWarning("Failed to load configuration from \(configPath): \(error)")
             }
@@ -45,7 +44,11 @@ extension ConfigurationManager {
     }
 
     /// Expand environment variables in the format `${VAR_NAME}` except in selected JSON string properties.
-    func expandEnvironmentVariables(in text: String, preservingKeys: Set<String>) -> String {
+    func expandEnvironmentVariables(
+        in text: String,
+        preservingKeys: Set<String>,
+        escapingJSONStringContents: Bool = false) -> String
+    {
         let pattern = #"\$\{([A-Za-z_][A-Za-z0-9_]*)\}"#
 
         do {
@@ -67,7 +70,17 @@ extension ConfigurationManager {
                     if let value = self.environmentValue(for: varName),
                        let fullMatch = Range(match.range, in: text)
                     {
-                        result.replaceSubrange(fullMatch, with: value)
+                        let replacement: String
+                        if escapingJSONStringContents, self.isInsideJSONString(at: fullMatch.lowerBound, in: text) {
+                            let encoded = try JSONEncoder().encode(value)
+                            guard let contents = String(bytes: encoded.dropFirst().dropLast(), encoding: .utf8) else {
+                                continue
+                            }
+                            replacement = contents
+                        } else {
+                            replacement = value
+                        }
+                        result.replaceSubrange(fullMatch, with: replacement)
                     }
                 }
             }
@@ -76,6 +89,21 @@ extension ConfigurationManager {
         } catch {
             return text
         }
+    }
+
+    private func isInsideJSONString(at position: String.Index, in text: String) -> Bool {
+        var inString = false
+        var escaped = false
+        for character in text[..<position].unicodeScalars {
+            if escaped {
+                escaped = false
+            } else if character == "\\", inString {
+                escaped = true
+            } else if character == "\"" {
+                inString.toggle()
+            }
+        }
+        return inString
     }
 
     private func jsonStringPropertyName(containing match: NSTextCheckingResult, in text: String) -> String? {
@@ -104,7 +132,7 @@ extension ConfigurationManager {
         return String(cString: rawValue)
     }
 
-    private func printDecodingWarning(_ error: DecodingError, expandedJSON: String) {
+    private func printDecodingWarning(_ error: DecodingError) {
         switch error {
         case let .keyNotFound(key, context):
             let path = self.codingPathDescription(context)
@@ -118,16 +146,8 @@ extension ConfigurationManager {
         case let .dataCorrupted(context):
             let path = self.codingPathDescription(context)
             self.printWarning("Data corrupted at path: \(path)")
-            if let underlyingError = context.underlyingError {
-                print("Underlying error: \(underlyingError)")
-            }
         @unknown default:
-            self.printWarning("Unknown decoding error: \(error)")
-        }
-
-        if expandedJSON.count < 5000 {
-            self.printWarning("Cleaned JSON that failed to parse:")
-            print(expandedJSON)
+            self.printWarning("Unknown configuration decoding error")
         }
     }
 
@@ -141,7 +161,7 @@ extension ConfigurationManager {
 }
 
 private struct JSONCommentStripper {
-    private let characters: [Character]
+    private let scalars: [Unicode.Scalar]
     private var index: Int = 0
     private var result = ""
     private var inString = false
@@ -150,12 +170,12 @@ private struct JSONCommentStripper {
     private var multiLineComment = false
 
     init(json: String) {
-        self.characters = Array(json)
+        self.scalars = Array(json.unicodeScalars)
     }
 
     mutating func strip() -> String {
-        while self.index < self.characters.count {
-            let char = self.characters[self.index]
+        while self.index < self.scalars.count {
+            let char = self.scalars[self.index]
             let next = self.peek()
 
             if self.handleEscape(char) {
@@ -182,7 +202,7 @@ private struct JSONCommentStripper {
         return self.result
     }
 
-    private mutating func handleEscape(_ char: Character) -> Bool {
+    private mutating func handleEscape(_ char: Unicode.Scalar) -> Bool {
         if self.escapeNext {
             self.append(char)
             self.escapeNext = false
@@ -200,7 +220,7 @@ private struct JSONCommentStripper {
         return false
     }
 
-    private mutating func handleQuote(_ char: Character) -> Bool {
+    private mutating func handleQuote(_ char: Unicode.Scalar) -> Bool {
         guard char == "\"", !self.singleLineComment, !self.multiLineComment else { return false }
         self.inString.toggle()
         self.append(char)
@@ -208,7 +228,7 @@ private struct JSONCommentStripper {
         return true
     }
 
-    private mutating func handleCommentStart(_ char: Character, _ next: Character?) -> Bool {
+    private mutating func handleCommentStart(_ char: Unicode.Scalar, _ next: Unicode.Scalar?) -> Bool {
         if char == "/", next == "/", !self.multiLineComment {
             self.singleLineComment = true
             self.advance(by: 2)
@@ -224,7 +244,7 @@ private struct JSONCommentStripper {
         return false
     }
 
-    private mutating func handleCommentEnd(_ char: Character, _ next: Character?) -> Bool {
+    private mutating func handleCommentEnd(_ char: Unicode.Scalar, _ next: Unicode.Scalar?) -> Bool {
         if char == "\n", self.singleLineComment {
             self.singleLineComment = false
             self.append(char)
@@ -241,20 +261,20 @@ private struct JSONCommentStripper {
         return false
     }
 
-    private mutating func appendIfNeeded(_ char: Character) {
+    private mutating func appendIfNeeded(_ char: Unicode.Scalar) {
         guard !self.singleLineComment, !self.multiLineComment else { return }
         self.append(char)
     }
 
-    private mutating func append(_ char: Character) {
-        self.result.append(char)
+    private mutating func append(_ char: Unicode.Scalar) {
+        self.result.unicodeScalars.append(char)
     }
 
     private mutating func advance(by value: Int = 1) {
         self.index += value
     }
 
-    private func peek() -> Character? {
-        (self.index + 1) < self.characters.count ? self.characters[self.index + 1] : nil
+    private func peek() -> Unicode.Scalar? {
+        (self.index + 1) < self.scalars.count ? self.scalars[self.index + 1] : nil
     }
 }

@@ -11,6 +11,55 @@ import Testing
 @MainActor
 struct DialogServiceGoToFolderTests {
     @Test
+    func `missing file focus prevents the opening shortcut`() async throws {
+        let driver = FailingDialogSyntheticInputDriver(failingHotkeyCall: nil)
+        let service = DialogService(syntheticInputDriver: driver)
+        do {
+            _ = try await service.performGoToFolderKeyboardNavigation(
+                directoryPath: "/tmp/target",
+                beforeOpen: { throw Self.focusLost },
+                reassertFocus: { nil })
+            Issue.record("Expected focus refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+        }
+        #expect(driver.events.isEmpty)
+    }
+
+    @Test(arguments: [1, 2, 3])
+    func `losing the retained navigation field stops the next input without replay`(failedCheck: Int) async throws {
+        let driver = FailingDialogSyntheticInputDriver(failingHotkeyCall: nil)
+        let service = DialogService(syntheticInputDriver: driver)
+        var checks = 0
+        do {
+            _ = try await service.performGoToFolderKeyboardNavigation(
+                directoryPath: "/tmp/target",
+                beforeInput: {
+                    checks += 1
+                    if checks == failedCheck {
+                        throw Self.focusLost
+                    }
+                },
+                reassertFocus: { nil })
+            Issue.record("Expected retained-field refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.dispatchState.unitCount?.rawValue == (failedCheck == 3 ? 13 : failedCheck))
+        }
+        #expect(checks == failedCheck)
+        #expect(driver.events.count == failedCheck)
+        #expect(!driver.events.contains(.tapKey(.return, modifiers: [])))
+    }
+
+    private static var focusLost: DesktopActionFailure {
+        .preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: "Synthetic retained field lost focus.",
+            hint: "Observe before retrying.")
+    }
+
+    @Test
     func `go to folder stops before typing when opening hotkey fails`() async {
         let driver = FailingDialogSyntheticInputDriver(failingHotkeyCall: 1)
         let service = DialogService(syntheticInputDriver: driver)
@@ -78,7 +127,7 @@ struct DialogServiceGoToFolderTests {
     }
 
     @Test
-    func `Missing path field returns expansion aware target disposition`() async throws {
+    func `missing path field does not claim expansion when no disclosure was pressed`() async throws {
         let driver = FailingDialogSyntheticInputDriver(failingHotkeyCall: nil)
         let service = DialogService(syntheticInputDriver: driver)
         let dialog = Element(AXUIElementCreateApplication(getpid() + 10000))
@@ -89,10 +138,10 @@ struct DialogServiceGoToFolderTests {
             ensureExpanded: false,
             appName: nil)
 
-        #expect(navigation.method == "go_to_folder+auto_expand")
+        #expect(navigation.method == "go_to_folder")
         #expect(
             navigation.targetDisposition ==
-                DialogService.FileDialogNavigationResult.TargetDisposition.refreshAfterExpansion)
+                DialogService.FileDialogNavigationResult.TargetDisposition.unchanged)
     }
 
     @Test

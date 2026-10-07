@@ -59,6 +59,12 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     typealias TargetReservation = @MainActor (BrowserMCPConnectionReceipt) throws -> Void
     typealias TargetRelease = @MainActor @Sendable () -> Void
 
+    enum OwnershipReconciliation: Sendable {
+        case retained(BrowserMCPExecutionSessionBinding)
+        case cleared
+        case pending
+    }
+
     private let serverName: String
     private let manager: any BrowserMCPManaging
     private let detectedBrowsers: BrowserDetector
@@ -91,6 +97,16 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
 
     var supportsNativeBrowserConnectionBinding: Bool {
         self.environmentOptions.supportsNativeBrowserConnectionBinding
+    }
+
+    private var publishedConnectionBinding: BrowserMCPExecutionSessionBinding? {
+        guard let receipt = self.connectionReceipt, let epoch = self.providerSessionEpoch else { return nil }
+        return BrowserMCPExecutionSessionBinding(connectionReceipt: receipt, providerSessionEpoch: epoch)
+    }
+
+    private func shouldRetainPublishedConnection(after error: any Error) -> Bool {
+        self.publishedConnectionBinding != nil &&
+            (Self.isCancellation(error) || error as? BrowserMCPConnectionDeadlineError == .timedOut)
     }
 
     init(
@@ -140,18 +156,18 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             channel)
     }
 
-    private func discoverBrowsers(_ channel: BrowserMCPChannel?) async -> [DetectedBrowser] {
-        await BrowserMCPApplicationMetadata.read { [detectedBrowsers] in detectedBrowsers(channel) }
+    private func discoverBrowsers(_ channel: BrowserMCPChannel?) async throws -> [DetectedBrowser] {
+        try await BrowserMCPApplicationMetadata.read { [detectedBrowsers] in detectedBrowsers(channel) }
     }
 
-    private func liveBundleIdentifier(_ processIdentifier: Int32) async -> String? {
-        await BrowserMCPApplicationMetadata.read { [processBundleIdentifier] in
+    private func liveBundleIdentifier(_ processIdentifier: Int32) async throws -> String? {
+        try await BrowserMCPApplicationMetadata.read { [processBundleIdentifier] in
             processBundleIdentifier(processIdentifier)
         }
     }
 
-    private func discoverPreferredChannel() async -> BrowserMCPChannel {
-        await BrowserMCPApplicationMetadata.read(self.preferredChannel)
+    private func discoverPreferredChannel() async throws -> BrowserMCPChannel {
+        try await BrowserMCPApplicationMetadata.read(self.preferredChannel)
     }
 
     func status(
@@ -170,7 +186,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             return await BrowserMCPStatus(
                 isConnected: false,
                 toolCount: 0,
-                detectedBrowsers: self.discoverBrowsers(channel),
+                detectedBrowsers: (try? self.discoverBrowsers(channel)) ?? [],
                 connectionReceipt: self.connectionReceipt,
                 providerSessionEpoch: self.providerSessionEpoch,
                 error: CancellationError().localizedDescription,
@@ -179,7 +195,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             return await BrowserMCPStatus(
                 isConnected: false,
                 toolCount: 0,
-                detectedBrowsers: self.discoverBrowsers(channel),
+                detectedBrowsers: (try? self.discoverBrowsers(channel)) ?? [],
                 connectionReceipt: nil,
                 error: error.localizedDescription)
         }
@@ -194,8 +210,44 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         return inspection.status
     }
 
+    /// Reconciles provider ownership, not fresh browser authority. Failure cleanup must not restart a stuck metadata
+    /// read.
+    func reconcileTargetOwnership(releaseTarget: TargetRelease) async -> OwnershipReconciliation {
+        do {
+            return try await self.withExecutionGate {
+                if !self.connectionCleanupPending,
+                   let binding = self.publishedConnectionBinding,
+                   self.manager.hasServer(name: self.serverName),
+                   await self.manager.isServerConnected(name: self.serverName)
+                {
+                    return .retained(binding)
+                }
+                guard await self.clearConnection() else { return .pending }
+                releaseTarget()
+                return .cleared
+            }
+        } catch {
+            return .pending
+        }
+    }
+
     private func inspectStatusUnlocked(channel: BrowserMCPChannel?) async -> BrowserMCPStatusInspection {
-        let browsers = await self.discoverBrowsers(channel)
+        let browsers: [DetectedBrowser]
+        do {
+            browsers = try await self.discoverBrowsers(channel)
+        } catch {
+            return BrowserMCPStatusInspection(
+                status: BrowserMCPStatus(
+                    isConnected: false,
+                    toolCount: 0,
+                    detectedBrowsers: [],
+                    connectionReceipt: self.connectionReceipt,
+                    providerSessionEpoch: self.providerSessionEpoch,
+                    error: error.localizedDescription,
+                    observation: .indeterminate),
+                wasCancelled: true,
+                cleanupConfirmed: false)
+        }
         if self.connectionCleanupPending {
             let cleanupConfirmed = await self.clearConnection()
             return BrowserMCPStatusInspection(
@@ -300,6 +352,10 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                             browserURL: browserURL,
                             attempt: attempt,
                             reserveTarget: reserveTarget)
+                    } catch let error where self.shouldRetainPublishedConnection(after: error) &&
+                        attempt.state.didStartAnyDispatch
+                    {
+                        throw Self.indeterminateConnectionFailure(error)
                     } catch let error where Self.isCancellation(error) && !attempt.state.didStartAnyDispatch {
                         throw Self.preDispatchConnectionFailure(CancellationError())
                     } catch BrowserMCPConnectionError.targetLocked {
@@ -340,7 +396,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             throw BrowserMCPConnectionError.targetLocked
         }
         if let existing = self.connectionReceipt {
-            guard await self.connectionReceipt(existing, matchesChannel: channel, browserURL: browserURL) else {
+            guard try await self.connectionReceipt(existing, matchesChannel: channel, browserURL: browserURL) else {
                 throw BrowserMCPConnectionError.targetLocked
             }
             try await self.validate(existing)
@@ -373,7 +429,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 attempt.state.markConnectionDispatchStarted()
                 connectionAttemptDispatched = true
             }
-            let status = await self.inspectStatusUnlocked(channel: channel).status
+            let inspection = await self.inspectStatusUnlocked(channel: channel)
+            guard !inspection.wasCancelled else { throw CancellationError() }
+            let status = inspection.status
             guard status.isConnected else {
                 throw BrowserMCPConnectionError.connectionLost(
                     status.error ?? "the new browser connection could not be verified")
@@ -384,6 +442,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     delivery: Self.connectionDelivery,
                     evidence: .deliveryAccepted,
                     unitCount: .one))
+        } catch let error where self.shouldRetainPublishedConnection(after: error) {
+            // Installation already verified and published this binding; cancelled observation does not revoke it.
+            throw error
         } catch let error as BrowserMCPUploadStagingError {
             await self.clearConnection()
             if attempt.state.didStartPermissionDispatch || connectionAttemptDispatched {
@@ -453,7 +514,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         await BrowserMCPStatus(
             isConnected: false,
             toolCount: 0,
-            detectedBrowsers: self.discoverBrowsers(channel))
+            detectedBrowsers: (try? self.discoverBrowsers(channel)) ?? [])
     }
 
     func preflightHandoffDestination() async throws {
@@ -885,7 +946,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             } catch let failure as DesktopActionFailure {
                 throw failure
             } catch {
-                await self.clearConnection()
+                if !self.shouldRetainPublishedConnection(after: error) {
+                    await self.clearConnection()
+                }
                 if attempt.state.didStartAnyDispatch {
                     throw Self.indeterminateConnectionFailure(error)
                 }
@@ -1231,7 +1294,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         let resolvedChannel = if let channel {
             channel
         } else {
-            await self.discoverPreferredChannel()
+            try await self.discoverPreferredChannel()
         }
         if self.isolatedConnectionRequested() {
             let receipt = BrowserMCPConnectionReceipt(channel: resolvedChannel)
@@ -1247,7 +1310,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 codeSignatureIdentity: nil,
                 targetKind: .isolated)
         }
-        let candidates = await self.discoverBrowsers(resolvedChannel)
+        let candidates = try await self.discoverBrowsers(resolvedChannel)
         guard !candidates.isEmpty else {
             throw BrowserMCPConnectionError.noBrowser(resolvedChannel)
         }
@@ -1261,7 +1324,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
               BrowserMCPChannel.infer(
                   bundleIdentifier: browser.bundleIdentifier,
                   applicationName: browser.name) == resolvedChannel,
-              await channelIdentity.matches(bundleIdentifier: self.liveBundleIdentifier(browser.processIdentifier))
+              try await channelIdentity.matches(bundleIdentifier: self.liveBundleIdentifier(browser.processIdentifier))
         else {
             throw BrowserMCPConnectionError.channelEndpointUnavailable(
                 resolvedChannel,
@@ -1304,7 +1367,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     webSocketDebuggerURL: reservation.webSocketDebuggerURL,
                     devToolsBrowserID: reservation.browserID))
             })
-        guard await channelIdentity.matches(bundleIdentifier: self.liveBundleIdentifier(browser.processIdentifier)),
+        guard try await channelIdentity.matches(bundleIdentifier: self.liveBundleIdentifier(browser.processIdentifier)),
               self.processCodeSignatureValidator(
                   browser.processIdentifier,
                   processStartIdentity,
@@ -1399,7 +1462,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 throw BrowserMCPConnectionError.connectionLost(
                     "Chrome PID \(processIdentifier) changed process generation")
             }
-            guard await channelIdentity.matches(bundleIdentifier: self.liveBundleIdentifier(processIdentifier)),
+            guard try await channelIdentity.matches(bundleIdentifier: self.liveBundleIdentifier(processIdentifier)),
                   self.processCodeSignatureValidator(
                       processIdentifier,
                       processStartIdentity,
@@ -1409,7 +1472,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     "Chrome PID \(processIdentifier) changed bundle, channel, or signing identity")
             }
             if requireDetectedProcess,
-               await !self.discoverBrowsers(channel).contains(where: { browser in
+               try await !self.discoverBrowsers(channel).contains(where: { browser in
                    browser.processIdentifier == processIdentifier &&
                        browser.processStartIdentity == processStartIdentity &&
                        channelIdentity.matches(bundleIdentifier: browser.bundleIdentifier)
@@ -1496,7 +1559,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private func connectionReceipt(
         _ receipt: BrowserMCPConnectionReceipt,
         matchesChannel channel: BrowserMCPChannel?,
-        browserURL: String?) async -> Bool
+        browserURL: String?) async throws -> Bool
     {
         let requestedBrowserURL = browserURL ?? self.environmentOptions.browserURL
         let requestedKind: BrowserMCPConnectionTargetKind = if requestedBrowserURL != nil {
@@ -1526,7 +1589,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         let requestedChannel = if let knownChannel = channel ?? receipt.channel {
             knownChannel
         } else {
-            await self.discoverPreferredChannel()
+            try await self.discoverPreferredChannel()
         }
         guard receipt.channel == requestedChannel else { return false }
         if requestedKind == .isolated {

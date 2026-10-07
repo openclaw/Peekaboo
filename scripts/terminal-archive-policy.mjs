@@ -1,4 +1,4 @@
-import { createReadStream } from 'node:fs';
+import { createReadStream, read } from 'node:fs';
 import { lstat, open } from 'node:fs/promises';
 import path from 'node:path';
 import { createGunzip, createInflateRaw } from 'node:zlib';
@@ -62,6 +62,34 @@ function validateSymlink(record, expectedRoot, label, allowSymlinks) {
   }
 }
 
+function validateComposedSymlinks(records, expectedRoot, label) {
+  const symlinkRecords = records.filter((record) => record.type === 'symlink');
+  const links = new Map(symlinkRecords
+    .map((record) => [normalizedCollisionKey(record.path), record.target]));
+  for (const record of symlinkRecords) {
+    const pending = [...path.posix.dirname(record.path).split('/'), ...record.target.split('/')];
+    const resolved = [];
+    let expansions = 1; // Count this link too; Darwin permits 32 total traversals.
+    while (pending.length > 0) {
+      const component = pending.shift();
+      if (component === '' || component === '.') continue;
+      if (component === '..') {
+        if (resolved.length <= 1) fail(label, `contains an escaping symlink: ${record.path} -> ${record.target}`);
+        resolved.pop();
+        continue;
+      }
+      resolved.push(component);
+      const target = links.get(normalizedCollisionKey(resolved.join('/')));
+      if (target !== undefined) {
+        if (++expansions > 32) fail(label, `exceeds the symlink expansion limit: ${record.path}`);
+        resolved.pop();
+        pending.unshift(...target.split('/'));
+      }
+    }
+    if (resolved[0] !== expectedRoot) fail(label, `contains an escaping symlink: ${record.path}`);
+  }
+}
+
 export function validateArchiveEntries(entries, expectedRoot, label = 'archive', options = {}) {
   validateExpectedRoot(expectedRoot, label);
   if (!Array.isArray(entries) || entries.length === 0) fail(label, 'entry contract is empty');
@@ -72,7 +100,7 @@ export function validateArchiveEntries(entries, expectedRoot, label = 'archive',
   const exactPaths = new Set();
   const collisionPaths = new Map();
   const collisionPrefixes = new Map();
-  const symlinks = new Set();
+  const nonDirectories = new Map();
   let rootRecord = null;
 
   for (const record of records) {
@@ -117,9 +145,11 @@ export function validateArchiveEntries(entries, expectedRoot, label = 'archive',
     }
     if (record.type === 'symlink') {
       validateSymlink(record, expectedRoot, label, allowSymlinks);
-      symlinks.add(normalizedCollisionKey(record.path));
     } else if (record.target !== null) {
       fail(label, `contains a link target on a non-symlink: ${entry}`);
+    }
+    if (record.type === 'file' || record.type === 'symlink') {
+      nonDirectories.set(normalizedCollisionKey(record.path), record.type);
     }
     if (withoutSlash === expectedRoot) rootRecord = record;
   }
@@ -128,12 +158,12 @@ export function validateArchiveEntries(entries, expectedRoot, label = 'archive',
   if (rootRecord.type !== null && rootRecord.type !== 'directory') {
     fail(label, `root is not a directory: ${expectedRoot}`);
   }
+  validateComposedSymlinks(records, expectedRoot, label);
   for (const record of records) {
     let ancestor = path.posix.dirname(record.path);
     while (ancestor !== '.' && ancestor !== '/') {
-      if (symlinks.has(normalizedCollisionKey(ancestor))) {
-        fail(label, `contains a descendant beneath a symlink: ${record.path}`);
-      }
+      const ancestorType = nonDirectories.get(normalizedCollisionKey(ancestor));
+      if (ancestorType) fail(label, `contains a descendant beneath a ${ancestorType}: ${record.path}`);
       if (ancestor === expectedRoot) break;
       ancestor = path.posix.dirname(ancestor);
     }
@@ -351,11 +381,15 @@ async function validateZipPayload(handle, dataOffset, record, budget, label) {
     fd: handle.fd,
     start: dataOffset,
     end: dataOffset + record.compressedSize - 1,
-    autoClose: false,
-    emitClose: false
+    // The archive owns this descriptor. Destroy the entry reader to drain pending
+    // reads, but leave descriptor closure to validateZipArchive after all entries.
+    fs: { read, close: (_fd, callback) => callback(null) }
   });
+  const sourceClosed = new Promise((resolve) => source.once('close', resolve));
   const inflater = record.method === 8 ? createInflateRaw() : null;
-  source.on('error', (error) => inflater?.destroy(error));
+  source.on('error', (error) => {
+    if (inflater && !inflater.destroyed) inflater.destroy(error);
+  });
   if (inflater) source.pipe(inflater);
   const output = inflater ?? source;
   const capture = record.type === 'symlink' ? [] : null;
@@ -377,6 +411,13 @@ async function validateZipPayload(handle, dataOffset, record, budget, label) {
   } catch (error) {
     if (error instanceof TypeError) throw error;
     fail(label, `has an invalid compressed payload: ${record.path}`);
+  } finally {
+    if (inflater) source.unpipe(inflater);
+    source.destroy();
+    await sourceClosed;
+  }
+  if (inflater && inflater.bytesWritten !== record.compressedSize) {
+    fail(label, `has unbound bytes after its DEFLATE stream: ${record.path}`);
   }
   if (outputSize !== record.uncompressedSize || ((checksum ^ 0xffffffff) >>> 0) !== record.checksum) {
     fail(label, `has a payload size or CRC mismatch: ${record.path}`);
@@ -469,6 +510,8 @@ async function validateZipLocalEntries(handle, fileSize, directoryOffset, record
     }
     const gap = nextOffset - current.end;
     if ((current.record.flags & 0x0008) !== 0) {
+      // ZIP32/ZIP64 descriptors, with an optional signature, occupy at most 24 bytes.
+      if (gap > 24) fail(label, `has an invalid ZIP data descriptor: ${current.path}`);
       const descriptor = await readExact(handle, current.end, gap, label);
       validateZipDescriptor(descriptor, current.record, label);
     } else if (gap !== 0) {
@@ -515,6 +558,11 @@ function tarString(bytes, label, field) {
   }
 }
 
+function asciiMetadata(bytes, label, field) {
+  if (bytes.some((byte) => byte > 0x7f)) fail(label, `contains non-ASCII ${field}`);
+  return bytes.toString('ascii');
+}
+
 function tarNumber(bytes, label, field) {
   if ((bytes[0] & 0x80) !== 0) {
     if ((bytes[0] & 0x40) !== 0) fail(label, `contains a negative tar ${field}`);
@@ -522,7 +570,7 @@ function tarNumber(bytes, label, field) {
     for (const byte of bytes.subarray(1)) value = (value << 8n) | BigInt(byte);
     return safeNumber(value, label, `tar ${field}`);
   }
-  const text = bytes.toString('ascii').replace(/\0.*$/s, '').trim();
+  const text = asciiMetadata(bytes, label, `tar ${field}`).replace(/\0.*$/s, '').trim();
   if (!text) return 0;
   if (!/^[0-7]+$/.test(text)) fail(label, `contains an invalid tar ${field}`);
   return safeNumber(Number.parseInt(text, 8), label, `tar ${field}`);
@@ -564,7 +612,7 @@ function parsePaxRecords(bytes, label) {
   while (cursor < bytes.length) {
     const space = bytes.indexOf(0x20, cursor);
     if (space < 0) fail(label, 'contains malformed PAX metadata');
-    const lengthText = bytes.subarray(cursor, space).toString('ascii');
+    const lengthText = asciiMetadata(bytes.subarray(cursor, space), label, 'PAX record length');
     if (!/^[1-9][0-9]*$/.test(lengthText)) fail(label, 'contains malformed PAX record length');
     const length = Number.parseInt(lengthText, 10);
     if (!Number.isSafeInteger(length) || length <= space - cursor + 2 || cursor + length > bytes.length ||
@@ -574,7 +622,7 @@ function parsePaxRecords(bytes, label) {
     const payload = bytes.subarray(space + 1, cursor + length - 1);
     const equals = payload.indexOf(0x3d);
     if (equals <= 0) fail(label, 'contains malformed PAX metadata');
-    const key = payload.subarray(0, equals).toString('ascii');
+    const key = asciiMetadata(payload.subarray(0, equals), label, 'PAX key');
     if (!/^[A-Za-z0-9_.-]+$/.test(key) || Object.hasOwn(records, key)) {
       fail(label, 'contains an invalid or duplicate PAX key');
     }

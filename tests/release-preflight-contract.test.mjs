@@ -301,6 +301,10 @@ process.exit(Number(process.env.${tool.toUpperCase()}_EXIT));
     },
     execFileSync(file, args, options) {
       assert.ok(file === 'lipo' || file === binaryPath, 'only fixture tools may execute');
+      if (file === binaryPath) {
+        assert.equal(options.timeout, 30_000);
+        assert.equal(options.killSignal, 'SIGKILL');
+      }
       return execFileSync(file, Array.from(args), { ...options, env, timeout: 5000 });
     },
     execNpm() { return 'peekaboo\npeekaboo-mcp.js\nREADME.md\nLICENSE\n'; },
@@ -499,6 +503,59 @@ npm_view_single_json @steipete/peekaboo@4.3.1 version
   const result = run(failure, 37);
   assert.equal(result.status, 37);
   assert.equal(result.stdout, failure);
+});
+
+function cliProbeFixture({ failArgs, errorCode = 'ETIMEDOUT' } = {}) {
+  const messages = [];
+  const calls = [];
+  const replacements = new Map(REMOVED_ROOT_COMMANDS.map((command) => [command, `replacement ${command}`]));
+  const source = prepareSource.match(/^function checkSwiftCLIIntegration\(binaryPath\) \{[\s\S]*?^\}/m)?.[0];
+  assert.ok(source);
+  const check = runInNewContext(`${source}; checkSwiftCLIIntegration`, {
+    projectRoot, join, existsSync: () => true, readFileSync: () => '',
+    MIGRATION_ADVISOR_PATH: 'fixture', REMOVED_ROOT_COMMANDS,
+    parseRemovedRootReplacements: () => replacements,
+    logStep() {}, logSuccess() {}, logError(message) { messages.push(message); },
+    spawnSync(binary, args, options) {
+      calls.push({ args: Array.from(args), options });
+      let stdout;
+      if (args[0] === 'invalid-command') stdout = "Unknown command 'invalid-command'";
+      else if (replacements.has(args[0])) stdout = `Command 'peekaboo ${args[0]}' was removed in v4. Use '${replacements.get(args[0])}'.`;
+      else if (args.includes('--json')) stdout = JSON.stringify({ success: true, data: { apps: [], windows: [], screens: [] } });
+      else stdout = '--no-elements --tree --no-screenshot --at --wait-for --long-press --delay --hold cmd+shift+t AXPress --on --from --to --button --duration --foreground peekaboo app list --include-hidden peekaboo window list --group-by-space peekaboo screen list';
+      const failed = JSON.stringify(Array.from(args)) === JSON.stringify(failArgs);
+      return {
+        stdout, status: failed ? null : (args[0] === 'invalid-command' || replacements.has(args[0]) ? 1 : 0),
+        ...(failed ? { error: Object.assign(new Error('fixture process error'), { code: errorCode }) } : {})
+      };
+    }
+  });
+  return { passed: check('/fixture/peekaboo'), calls, messages };
+}
+
+test('CLI probe failures cannot pass on partial expected diagnostics or JSON', () => {
+  for (const failArgs of [
+    ['invalid-command'], ['image', '--help'], ['see', '--help'],
+    ['app', 'list', '--json', '--no-remote']
+  ]) {
+    const result = cliProbeFixture({ failArgs });
+    assert.equal(result.passed, false, JSON.stringify(failArgs));
+    assert.ok(result.messages.some((message) => message.includes('timed out after 30 seconds')));
+    assert.deepEqual(result.calls.at(-1).args, failArgs);
+  }
+  const unavailable = cliProbeFixture({ failArgs: ['invalid-command'], errorCode: 'ENOENT' });
+  assert.equal(unavailable.passed, false);
+  assert.ok(unavailable.messages.some((message) => message.includes('fixture process error')));
+});
+
+test('successful CLI contracts retain bounded probes and expected nonzero diagnostics', () => {
+  const result = cliProbeFixture();
+  assert.equal(result.passed, true, result.messages.join('\n'));
+  assert.equal(result.calls.length, 23);
+  for (const call of result.calls) {
+    assert.equal(call.options.timeout, 30_000);
+    assert.equal(call.options.killSignal, 'SIGKILL');
+  }
 });
 
 function safeTestsLaunch() {

@@ -8,9 +8,9 @@ func pointerDirection(from start: CGPoint, to end: CGPoint) -> String? {
     guard distance >= 1 else { return nil }
 
     let angle = atan2(dy, dx)
-    // Map angle to 8 compass directions (E, NE, N, NW, W, SW, S, SE)
-    let directions = ["E", "NE", "N", "NW", "W", "SW", "S", "SE"]
-    let normalized = (angle + .pi) / (2 * .pi)
+    // Global display coordinates increase downward, so positive angles rotate toward south.
+    let directions = ["E", "SE", "S", "SW", "W", "NW", "N", "NE"]
+    let normalized = angle / (2 * .pi)
     var index = Int(round(normalized * 8)) % 8
     if index < 0 {
         index += 8

@@ -43,6 +43,15 @@ extension DialogService {
             return true
         }
 
+        return self.hasFileDialogButtons(element)
+    }
+
+    func isTargetedFilePanelElement(_ element: Element) -> Bool {
+        DialogElementClassifier.isTargetedFilePanel(DialogElementClassifier.evidence(for: element)) ||
+            self.hasFileDialogButtons(element)
+    }
+
+    private func hasFileDialogButtons(_ element: Element) -> Bool {
         // Some sheets (e.g. TextEdit's Save sheet) expose no useful title/identifier but do expose canonical buttons.
         let buttons = self.collectButtons(from: element)
         let buttonTitles = Set(buttons.compactMap { $0.title()?.lowercased() })

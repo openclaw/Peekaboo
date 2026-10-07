@@ -42,7 +42,7 @@ extension MoveTool {
         let durationOverride = try arguments.validatedInt("duration")
         let stepsOverride = try arguments.validatedInt("steps")
 
-        if smooth, profile == .linear {
+        if smooth {
             let durationToValidate = durationOverride ?? 500
             let stepsToValidate = stepsOverride ?? 10
             try self.validateSmoothParameters(duration: durationToValidate, steps: stepsToValidate)

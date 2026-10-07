@@ -2,6 +2,25 @@ import Testing
 @testable import PeekabooAutomationKit
 
 struct DialogElementClassificationTests {
+    @Test(arguments: ["open-panel", "save-panel", "prefixNSOpenPanelSuffix", "prefixNSSavePanelSuffix"])
+    func `native and legacy file panel identifiers survive blank titles`(identifier: String) {
+        let evidence = DialogElementEvidence(
+            role: "AXWindow", subrole: "AXUnknown", roleDescription: "", identifier: identifier, title: "")
+        #expect(DialogElementClassifier.isDialog(evidence))
+        #expect(DialogElementClassifier.isFileDialog(evidence))
+        #expect(DialogElementClassifier.isTargetedFilePanel(evidence))
+        #expect(!DialogElementClassifier.isStructuralDialog(evidence))
+    }
+
+    @Test(arguments: ["prefixopen-panelSuffix", "prefixsave-panelSuffix", "OPEN-PANEL", "SAVE-PANEL", "nsopenpanel"])
+    func `native identifier aliases remain exact and case sensitive`(identifier: String) {
+        let evidence = DialogElementEvidence(
+            role: "AXWindow", subrole: "AXUnknown", roleDescription: "", identifier: identifier, title: "")
+        #expect(!DialogElementClassifier.isDialog(evidence))
+        #expect(!DialogElementClassifier.isFileDialog(evidence))
+        #expect(!DialogElementClassifier.isTargetedFilePanel(evidence))
+    }
+
     @Test
     func `untitled system alert classifies`() {
         let evidence = DialogElementEvidence(

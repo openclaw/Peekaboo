@@ -7,18 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Recognize equivalent saved-file paths such as `/tmp` and `/private/tmp` in dialog diagnostics, preserving reported paths and directory-only enforcement.
+- Fix application-targeted file sheets losing their parent-window identity; preserve compatible panels and ignore unrelated alerts when selecting a unique file panel. Thanks @buremba! #951.
+- Recognize native file-panel identifiers and reuse fresh classification evidence to avoid redundant button scans; batch strict dialog AX reads without truncating hierarchy discovery.
+- Keep targeted foreground file-dialog focus, navigation, and result receipts under one parent-window owner; negotiate exact execution with Bridge hosts and scope document reads to that parent without losing file-on-disk verification when Save closes it.
+- Retain failed browser connection attempts across ordinary provider tools and invalidate cached verification after socket loss, preventing implicit reconnects and stale success. Thanks @rudycelekli! #949.
+- Honor cancellation and connection deadlines during browser application-metadata reads; reconcile failures without repeating a blocked lookup, retaining connected or uncertain provider ownership. Thanks @rudycelekli! #950.
 - Preserve literal log-helper search and filter text without shell re-parsing, including quotes, backslashes and trailing newlines; retain output, streaming and private-mode arguments. Thanks @rudycelekli! #934.
+- Reject missing log-helper option values promptly with a targeted usage error instead of looping indefinitely, before any log access; match native log severity for historical error-only queries. Thanks @rudycelekli! #938.
 - Preserve conventional shell exit statuses when a wrapped source-build command is terminated by a signal, while retaining mapping integrity checks and lock cleanup. Thanks @rudycelekli! #932.
 - Avoid redundant PNG encoding for unchanged live capture frames, preserving original bytes and metadata while retaining transformed-frame encoding, actual-byte caps, and artifact validation.
+- Tailor Agent and learn guidance to the available tool catalog, removing irrelevant recipes while preserving execution authority, observation requirements and session history.
 - Show eligible visualizer overlays from a hidden companion app without unhiding or activating it, accepting input, or changing background-input suppression.
 - Fix the Playground log wrapper's moved script path and clarify repository-root examples, preserving arguments and exit status. Thanks @rudycelekli! #933.
 - Fix signed Bridge typing receipts after already-empty clears and already-satisfied caret moves, preserving zero-dispatch no-ops and strict key, delivery and dispatch-count validation.
 - Preserve accepted dispatch evidence and retry-unsafe status after unchanged readback instead of reporting a no-dispatch no-op or a safe retry; positively observed changes still confirm the action. Thanks @rudycelekli! #942.
+- Preserve recorded response-loss evidence when action sequences or quit batches are cancelled, retaining indeterminate outcomes and unsafe retry guidance. Thanks @rudycelekli! #943.
 - Share native and Bridge literal-replacement eligibility without changing confirmation policy, and clarify typing-unit versus native-event counts.
+- Accept equivalent PID aliases consistently in read-only window listing and target resolution, while retaining conflicting-PID errors and strict single-selector mutation gates. Thanks @rudycelekli! #945.
 - Clarify `type --clear` help and generated learning guidance to distinguish eligible native Accessibility clearing from keyboard routes, without changing delivery, targeting, or success rules.
+- Format complete keyboard shortcut names without rewriting substrings, distinguish forward and backward delete aliases in compatibility summaries, and reuse the immutable symbol table. Thanks @rudycelekli! #962.
+- Preserve fractional timeout durations in command and dialog diagnostics instead of truncating them to whole seconds, without changing deadlines or error codes. Thanks @rudycelekli! #946.
+- Strip terminal control scalars from agent/task titles before both VibeTunnel and ANSI output, preserving Unicode joiners and preventing embedded title text from injecting terminal commands. Thanks @rudycelekli! #964.
+- Preserve pending native-operation evidence when combining action receipts, without downgrading it to accepted delivery or weakening response-loss and retry-safety semantics. Thanks @rudycelekli! #944.
+- Avoid agent-summary crashes on unrepresentable numeric metadata, preserve each consumer's rounding and lookup rules, and report unusable shell exit codes as unavailable rather than success. Thanks @rudycelekli! #961.
 - Escape update-feed URLs and metadata as XML while preserving decoded values and literal replacement characters, including multi-parameter URLs. Thanks @rudycelekli! #935.
+- Validate Swift compatibility-library loader paths and required library architectures per executable slice, so another architecture cannot hide a missing path. Thanks @rudycelekli! #937.
 - Correct the visualizer log helper's receiver subsystem and include info/debug output while preserving explicit predicates, without changing logging settings or rendering behavior.
+- Preserve failed log-query exit statuses through tail-limited terminal and file output instead of reporting success from the downstream pipeline. Thanks @rudycelekli! #959.
+- Preserve complete JSON log output and forward live events without waiting for stream completion; retain line limits for completed text queries. Thanks @rudycelekli! #958.
 - Bound npm MCP wrapper shutdown: cancel pending restarts, allow five seconds for the owned server to exit after SIGTERM, then terminate that same child if necessary. Thanks @rudycelekli! #947.
+- Keep MCP wrapper imports free of server-start side effects for eval, print and stdin consumers, including arguments matching its own path or symlink; preserve real entrypoints and unrelated filesystem errors. Thanks @rudycelekli! #948.
+- Keep Playground log filters and message text literal, reject missing option values, preserve export failures and complete JSON/live output, and match native error severity. Thanks @rudycelekli! #968.
+- Validate smooth duration and step overrides for the human MCP move profile, which forces smooth movement but previously dispatched out-of-range overrides. Thanks @rudycelekli! #970.
+- Report MCP cursor movement directions in screen coordinates, where eastward movement was previously reported as west. Thanks @rudycelekli! #960.
+- Report dialog classification and truncation from cached snapshots instead of always returning a non-dialog, untruncated result. Thanks @rudycelekli! #989.
+- Restore clipboard slots from the current persisted contents instead of a stale per-process cache, and keep multi-item clipboards' item order and boundaries through save and restore. Thanks @rudycelekli! #990.
+- Install the Swift compatibility libraries that standalone CLI builds need next to the binary, so a standalone install loads after moving; release builds keep the mandatory older-SDK runtime audit. Thanks @rudycelekli! #982.
+- Render capture-timeout and rate-limit retry durations that cannot be represented as integers without trapping. Thanks @rudycelekli! #981.
+- Preserve managed screenshots when a snapshot reuses its own stored image as input, copying through a staged file before replacing the artifact. Thanks @rudycelekli! #987.
 
 ## 4.8.0 - 2026-10-03
 

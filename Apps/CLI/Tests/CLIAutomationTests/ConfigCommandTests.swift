@@ -3,7 +3,7 @@ import PeekabooCore
 import Testing
 @testable import PeekabooCLI
 
-@Suite(.tags(.safe))
+@Suite(.tags(.safe), .serialized)
 struct ConfigCommandTests {
     // MARK: - Helpers
 
@@ -21,6 +21,14 @@ struct ConfigCommandTests {
         )
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
+        let environmentKeys = [
+            "PEEKABOO_CONFIG_DIR",
+            "PEEKABOO_CONFIG_NONINTERACTIVE",
+            "PEEKABOO_CONFIG_DISABLE_MIGRATION",
+        ]
+        let previous = Dictionary(uniqueKeysWithValues: environmentKeys.map { key in
+            (key, getenv(key).map { String(cString: $0) })
+        })
         setenv("PEEKABOO_CONFIG_DIR", tempDir.path, 1)
         setenv("PEEKABOO_CONFIG_NONINTERACTIVE", "1", 1)
         setenv("PEEKABOO_CONFIG_DISABLE_MIGRATION", "1", 1)
@@ -29,9 +37,13 @@ struct ConfigCommandTests {
         #endif
 
         defer {
-            unsetenv("PEEKABOO_CONFIG_DIR")
-            unsetenv("PEEKABOO_CONFIG_NONINTERACTIVE")
-            unsetenv("PEEKABOO_CONFIG_DISABLE_MIGRATION")
+            for key in environmentKeys {
+                if let previousValue = previous[key], let value = previousValue {
+                    setenv(key, value, 1)
+                } else {
+                    unsetenv(key)
+                }
+            }
             #if DEBUG
             PeekabooCore.ConfigurationManager.shared.resetForTesting()
             #endif
@@ -39,6 +51,17 @@ struct ConfigCommandTests {
         }
 
         try await body(tempDir)
+    }
+
+    @Test
+    func `temporary config fixture restores caller environment`() async throws {
+        let keys = ["PEEKABOO_CONFIG_DIR", "PEEKABOO_CONFIG_NONINTERACTIVE", "PEEKABOO_CONFIG_DISABLE_MIGRATION"]
+        let before = keys.map { getenv($0).map { String(cString: $0) } }
+        try await self.withTempConfigDir { directory in
+            #expect(PeekabooCore.ConfigurationManager.configPath == directory.appendingPathComponent("config.json")
+                .path)
+        }
+        #expect(keys.map { getenv($0).map { String(cString: $0) } } == before)
     }
 
     @Test

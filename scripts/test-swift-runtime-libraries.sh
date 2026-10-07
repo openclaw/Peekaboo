@@ -1,11 +1,22 @@
 #!/bin/bash
 set -euo pipefail
 
+INSPECTION_ONLY=false
+if [[ "$#" -eq 1 && "${1:-}" == --inspection-only ]]; then
+    INSPECTION_ONLY=true
+    shift
+fi
+if [[ "$#" -ne 0 ]]; then
+    echo "Usage: $0 [--inspection-only]" >&2
+    exit 2
+fi
+
 # The release preflight exports the publication signer for its signed CLI build; these fixtures are
 # ad-hoc signed, so the verifier must not inherit that expectation.
-unset MAC_RELEASE_CODESIGN_IDENTITY MAC_RELEASE_CODESIGN_TEAM_ID
+unset MAC_RELEASE_CODESIGN_IDENTITY MAC_RELEASE_CODESIGN_TEAM_ID SIGN_IDENTITY
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+bash "$ROOT_DIR/scripts/test-swift-runtime-slice-rpaths.sh"
 TEST_DIR=$(mktemp -d /tmp/peekaboo-swift-runtime-test.XXXXXX)
 trap 'rm -rf "$TEST_DIR"' EXIT
 
@@ -272,7 +283,14 @@ if verify_fixture \
     echo "Verifier accepted failed symbol inspection" >&2
     exit 1
 fi
-grep -Fq 'Unable to inspect Swift runtime imports' "$TEST_DIR/refusal"
+# Some nm versions return success for this text fixture; the subsequent native
+# architecture inspection must still reject it before any runtime audit passes.
+if ! grep -Fq 'Unable to inspect Swift runtime imports' "$TEST_DIR/refusal" &&
+   ! grep -Fxq "swift-runtime-exports: command failed: lipo -archs $TEST_DIR/invalid-binary" "$TEST_DIR/refusal"; then
+    cat "$TEST_DIR/refusal" >&2
+    echo "Invalid executable lacked a known native inspection refusal" >&2
+    exit 1
+fi
 
 # Selection ignores SDKs below the deployment target or at/above the deliberate macOS 27 limit.
 mkdir "$TEST_DIR/selection"
@@ -345,6 +363,9 @@ if "$ROOT_DIR/scripts/verify-swift-runtime-libraries.sh" "$TEST_DIR/span-probe" 
 fi
 
 "$ROOT_DIR/scripts/copy-swift-runtime-libraries.sh" "$TEST_DIR/span-probe" "$TEST_DIR"
-"$TEST_DIR/span-probe" >/dev/null
-
-echo "test-swift-runtime-libraries: ok"
+if [[ "$INSPECTION_ONLY" == true ]]; then
+    echo "test-swift-runtime-libraries: inspection checks passed (real-runtime execution omitted by request)"
+else
+    "$TEST_DIR/span-probe" >/dev/null
+    echo "test-swift-runtime-libraries: ok"
+fi

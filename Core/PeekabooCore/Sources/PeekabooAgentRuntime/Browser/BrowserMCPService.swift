@@ -1011,54 +1011,6 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         }
     }
 
-    @MainActor
-    private var usesTargetOwnershipPool: Bool {
-        self.ownedSession != nil || self.authenticatedSessionPool != nil
-    }
-
-    @MainActor
-    private var requiresExistingLiveReceipt: Bool {
-        self.ownedSession != nil
-    }
-
-    @MainActor
-    private func targetOwnershipReservation() -> BrowserMCPSessionManager.TargetReservation? {
-        if let ownedSession = self.ownedSession {
-            return { receipt in try ownedSession.pool.bind(ownedSession.id, to: receipt) }
-        }
-        guard let pool = self.authenticatedSessionPool else { return nil }
-        return { receipt in try pool.bindRoot(to: receipt) }
-    }
-
-    @MainActor
-    private func targetOwnershipRelease() -> BrowserMCPSessionManager.TargetRelease? {
-        guard self.usesTargetOwnershipPool else { return nil }
-        if let ownedSession = self.ownedSession {
-            return { ownedSession.pool.unbind(ownedSession.id) }
-        }
-        guard let pool = self.authenticatedSessionPool else { return nil }
-        return { pool.unbindRoot() }
-    }
-
-    @MainActor
-    private func reconcileTargetOwnershipAfterExecutionFailure() async {
-        guard self.usesTargetOwnershipPool else { return }
-        await self.reconcileTargetOwnershipAfterFailure(using: self.resolvedSessionManager())
-    }
-
-    @MainActor
-    private func reconcileTargetOwnershipAfterFailure(using manager: BrowserMCPSessionManager) async {
-        guard let releaseTarget = self.targetOwnershipRelease() else { return }
-        let authorizationSnapshot = self.unclaimedConnectionHandoffAuthorizationSnapshot()
-        let reconciliation = Task { @MainActor in
-            await manager.status(
-                channel: nil,
-                releaseTargetWhenDisconnected: releaseTarget)
-        }
-        let status = await reconciliation.value
-        self.pruneConnectionHandoffAuthorizations(authorizationSnapshot, after: status)
-    }
-
     /// Legacy low-level configuration factory retained for source compatibility.
     ///
     /// Passing neither an exact WebSocket nor an explicit isolated/URL environment option selects
@@ -1277,6 +1229,58 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
 
 extension BrowserMCPService {
     @MainActor
+    private var usesTargetOwnershipPool: Bool {
+        self.ownedSession != nil || self.authenticatedSessionPool != nil
+    }
+
+    @MainActor
+    private var requiresExistingLiveReceipt: Bool {
+        self.ownedSession != nil
+    }
+
+    @MainActor
+    private func targetOwnershipReservation() -> BrowserMCPSessionManager.TargetReservation? {
+        if let ownedSession = self.ownedSession {
+            return { receipt in try ownedSession.pool.bind(ownedSession.id, to: receipt) }
+        }
+        guard let pool = self.authenticatedSessionPool else { return nil }
+        return { receipt in try pool.bindRoot(to: receipt) }
+    }
+
+    @MainActor
+    private func targetOwnershipRelease() -> BrowserMCPSessionManager.TargetRelease? {
+        guard self.usesTargetOwnershipPool else { return nil }
+        if let ownedSession = self.ownedSession {
+            return { ownedSession.pool.unbind(ownedSession.id) }
+        }
+        guard let pool = self.authenticatedSessionPool else { return nil }
+        return { pool.unbindRoot() }
+    }
+
+    @MainActor
+    private func reconcileTargetOwnershipAfterExecutionFailure() async {
+        guard self.usesTargetOwnershipPool else { return }
+        await self.reconcileTargetOwnershipAfterFailure(using: self.resolvedSessionManager())
+    }
+
+    @MainActor
+    private func reconcileTargetOwnershipAfterFailure(using manager: BrowserMCPSessionManager) async {
+        guard let releaseTarget = self.targetOwnershipRelease() else { return }
+        let authorizationSnapshot = self.unclaimedConnectionHandoffAuthorizationSnapshot()
+        let reconciliation = Task { @MainActor in
+            await manager.reconcileTargetOwnership(releaseTarget: releaseTarget)
+        }
+        switch await reconciliation.value {
+        case let .retained(binding):
+            self.pruneConnectionHandoffAuthorizations(authorizationSnapshot, retaining: binding)
+        case .cleared:
+            self.pruneConnectionHandoffAuthorizations(authorizationSnapshot, retaining: nil)
+        case .pending:
+            break
+        }
+    }
+
+    @MainActor
     private func unclaimedConnectionHandoffAuthorizationSnapshot()
         -> [UUID: BrowserMCPConnectionHandoffAuthorization]
     {
@@ -1299,6 +1303,14 @@ extension BrowserMCPService {
         } else {
             nil
         }
+        self.pruneConnectionHandoffAuthorizations(snapshot, retaining: currentBinding)
+    }
+
+    @MainActor
+    private func pruneConnectionHandoffAuthorizations(
+        _ snapshot: [UUID: BrowserMCPConnectionHandoffAuthorization],
+        retaining currentBinding: BrowserMCPExecutionSessionBinding?)
+    {
         for (authorizationID, authorization) in snapshot {
             guard self.connectionHandoffAuthorizations[authorizationID]?.unclaimedAuthorization == authorization,
                   authorization.sourceBinding != currentBinding

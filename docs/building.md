@@ -42,6 +42,11 @@ pnpm run build:swift:all
 ./scripts/build-cli-standalone.sh [--install]
 ```
 
+The standalone helper collects the compatibility libraries required by the executable into its build output.
+`--install` copies both the binary and those libraries to `/usr/local/bin`; keep them together when moving the CLI.
+Standalone builds check companion loader paths, architectures, and signatures using the selected toolchain.
+The release-only older-SDK runtime export audit remains mandatory for release builders and verifiers.
+
 The universal CLI build uses `--triple x86_64-apple-macosx15.0` for Intel compilation and binary-directory lookup,
 matching the CLI package's existing `.macOS(.v15)` minimum. It also sets Swift Build's aggregate deployment minimum,
 preventing the SDK's macOS 27 default from producing an Intel architecture deprecation warning. ARM compilation still
@@ -147,6 +152,8 @@ installed SDK's Swift `.tbd` files at verification time, following re-exports tr
 and bundled `libswiftCompatibility*` libraries are excluded; undefined symbols without a two-level
 source library fail closed. Swift symbols imported from frameworks such as Foundation and SwiftUI are
 outside this audit. Generated export data is intentionally not checked in.
+
+Compatibility-library imports and executable-relative loader paths are checked independently for each Mach-O slice. A library needs the architectures that actually import it, not unrelated slices. `bash scripts/test-swift-runtime-libraries.sh` includes synthetic inspection-only slice fixtures and the existing real-runtime Span probe. Add `--inspection-only` for local inspection proof without executing that probe; hosted CI retains the full default check. Synthetic-runtime fixture executables are never run.
 
 The audit selects the oldest installed macOS SDK at or above the highest slice's minimum macOS version
 and older than macOS 27. It records the SDK version, build, full path, and export digest with each
