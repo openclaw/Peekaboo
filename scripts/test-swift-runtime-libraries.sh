@@ -283,7 +283,14 @@ if verify_fixture \
     echo "Verifier accepted failed symbol inspection" >&2
     exit 1
 fi
-grep -Fq 'Unable to inspect Swift runtime imports' "$TEST_DIR/refusal"
+# Some nm versions return success for this text fixture; the subsequent native
+# architecture inspection must still reject it before any runtime audit passes.
+if ! grep -Fq 'Unable to inspect Swift runtime imports' "$TEST_DIR/refusal" &&
+   ! grep -Fxq "swift-runtime-exports: command failed: lipo -archs $TEST_DIR/invalid-binary" "$TEST_DIR/refusal"; then
+    cat "$TEST_DIR/refusal" >&2
+    echo "Invalid executable lacked a known native inspection refusal" >&2
+    exit 1
+fi
 
 # Selection ignores SDKs below the deployment target or at/above the deliberate macOS 27 limit.
 mkdir "$TEST_DIR/selection"

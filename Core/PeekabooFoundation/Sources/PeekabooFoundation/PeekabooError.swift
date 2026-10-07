@@ -139,7 +139,8 @@ public nonisolated enum PeekabooError: LocalizedError, StandardizedError, Peekab
             return "Authentication failed: \(message)"
         case let .rateLimited(retryAfter, message):
             if let retryAfter {
-                return "Rate limited (retry after \(Int(retryAfter))s): \(message)"
+                let duration = Int(exactly: retryAfter.rounded(.towardZero)).map(String.init) ?? String(retryAfter)
+                return "Rate limited (retry after \(duration)s): \(message)"
             }
             return "Rate limited: \(message)"
         case let .serverError(message):

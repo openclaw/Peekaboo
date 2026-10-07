@@ -100,6 +100,12 @@ international MiniMax fallback for MiniMax China remain runtime-only and are not
 - `PEEKABOO_DEFAULT_SAVE_PATH`: screenshot destination (created automatically).
 - `PEEKABOO_CLI_PATH`: point Peekaboo at a debug build (`.build/debug/peekaboo`) without copying binaries around.
 
+Configuration files support `${NAME}` environment substitutions. Inside JSON strings, quotes, backslashes,
+newlines and Unicode in the environment value are escaped so the decoded value stays literal. Unquoted numeric
+substitutions remain unquoted, and unset variables remain placeholders. Custom-provider `apiKey` references stay
+literal in saved configuration and resolve through credential lookup. The public plain-text interpolation helper
+does not apply JSON escaping. Decode warnings report the failing field without dumping the expanded configuration.
+
 ## Agent generation settings
 
 The macOS Settings UI and `peekaboo agent` share `agent.temperature` and `agent.maxTokens` through
