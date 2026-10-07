@@ -54,23 +54,23 @@ for flag in \
   -disableAutomaticPackageResolution \
   -onlyUsePackageVersionsFromResolvedFile \
   -skipPackageUpdates; do
-  rg -Fq -- "$flag" "$ROOT_DIR/scripts/release-macos-app.sh" || \
+  grep -Fq -- "$flag" "$ROOT_DIR/scripts/release-macos-app.sh" || \
     fail "release build is missing $flag"
-  rg -Fq -- "$flag" "$ROOT_DIR/.github/workflows/macos-ci.yml" || \
+  grep -Fq -- "$flag" "$ROOT_DIR/.github/workflows/macos-ci.yml" || \
     fail "mac-app CI build is missing $flag"
 done
 
-rg -Fq 'Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved' "$ROOT_DIR/.gitignore" || \
+grep -Fq 'Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved' "$ROOT_DIR/.gitignore" || \
   fail 'canonical workspace lock is not explicitly unignored'
-rg -Fq 'test ! -e CLI/Package.resolved' "$ROOT_DIR/.github/workflows/macos-ci.yml" || \
+grep -Fq 'test ! -e CLI/Package.resolved' "$ROOT_DIR/.github/workflows/macos-ci.yml" || \
   fail 'mac-app CI does not reject an ignored CLI-owned workspace lock'
-rg -Fq 'SourcePackages/checkouts/Sparkle rev-parse HEAD' "$ROOT_DIR/.github/workflows/macos-ci.yml" || \
+grep -Fq 'SourcePackages/checkouts/Sparkle rev-parse HEAD' "$ROOT_DIR/.github/workflows/macos-ci.yml" || \
   fail 'mac-app CI does not verify the checked-out Sparkle revision'
 
 release_source="$ROOT_DIR/scripts/release-macos-app.sh"
-payload_line="$(rg -n '^verify_app_payload "\$APP_BUNDLE"$' "$release_source" | cut -d: -f1)"
-resolution_line="$(rg -n -F 'verify-release-package-resolution.sh' "$release_source" | cut -d: -f1)"
-signing_line="$(rg -n '^log "Developer ID signing"$' "$release_source" | cut -d: -f1)"
+payload_line="$(grep -n '^verify_app_payload "\$APP_BUNDLE"$' "$release_source" | cut -d: -f1)"
+resolution_line="$(grep -n -F 'verify-release-package-resolution.sh' "$release_source" | cut -d: -f1)"
+signing_line="$(grep -n '^log "Developer ID signing"$' "$release_source" | cut -d: -f1)"
 [[ -n "$payload_line" && -n "$resolution_line" && -n "$signing_line" && \
   "$payload_line" -lt "$resolution_line" && "$resolution_line" -lt "$signing_line" ]] || \
   fail 'release package resolution must run after app provenance validation and before signing'
@@ -190,7 +190,8 @@ printf 'public let fixture = 2\n' >"$fixture_checkout/Sources/Updater.swift"
 assert_native_dirty_refused tracked-change
 git -C "$fixture_checkout" add Sources/Updater.swift
 assert_native_dirty_refused staged-change
-git -C "$fixture_checkout" reset -q --hard HEAD
+printf 'public let fixture = 1\n' >"$fixture_checkout/Sources/Updater.swift"
+git -C "$fixture_checkout" add Sources/Updater.swift
 printf 'public let extra = 3\n' >"$fixture_checkout/Sources/Extra.swift"
 assert_native_dirty_refused untracked-source
 rm "$fixture_checkout/Sources/Extra.swift"

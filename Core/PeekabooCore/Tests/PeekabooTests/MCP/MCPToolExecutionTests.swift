@@ -1106,6 +1106,7 @@ class MockAutomationService: ExactWindowTargetedClickServiceProtocol, TargetedHo
     private(set) var lastHotkeyKeys: String?
     private(set) var lastHotkeyHoldDuration: Int?
     private(set) var lastMoveTarget: CGPoint?
+    private(set) var dragRequests: [DragOperationRequest] = []
     private(set) var lastMoveDuration: Int?
     private(set) var lastWindowContext: WindowContext?
     var supportsTargetedHotkeys = true
@@ -1307,7 +1308,9 @@ class MockAutomationService: ExactWindowTargetedClickServiceProtocol, TargetedHo
         WaitForElementResult(found: false, element: nil, waitTime: 0)
     }
 
-    func drag(_: DragOperationRequest) async throws {}
+    func drag(_ request: DragOperationRequest) async throws {
+        self.dragRequests.append(request)
+    }
 
     func moveMouse(
         to: CGPoint,

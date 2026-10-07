@@ -21,7 +21,14 @@ export function renderedHeadingText(html) {
     }
     index = tagEnd + 1;
   }
-  return text.trim();
+  return decodeRenderedEntities(text).trim();
+}
+
+// Decode only escapes emitted by our renderer, once, after structural tag removal.
+// Re-decoding or re-parsing the result would change literal entity/tag text.
+export function decodeRenderedEntities(text) {
+  const entities = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" };
+  return text.replace(/&(amp|lt|gt|quot|#39);/g, (_, entity) => entities[entity]);
 }
 
 function renderedTagEnd(html, start) {

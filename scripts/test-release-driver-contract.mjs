@@ -16,6 +16,7 @@ import {
   extractReleaseNotes,
   githubReleaseAssetsNeedingUpload,
   npmIntegrity,
+  npmVersionPageURL,
   validateAppZipMembers,
   validateGitHubRelease,
   validateNpmPublication,
@@ -279,6 +280,7 @@ assert.throws(() => validateTrackedReleaseNotes({ changelog, notes: `${notes}- d
 const packageBytes = Buffer.from('deterministic npm package');
 const localIntegrity = npmIntegrity(packageBytes);
 const npmMetadata = {
+  name: '@steipete/peekaboo',
   version: '9.8.7',
   time: { '9.8.7': '2026-08-26T12:00:00.000Z' },
   dist: {
@@ -293,6 +295,7 @@ assert.doesNotThrow(() => validateNpmPublication({
   localIntegrity,
 }));
 for (const changed of [
+  { ...npmMetadata, name: '@steipete/other' },
   { ...npmMetadata, version: '9.8.6' },
   { ...npmMetadata, dist: { ...npmMetadata.dist, integrity: 'sha512-wrong' } },
   { ...npmMetadata, dist: { ...npmMetadata.dist, tarball: 'https://example.com/peekaboo.tgz' } },
@@ -305,6 +308,14 @@ for (const changed of [
     localIntegrity,
   }));
 }
+assert.equal(npmVersionPageURL('@steipete/peekaboo', '9.8.7'),
+  'https://www.npmjs.com/package/@steipete/peekaboo/v/9.8.7');
+assert.equal(npmVersionPageURL('peekaboo', '1.0.0-beta.1+build.5'),
+  'https://www.npmjs.com/package/peekaboo/v/1.0.0-beta.1%2Bbuild.5');
+for (const name of [undefined, '', '@steipete', '@steipete/', '@/peekaboo', 'a/b', '@a/b/c', '..', '@./x']) {
+  assert.throws(() => npmVersionPageURL(name, '9.8.7'), /package name is invalid/);
+}
+assert.throws(() => npmVersionPageURL('@steipete/peekaboo', ''), /version is invalid/);
 assert.equal(classifyNpmViewResult({
   exitCode: 0, stdout: '"9.8.7"', stderr: '', expectedVersion: '9.8.7',
 }), 'published');
@@ -378,6 +389,9 @@ assert.throws(() => composeGitHubBody({
 const publishedBody = composeGitHubBody({
   notes, proof, plan: bodyPlan, checksumsSHA256: 'f'.repeat(64), npm: npmMetadata,
 });
+assert.ok(publishedBody.includes(
+  '- npm version: [`9.8.7`](https://www.npmjs.com/package/@steipete/peekaboo/v/9.8.7)\n' +
+  '- npm tarball: https://registry.npmjs.org/@steipete/peekaboo/-/peekaboo-9.8.7.tgz\n'));
 assert.match(publishedBody, /npm integrity:/);
 assert.match(publishedBody, /2026-08-26T12:00:00.000Z/);
 const foreignRun = spawnSync(process.execPath, [

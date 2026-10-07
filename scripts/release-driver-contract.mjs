@@ -184,8 +184,20 @@ export function npmIntegrity(bytes) {
   return `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
 }
 
+export function npmVersionPageURL(packageName, version) {
+  const match = /^(?:@([^/@.][^/@]*)\/)?([^/@.][^/@]*)$/.exec(packageName ?? '');
+  if (!match) fail('npm package name is invalid');
+  if (typeof version !== 'string' || version.length === 0) fail('npm version is invalid');
+  // Scoped names keep the literal @scope/name path; encoding the whole name yields %40scope%2Fname.
+  const [, scope, name] = match;
+  const packagePath = scope === undefined ?
+    encodeURIComponent(name) : `@${encodeURIComponent(scope)}/${encodeURIComponent(name)}`;
+  return `https://www.npmjs.com/package/${packagePath}/v/${encodeURIComponent(version)}`;
+}
+
 export function validateNpmPublication({ metadata, packageName, version, localIntegrity }) {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) fail('npm metadata is invalid');
+  if (metadata.name !== packageName) fail('npm package name differs from the release package');
   if (metadata.version !== version) fail('npm published version differs from release plan');
   if (metadata.dist?.integrity !== localIntegrity) fail('npm integrity differs from the local package');
   if (typeof metadata.time?.[version] !== 'string' || Number.isNaN(Date.parse(metadata.time[version]))) {
@@ -270,7 +282,7 @@ export function composeGitHubBody({ notes, proof, plan, checksumsSHA256, npm = n
     lines.push('- npm publication: pending');
   } else {
     lines.push(
-      `- npm version: \`${npm.version}\``,
+      `- npm version: [\`${npm.version}\`](${npmVersionPageURL(npm.name, npm.version)})`,
       `- npm tarball: ${npm.dist.tarball}`,
       `- npm integrity: \`${npm.dist.integrity}\``,
       `- npm published: \`${npm.time[npm.version]}\``,

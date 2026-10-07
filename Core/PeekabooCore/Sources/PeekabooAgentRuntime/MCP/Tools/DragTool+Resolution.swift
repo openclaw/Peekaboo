@@ -72,15 +72,10 @@ extension DragTool {
                 message: "Invalid \(parameterName) coordinates. Both x and y must be valid numbers")
         }
 
-        // Coordinates outside the desktop are nearly always malformed tool input.
-        guard background || (x >= 0 && y >= 0) else {
+        // Displays left of or above the primary display have negative global coordinates.
+        guard background || ((-20000...20000).contains(x) && (-20000...20000).contains(y)) else {
             throw CoordinateParseError(
-                message: "Invalid \(parameterName) coordinates. Both x and y must be non-negative")
-        }
-
-        guard background || (x <= 20000 && y <= 20000) else {
-            throw CoordinateParseError(
-                message: "Invalid \(parameterName) coordinates. Both x and y must be 20000 or less")
+                message: "Invalid \(parameterName) coordinates. Both x and y must be between -20000 and 20000")
         }
 
         return CGPoint(x: x, y: y)

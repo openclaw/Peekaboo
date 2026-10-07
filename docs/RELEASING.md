@@ -382,8 +382,8 @@ The app, every nested Mach-O payload, standalone CLI archive, npm CLI archive, a
 
 The proof file is bounded, retained, hashed into the release plan, and uploaded with the artifacts. The driver keeps
 the tracked changelog notes as the immutable body prefix, adds source/plan/checksum/proof authority, then updates the
-draft after npm verification with the exact registry tarball, integrity, and publish time. Inspect the rendered body
-once more, then publish it:
+draft after npm verification with the npm version page link, exact registry tarball, integrity, and publish time.
+Inspect the rendered body once more, then publish it:
 
 ```bash
 gh release edit v<version> --draft=false

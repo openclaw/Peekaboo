@@ -21,7 +21,8 @@ struct MCPHumanMoveParameterTests {
     ])
     func `human movement refuses invalid overrides before pointer dispatch`(_ input: (String, Int)) async throws {
         let automation = MockAutomationService(accessibilityGranted: true)
-        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation, executionPolicy: .foregroundAllowed)
         let response = try await MoveTool(context: context).execute(arguments: ToolArguments(raw: [
             "to": "50,60", "foreground": true, "profile": "human", input.0: input.1,
         ]))
@@ -35,7 +36,8 @@ struct MCPHumanMoveParameterTests {
     @Test(arguments: ["linear", "human"])
     func `valid smooth overrides still execute for both profiles`(_ profile: String) async throws {
         let automation = MockAutomationService(accessibilityGranted: true)
-        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation, executionPolicy: .foregroundAllowed)
         let response = try await MoveTool(context: context).execute(arguments: ToolArguments(raw: [
             "to": "50,60", "foreground": true, "smooth": true, "profile": profile, "duration": 1000, "steps": 50,
         ]))
