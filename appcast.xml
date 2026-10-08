@@ -10,11 +10,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v4.9.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v4.9.0</sparkle:releaseNotesLink>
             <pubDate>Wed, 07 Oct 2026 13:33:52 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v4.9.0/Peekaboo-4.9.0.app.zip"
               sparkle:version="4090099"
               sparkle:shortVersionString="4.9.0"
-              sparkle:minimumSystemVersion="15.0"
               length="23285783"
               type="application/octet-stream"
               sparkle:edSignature="JvZ6wvWoi+UOK0jQvM/1L6V08n3zbkoDx2qyjXfq2qCcIKCg1A/Orne+wCy6UPeurL0Jdu7zgTwdhg7qKyj9Dg==" />
@@ -24,11 +24,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v4.8.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v4.8.0</sparkle:releaseNotesLink>
             <pubDate>Sun, 04 Oct 2026 21:08:50 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v4.8.0/Peekaboo-4.8.0.app.zip"
               sparkle:version="4080099"
               sparkle:shortVersionString="4.8.0"
-              sparkle:minimumSystemVersion="15.0"
               length="23104714"
               type="application/octet-stream"
               sparkle:edSignature="Gj4Z8y/c1mF5iY1Vn3414kHnIHXxarwwWbh8v/CWgSn4bY5m60TBbXWOgfollRvUMf/mH/sCkt+wC+wWFS/1Bw==" />
@@ -38,11 +38,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v4.7.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v4.7.0</sparkle:releaseNotesLink>
             <pubDate>Wed, 30 Sep 2026 05:52:58 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v4.7.0/Peekaboo-4.7.0.app.zip"
               sparkle:version="4070099"
               sparkle:shortVersionString="4.7.0"
-              sparkle:minimumSystemVersion="15.0"
               length="22864101"
               type="application/octet-stream"
               sparkle:edSignature="FjVqjvLc7MdZ/5wehMPvuHXhRVt3MPN6qEwYmpFWljXrChwY+D9rUSXxyvAP3ED5if0RRsEi/LMyNNUxkxNeDw==" />
@@ -52,11 +52,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v4.6.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v4.6.0</sparkle:releaseNotesLink>
             <pubDate>Sat, 26 Sep 2026 06:31:51 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v4.6.0/Peekaboo-4.6.0.app.zip"
               sparkle:version="4060099"
               sparkle:shortVersionString="4.6.0"
-              sparkle:minimumSystemVersion="15.0"
               length="22610613"
               type="application/octet-stream"
               sparkle:edSignature="+gA0mZ3HmMcN862jxYbGLlra5CLlD/j6o9oezCkywezmp4K8mZVkSka2SIhdoV5Po+0Tjee3OXLQvWjKuQ3vAw==" />
@@ -66,11 +66,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v4.5.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v4.5.0</sparkle:releaseNotesLink>
             <pubDate>Tue, 22 Sep 2026 15:48:04 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v4.5.0/Peekaboo-4.5.0.app.zip"
               sparkle:version="4050099"
               sparkle:shortVersionString="4.5.0"
-              sparkle:minimumSystemVersion="15.0"
               length="22400411"
               type="application/octet-stream"
               sparkle:edSignature="lDGVq+OftHa7dcTlvRJD4O3+dBcPCdw9wxiPo60p/7OWfh0Km1K7KQyy+h9G8puj/QpAWSpc6tpYe7H2HjkMAg==" />
@@ -80,11 +80,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v4.4.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v4.4.0</sparkle:releaseNotesLink>
             <pubDate>Mon, 14 Sep 2026 05:51:48 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v4.4.0/Peekaboo-4.4.0.app.zip"
               sparkle:version="4040099"
               sparkle:shortVersionString="4.4.0"
-              sparkle:minimumSystemVersion="15.0"
               length="22344357"
               type="application/octet-stream"
               sparkle:edSignature="MWBJvYIdfV/4SBBLD4lyASqBvmfJPQZG+SnEhKt1ZfwWSx+GWfdzCd87jzb9ol15TtawYeYp6uQp+akyIgAQBQ==" />
@@ -94,11 +94,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v4.3.4</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v4.3.4</sparkle:releaseNotesLink>
             <pubDate>Sat, 12 Sep 2026 02:57:22 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v4.3.4/Peekaboo-4.3.4.app.zip"
               sparkle:version="4030499"
               sparkle:shortVersionString="4.3.4"
-              sparkle:minimumSystemVersion="15.0"
               length="22320526"
               type="application/octet-stream"
               sparkle:edSignature="ywQpfumUtwrQ8na1Gz65WH+whbd2O73HY11n8zfWjvsxRFzbBeBsXvs9LJxZVDKyWm+6cUqk2XjSCvm3uxpOAA==" />
@@ -108,11 +108,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v4.3.3</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v4.3.3</sparkle:releaseNotesLink>
             <pubDate>Tue, 08 Sep 2026 11:18:13 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v4.3.3/Peekaboo-4.3.3.app.zip"
               sparkle:version="4030399"
               sparkle:shortVersionString="4.3.3"
-              sparkle:minimumSystemVersion="15.0"
               length="22324317"
               type="application/octet-stream"
               sparkle:edSignature="3HZ3p83IR6nwkNCwlLD+1I8b6vAQaJ7D+n8LqG7OEYl6/dyey5wjeCMbunmnMGlu6S2HSQmlgptVwUYiU2T2DQ==" />
@@ -122,11 +122,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v4.3.2</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v4.3.2</sparkle:releaseNotesLink>
             <pubDate>Mon, 07 Sep 2026 14:34:59 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v4.3.2/Peekaboo-4.3.2.app.zip"
               sparkle:version="4030299"
               sparkle:shortVersionString="4.3.2"
-              sparkle:minimumSystemVersion="15.0"
               length="22321227"
               type="application/octet-stream"
               sparkle:edSignature="ThuIQXKfwjTejCJ7j5jRu8au57lsSJrT+UioCSt3u4dlq/fqoBIq4FcvvEZmYGZw6uK+BY1z/aF3jRJuGr2aBg==" />
@@ -136,11 +136,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v4.3.1</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v4.3.1</sparkle:releaseNotesLink>
             <pubDate>Sun, 06 Sep 2026 12:33:50 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v4.3.1/Peekaboo-4.3.1.app.zip"
               sparkle:version="4030199"
               sparkle:shortVersionString="4.3.1"
-              sparkle:minimumSystemVersion="15.0"
               length="22320449"
               type="application/octet-stream"
               sparkle:edSignature="hBqbrtYrpDhWg4+pvIZJnO7CNO3iHQIiBtOPB7CXHs/0MOIPX9T4L7Hk1vys2W6UXcT59d7BGibvXxJNBjNrCw==" />
@@ -150,11 +150,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v4.3.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v4.3.0</sparkle:releaseNotesLink>
             <pubDate>Wed, 02 Sep 2026 20:45:02 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v4.3.0/Peekaboo-4.3.0.app.zip"
               sparkle:version="4030099"
               sparkle:shortVersionString="4.3.0"
-              sparkle:minimumSystemVersion="15.0"
               length="22902509"
               type="application/octet-stream"
               sparkle:edSignature="gS5yeRf0PWqahCmZ+HhHxOr7CkQEpxwANkCKWqLOEjnX0i/2bKGZ3hrwxvADg9FQFKJVHsG4bOtIjx6dqKsnDA==" />
@@ -164,11 +164,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v4.2.2</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v4.2.2</sparkle:releaseNotesLink>
             <pubDate>Thu, 20 Aug 2026 10:42:13 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v4.2.2/Peekaboo-4.2.2.app.zip"
               sparkle:version="4020299"
               sparkle:shortVersionString="4.2.2"
-              sparkle:minimumSystemVersion="15.0"
               length="21178455"
               type="application/octet-stream"
               sparkle:edSignature="qdt6GrVhB+O9vEogQGSuLyWbI2EjIeYohCIRUeo679d2BIjBbiG8v3Wzl5eko3flqlOtNj7xSwCHpV2KFglNBg==" />
@@ -178,11 +178,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v4.2.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v4.2.0</sparkle:releaseNotesLink>
             <pubDate>Sun, 16 Aug 2026 13:53:48 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v4.2.0/Peekaboo-4.2.0.app.zip"
               sparkle:version="4020099"
               sparkle:shortVersionString="4.2.0"
-              sparkle:minimumSystemVersion="15.0"
               length="20456951"
               type="application/octet-stream"
               sparkle:edSignature="OMDPdswM7+pZkTuJ/8ruCy8OFY3PZpw3B2EWtnZFl9KbDiNPxiL/oxwP7ET8dFDTIlxuP+A6zWAhmapt1e8SBA==" />
@@ -192,11 +192,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v4.1.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v4.1.0</sparkle:releaseNotesLink>
             <pubDate>Fri, 14 Aug 2026 01:01:18 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v4.1.0/Peekaboo-4.1.0.app.zip"
               sparkle:version="4010099"
               sparkle:shortVersionString="4.1.0"
-              sparkle:minimumSystemVersion="15.0"
               length="18197048"
               type="application/octet-stream"
               sparkle:edSignature="io0utGWQjkoEQ9Bh1m1V/qVLKrI04J/7/FI9u/diRQpMfH8lMQAfOZsoQXHc7xnEUVaO4bHuS2L1fxg6LVjTCA==" />
@@ -206,11 +206,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v4.0.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v4.0.0</sparkle:releaseNotesLink>
             <pubDate>Mon, 10 Aug 2026 13:04:12 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v4.0.0/Peekaboo-4.0.0.app.zip"
               sparkle:version="4000099"
               sparkle:shortVersionString="4.0.0"
-              sparkle:minimumSystemVersion="15.0"
               length="17298994"
               type="application/octet-stream"
               sparkle:edSignature="f1mqQ0rs0St93xsV5Itn2AvCENy+LaGdDA24y6knprnvaDchY61tdA9kHYgsiefiWQxfkt7fbHUzSfgPC6J4AQ==" />
@@ -220,11 +220,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.10.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.10.0</sparkle:releaseNotesLink>
             <pubDate>Wed, 05 Aug 2026 15:15:26 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v3.10.0/Peekaboo-3.10.0.app.zip"
               sparkle:version="3100099"
               sparkle:shortVersionString="3.10.0"
-              sparkle:minimumSystemVersion="15.0"
               length="17077841"
               type="application/octet-stream"
               sparkle:edSignature="aAOtXC2HoXe4UKbVPAG8K5FjCav8Y7a6h3E0Q4KTDQLXk9svwbs2vtUySqoLA6Bp0F/RGglenud3Ye7hBSXGAw==" />
@@ -234,11 +234,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.9.10</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.9.10</sparkle:releaseNotesLink>
             <pubDate>Mon, 03 Aug 2026 03:59:39 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v3.9.10/Peekaboo-3.9.10.app.zip"
               sparkle:version="3091099"
               sparkle:shortVersionString="3.9.10"
-              sparkle:minimumSystemVersion="15.0"
               length="17047602"
               type="application/octet-stream"
               sparkle:edSignature="sO+CpfZvb1EWQua3GGsCljX92piai8Q8gDQWCrBN/F5Z0ZL36Kt/bUNet0dcR6vVDL2iYYl7yXR3ABqL4Zu7AA==" />
@@ -248,11 +248,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.9.9</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.9.9</sparkle:releaseNotesLink>
             <pubDate>Sun, 02 Aug 2026 20:28:55 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v3.9.9/Peekaboo-3.9.9.app.zip"
               sparkle:version="3090999"
               sparkle:shortVersionString="3.9.9"
-              sparkle:minimumSystemVersion="15.0"
               length="17044017"
               type="application/octet-stream"
               sparkle:edSignature="PsDYZUxM9v/lWdBVXpcpXRxbYP/J8/27Z9nnNwW7ici2zSFlLqYtd1ogHVRb4bwsbpXbIEcNtfNMH/4CsQClCg==" />
@@ -262,11 +262,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.9.8</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.9.8</sparkle:releaseNotesLink>
             <pubDate>Thu, 23 Jul 2026 18:33:06 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v3.9.8/Peekaboo-3.9.8.app.zip"
               sparkle:version="3090899"
               sparkle:shortVersionString="3.9.8"
-              sparkle:minimumSystemVersion="15.0"
               length="17015855"
               type="application/octet-stream"
               sparkle:edSignature="ZgsOGc31JUIVfMAVdNlROjbFjySGgyRoPpxcSfvWg5seb377C/XEPjyTOOpMGqD1x9IdsK08qUosiV/TX0RsCg==" />
@@ -276,11 +276,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.9.7</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.9.7</sparkle:releaseNotesLink>
             <pubDate>Wed, 22 Jul 2026 07:02:41 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v3.9.7/Peekaboo-3.9.7.app.zip"
               sparkle:version="3090799"
               sparkle:shortVersionString="3.9.7"
-              sparkle:minimumSystemVersion="15.0"
               length="17013858"
               type="application/octet-stream"
               sparkle:edSignature="FFavZoCt16gHrE/d06JDmGtK227kRO3qWp95G9q/Kpjs1loOoPBZCIH1+sQ4+9WXpB5udvo6ISdV8UHxGbfwDg==" />
@@ -290,11 +290,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.9.6</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.9.6</sparkle:releaseNotesLink>
             <pubDate>Sun, 19 Jul 2026 09:50:49 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v3.9.6/Peekaboo-3.9.6.app.zip"
               sparkle:version="3090699"
               sparkle:shortVersionString="3.9.6"
-              sparkle:minimumSystemVersion="15.0"
               length="17011573"
               type="application/octet-stream"
               sparkle:edSignature="ya8srJ8KxMws8QGwtcbR+g0gI9DpRLNgXgIe/qT2CQ2esQuQxcrz2pAD10grQosZwAZgXvgVNKXkRDTAmTroAw==" />
@@ -304,11 +304,11 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.9.5</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.9.5</sparkle:releaseNotesLink>
             <pubDate>Sun, 19 Jul 2026 03:44:22 +0000</pubDate>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <enclosure
               url="https://github.com/openclaw/Peekaboo/releases/download/v3.9.5/Peekaboo-3.9.5.app.zip"
               sparkle:version="3090599"
               sparkle:shortVersionString="3.9.5"
-              sparkle:minimumSystemVersion="15.0"
               length="17009898"
               type="application/octet-stream"
               sparkle:edSignature="C7H8UK17WNbrkljaADT9CdK9tbaQyeEgjCuxT7nPyrVH3FLp3XCTo+GwnlEt14AbltyIBhMx61MMZorXcAqgCA==" />
@@ -355,161 +355,184 @@
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.9.2</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.9.2</sparkle:releaseNotesLink>
             <pubDate>Wed, 15 Jul 2026 00:50:40 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.9.2/Peekaboo-3.9.2.app.zip" sparkle:version="3090299" sparkle:shortVersionString="3.9.2" sparkle:minimumSystemVersion="15.0" length="16955943" type="application/octet-stream" sparkle:edSignature="kUPl2Jq1dJISqFE3Tt11MW1OF/paqunHZ0UvmQk7hClmu3Sq/oyKOP/TTnvGK6ShCgAY3pyVWsXJVV9vPYeABw=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.9.2/Peekaboo-3.9.2.app.zip" sparkle:version="3090299" sparkle:shortVersionString="3.9.2" length="16955943" type="application/octet-stream" sparkle:edSignature="kUPl2Jq1dJISqFE3Tt11MW1OF/paqunHZ0UvmQk7hClmu3Sq/oyKOP/TTnvGK6ShCgAY3pyVWsXJVV9vPYeABw=="/>
         </item>
         <item>
             <title>Peekaboo 3.9.1</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.9.1</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.9.1</sparkle:releaseNotesLink>
             <pubDate>Tue, 14 Jul 2026 01:30:48 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.9.1/Peekaboo-3.9.1.app.zip" sparkle:version="3090199" sparkle:shortVersionString="3.9.1" sparkle:minimumSystemVersion="15.0" length="16062133" type="application/octet-stream" sparkle:edSignature="Sd0guwnhub3i13kRhvUF3C75fVx6GMc0afvQiRBv7aOrtuFkXMSZucM1E7kEr2ohPo2Tz0xpmiGblMiwRs/rDw=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.9.1/Peekaboo-3.9.1.app.zip" sparkle:version="3090199" sparkle:shortVersionString="3.9.1" length="16062133" type="application/octet-stream" sparkle:edSignature="Sd0guwnhub3i13kRhvUF3C75fVx6GMc0afvQiRBv7aOrtuFkXMSZucM1E7kEr2ohPo2Tz0xpmiGblMiwRs/rDw=="/>
         </item>
         <item>
             <title>Peekaboo 3.9.0</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.9.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.9.0</sparkle:releaseNotesLink>
             <pubDate>Sat, 11 Jul 2026 10:04:47 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.9.0/Peekaboo-3.9.0.app.zip" sparkle:version="3090099" sparkle:shortVersionString="3.9.0" sparkle:minimumSystemVersion="15.0" length="15991232" type="application/octet-stream" sparkle:edSignature="6ZwXWs2JZi5+KvtpIJvUIhCQFm9MOXSPGDFRLJR6+Y5KmcbJTKJqctXSn5zjxiIBZ2M0uEKvlzEPpfBqo8oQCQ=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.9.0/Peekaboo-3.9.0.app.zip" sparkle:version="3090099" sparkle:shortVersionString="3.9.0" length="15991232" type="application/octet-stream" sparkle:edSignature="6ZwXWs2JZi5+KvtpIJvUIhCQFm9MOXSPGDFRLJR6+Y5KmcbJTKJqctXSn5zjxiIBZ2M0uEKvlzEPpfBqo8oQCQ=="/>
         </item>
         <item>
             <title>Peekaboo 3.8.0</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.8.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.8.0</sparkle:releaseNotesLink>
             <pubDate>Thu, 09 Jul 2026 15:07:26 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.8.0/Peekaboo-3.8.0.app.zip" sparkle:version="3080099" sparkle:shortVersionString="3.8.0" sparkle:minimumSystemVersion="15.0" length="15871719" type="application/octet-stream" sparkle:edSignature="608AvbWRjXOyA75BAwwH12QXwJtC73KWCIrOYu5TSbM32IffmE4K6aO2w4/sfLUDNXIAzjtfLL3EkbkfBPn9CQ=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.8.0/Peekaboo-3.8.0.app.zip" sparkle:version="3080099" sparkle:shortVersionString="3.8.0" length="15871719" type="application/octet-stream" sparkle:edSignature="608AvbWRjXOyA75BAwwH12QXwJtC73KWCIrOYu5TSbM32IffmE4K6aO2w4/sfLUDNXIAzjtfLL3EkbkfBPn9CQ=="/>
         </item>
         <item>
             <title>Peekaboo 3.7.1</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.7.1</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.7.1</sparkle:releaseNotesLink>
             <pubDate>Sun, 05 Jul 2026 09:39:21 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.7.1/Peekaboo-3.7.1.app.zip" sparkle:version="3070199" sparkle:shortVersionString="3.7.1" sparkle:minimumSystemVersion="15.0" length="15871102" type="application/octet-stream" sparkle:edSignature="vi/pOjjZCCI0nelC6blBedv5FKq9c5o5j/1Vs98cJgKk6BOSjDTmNZWla2OZcmm5x5s04zYzvxqAYz4TPUDMDg=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.7.1/Peekaboo-3.7.1.app.zip" sparkle:version="3070199" sparkle:shortVersionString="3.7.1" length="15871102" type="application/octet-stream" sparkle:edSignature="vi/pOjjZCCI0nelC6blBedv5FKq9c5o5j/1Vs98cJgKk6BOSjDTmNZWla2OZcmm5x5s04zYzvxqAYz4TPUDMDg=="/>
         </item>
         <item>
             <title>Peekaboo 3.7.0</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.7.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.7.0</sparkle:releaseNotesLink>
             <pubDate>Sun, 05 Jul 2026 07:29:52 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.7.0/Peekaboo-3.7.0.app.zip" sparkle:version="3070099" sparkle:shortVersionString="3.7.0" sparkle:minimumSystemVersion="15.0" length="14853764" type="application/octet-stream" sparkle:edSignature="MkLaCHkKyZX6mGHuWIpyAgMo/4eRhWB13HN+OhS6USw1NfttiDXI57M8aQJE4sR4J8R0sCUKs7MY2rTnE3NVBA=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.7.0/Peekaboo-3.7.0.app.zip" sparkle:version="3070099" sparkle:shortVersionString="3.7.0" length="14853764" type="application/octet-stream" sparkle:edSignature="MkLaCHkKyZX6mGHuWIpyAgMo/4eRhWB13HN+OhS6USw1NfttiDXI57M8aQJE4sR4J8R0sCUKs7MY2rTnE3NVBA=="/>
         </item>
         <item>
             <title>Peekaboo 3.6.0</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.6.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.6.0</sparkle:releaseNotesLink>
             <pubDate>Sat, 04 Jul 2026 04:26:47 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.6.0/Peekaboo-3.6.0.app.zip" sparkle:version="3060099" sparkle:shortVersionString="3.6.0" sparkle:minimumSystemVersion="15.0" length="14827187" type="application/octet-stream" sparkle:edSignature="5QgJcsbsZdEbgTiwUbwAvNjcba1FvI6V+xSyvTXM2xUINPaXVK1aWgR6V8wuNqKbht2ot6TTNkogvY+qul2CAA=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.6.0/Peekaboo-3.6.0.app.zip" sparkle:version="3060099" sparkle:shortVersionString="3.6.0" length="14827187" type="application/octet-stream" sparkle:edSignature="5QgJcsbsZdEbgTiwUbwAvNjcba1FvI6V+xSyvTXM2xUINPaXVK1aWgR6V8wuNqKbht2ot6TTNkogvY+qul2CAA=="/>
         </item>
         <item>
             <title>Peekaboo 3.5.4</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.5.4</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.5.4</sparkle:releaseNotesLink>
             <pubDate>Fri, 03 Jul 2026 13:01:02 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.5.4/Peekaboo-3.5.4.app.zip" sparkle:version="3050499" sparkle:shortVersionString="3.5.4" sparkle:minimumSystemVersion="15.0" length="14749333" type="application/octet-stream" sparkle:edSignature="GG2TN7E8N8Z+9cbgv6o4S8De7TUR3rri0q78QESNxopKgjsIem1l6Mv4Q3OkyQ35eXWQC+TGIeAtDml6VWQ1Cw=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.5.4/Peekaboo-3.5.4.app.zip" sparkle:version="3050499" sparkle:shortVersionString="3.5.4" length="14749333" type="application/octet-stream" sparkle:edSignature="GG2TN7E8N8Z+9cbgv6o4S8De7TUR3rri0q78QESNxopKgjsIem1l6Mv4Q3OkyQ35eXWQC+TGIeAtDml6VWQ1Cw=="/>
         </item>
         <item>
             <title>Peekaboo 3.5.3</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.5.3</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.5.3</sparkle:releaseNotesLink>
             <pubDate>Fri, 03 Jul 2026 12:20:49 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.5.3/Peekaboo-3.5.3.app.zip" sparkle:version="3050399" sparkle:shortVersionString="3.5.3" sparkle:minimumSystemVersion="15.0" length="15614454" type="application/octet-stream" sparkle:edSignature="txJ6Oxa40Z4lpcfuMcMqK95aIUAEweHgqUEdSr1NQsDVBP2APCu2R+ypi44UKuxIyQJ3GSTjfW8wFefupsXJDA=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.5.3/Peekaboo-3.5.3.app.zip" sparkle:version="3050399" sparkle:shortVersionString="3.5.3" length="15614454" type="application/octet-stream" sparkle:edSignature="txJ6Oxa40Z4lpcfuMcMqK95aIUAEweHgqUEdSr1NQsDVBP2APCu2R+ypi44UKuxIyQJ3GSTjfW8wFefupsXJDA=="/>
         </item>
         <item>
             <title>Peekaboo 3.5.2</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.5.2</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.5.2</sparkle:releaseNotesLink>
             <pubDate>Sat, 13 Jun 2026 08:59:09 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.5.2/Peekaboo-3.5.2.app.zip" sparkle:version="3050299" sparkle:shortVersionString="3.5.2" sparkle:minimumSystemVersion="15.0" length="15352388" type="application/octet-stream" sparkle:edSignature="92H8NPnnGD8Ui2OSACH769vQsaFbuI2HtJxhFS7kKBg9lE4Z+VH4TPZ42nHtZp1cC8N1WJ82QZFOcKNunZJZAg=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.5.2/Peekaboo-3.5.2.app.zip" sparkle:version="3050299" sparkle:shortVersionString="3.5.2" length="15352388" type="application/octet-stream" sparkle:edSignature="92H8NPnnGD8Ui2OSACH769vQsaFbuI2HtJxhFS7kKBg9lE4Z+VH4TPZ42nHtZp1cC8N1WJ82QZFOcKNunZJZAg=="/>
         </item>
         <item>
             <title>Peekaboo 3.5.1</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.5.1</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.5.1</sparkle:releaseNotesLink>
             <pubDate>Sat, 13 Jun 2026 04:28:54 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.5.1/Peekaboo-3.5.1.app.zip" sparkle:version="3050199" sparkle:shortVersionString="3.5.1" sparkle:minimumSystemVersion="15.0" length="15352424" type="application/octet-stream" sparkle:edSignature="c7TTai4o3ZBj80Qin85rHStFSTGhHjYa+GRqwybQGdUBNmIQIGu7J5GaTUsNBbd7MEh0IcCno55Kt89QglbcAw=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.5.1/Peekaboo-3.5.1.app.zip" sparkle:version="3050199" sparkle:shortVersionString="3.5.1" length="15352424" type="application/octet-stream" sparkle:edSignature="c7TTai4o3ZBj80Qin85rHStFSTGhHjYa+GRqwybQGdUBNmIQIGu7J5GaTUsNBbd7MEh0IcCno55Kt89QglbcAw=="/>
         </item>
         <item>
             <title>Peekaboo 3.5.0</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.5.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.5.0</sparkle:releaseNotesLink>
             <pubDate>Fri, 12 Jun 2026 08:33:25 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.5.0/Peekaboo-3.5.0.app.zip" sparkle:version="3050099" sparkle:shortVersionString="3.5.0" sparkle:minimumSystemVersion="15.0" length="15352853" type="application/octet-stream" sparkle:edSignature="1199+oHKPTtYsXlvIYRSAYDxnnF6a5ltD6SBFGwYdq941kyhO+mWVRJi8egt2oIkuzG+eCCJ5r5axBnN7h+bCw=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.5.0/Peekaboo-3.5.0.app.zip" sparkle:version="3050099" sparkle:shortVersionString="3.5.0" length="15352853" type="application/octet-stream" sparkle:edSignature="1199+oHKPTtYsXlvIYRSAYDxnnF6a5ltD6SBFGwYdq941kyhO+mWVRJi8egt2oIkuzG+eCCJ5r5axBnN7h+bCw=="/>
         </item>
         <item>
             <title>Peekaboo 3.4.1</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.4.1</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.4.1</sparkle:releaseNotesLink>
             <pubDate>Wed, 10 Jun 2026 04:37:26 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.4.1/Peekaboo-3.4.1.app.zip" sparkle:version="3040199" sparkle:shortVersionString="3.4.1" sparkle:minimumSystemVersion="15.0" length="14319085" type="application/octet-stream" sparkle:edSignature="stt7KbR092ZSlpj1zROUe02rjMUMPYBOR7wRAgSox+O+ZaE+g6ZnPiggNYgmJncBhk3RBxBARn76nnz7w+TcDg=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.4.1/Peekaboo-3.4.1.app.zip" sparkle:version="3040199" sparkle:shortVersionString="3.4.1" length="14319085" type="application/octet-stream" sparkle:edSignature="stt7KbR092ZSlpj1zROUe02rjMUMPYBOR7wRAgSox+O+ZaE+g6ZnPiggNYgmJncBhk3RBxBARn76nnz7w+TcDg=="/>
         </item>
         <item>
             <title>Peekaboo 3.4.0</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.4.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.4.0</sparkle:releaseNotesLink>
             <pubDate>Sun, 07 Jun 2026 07:16:16 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.4.0/Peekaboo-3.4.0.app.zip" sparkle:version="3040099" sparkle:shortVersionString="3.4.0" sparkle:minimumSystemVersion="15.0" length="14273629" type="application/octet-stream" sparkle:edSignature="Kxs4t0xAAx9/9sSAD5YLJKErXxcJeVULHXPvktIUcSZPoKGO6DaCvr1UyGWqP2H8KgZV0guV8I7D2/qQZKEcCg=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.4.0/Peekaboo-3.4.0.app.zip" sparkle:version="3040099" sparkle:shortVersionString="3.4.0" length="14273629" type="application/octet-stream" sparkle:edSignature="Kxs4t0xAAx9/9sSAD5YLJKErXxcJeVULHXPvktIUcSZPoKGO6DaCvr1UyGWqP2H8KgZV0guV8I7D2/qQZKEcCg=="/>
         </item>
         <item>
             <title>Peekaboo 3.3.0</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.3.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.3.0</sparkle:releaseNotesLink>
             <pubDate>Sun, 31 May 2026 23:35:05 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.3.0/Peekaboo-3.3.0.app.zip" sparkle:version="3030099" sparkle:shortVersionString="3.3.0" sparkle:minimumSystemVersion="15.0" length="14260543" type="application/octet-stream" sparkle:edSignature="0lnffOrthS95vfaTV80ZYF0XufVbEvwYYX6z498UiE6nGWsaTEOvA6LazXMbmrNKrqw+0dWASsxY0l3AEd2IAQ=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.3.0/Peekaboo-3.3.0.app.zip" sparkle:version="3030099" sparkle:shortVersionString="3.3.0" length="14260543" type="application/octet-stream" sparkle:edSignature="0lnffOrthS95vfaTV80ZYF0XufVbEvwYYX6z498UiE6nGWsaTEOvA6LazXMbmrNKrqw+0dWASsxY0l3AEd2IAQ=="/>
         </item>
         <item>
             <title>Peekaboo 3.2.3</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.2.3</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.2.3</sparkle:releaseNotesLink>
             <pubDate>Sun, 24 May 2026 04:29:41 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.2.3/Peekaboo-3.2.3.app.zip" sparkle:version="3020399" sparkle:shortVersionString="3.2.3" sparkle:minimumSystemVersion="15.0" length="14207981" type="application/octet-stream" sparkle:edSignature="ZbeAKxp09J9rREYoP4Mw7p3tOs0L9tJgRgNzOwbg5inNw7TfITlZBxw9HtWM/IwPi3I60zgL1Em8klLIUwF3Aw=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.2.3/Peekaboo-3.2.3.app.zip" sparkle:version="3020399" sparkle:shortVersionString="3.2.3" length="14207981" type="application/octet-stream" sparkle:edSignature="ZbeAKxp09J9rREYoP4Mw7p3tOs0L9tJgRgNzOwbg5inNw7TfITlZBxw9HtWM/IwPi3I60zgL1Em8klLIUwF3Aw=="/>
         </item>
         <item>
             <title>Peekaboo 3.2.2</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.2.2</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.2.2</sparkle:releaseNotesLink>
             <pubDate>Fri, 22 May 2026 13:53:24 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.2.2/Peekaboo-3.2.2.app.zip" sparkle:version="3020299" sparkle:shortVersionString="3.2.2" sparkle:minimumSystemVersion="15.0" length="14205079" type="application/octet-stream" sparkle:edSignature="FYs9Ys0ckHZHsvSGNKqMgkte6gh/V/bLzPgqiuLs3OUkiusAFc3eDei90zExPIkWfu1gL5cd5IYf87x5NHLdDQ=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.2.2/Peekaboo-3.2.2.app.zip" sparkle:version="3020299" sparkle:shortVersionString="3.2.2" length="14205079" type="application/octet-stream" sparkle:edSignature="FYs9Ys0ckHZHsvSGNKqMgkte6gh/V/bLzPgqiuLs3OUkiusAFc3eDei90zExPIkWfu1gL5cd5IYf87x5NHLdDQ=="/>
         </item>
         <item>
             <title>Peekaboo 3.2.1</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.2.1</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.2.1</sparkle:releaseNotesLink>
             <pubDate>Mon, 18 May 2026 12:49:01 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.2.1/Peekaboo-3.2.1.app.zip" sparkle:version="1" sparkle:shortVersionString="3.2.1" sparkle:minimumSystemVersion="15.0" length="14186313" type="application/octet-stream" sparkle:edSignature="PNsFxdzKkOPOzF5Oiuocuz033mKxyYTcS7rXxwkqXVQoIE7BsahloFtnn5ZOu9YTC2dKslVSfYkzrI3W7Q0vBA=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.2.1/Peekaboo-3.2.1.app.zip" sparkle:version="1" sparkle:shortVersionString="3.2.1" length="14186313" type="application/octet-stream" sparkle:edSignature="PNsFxdzKkOPOzF5Oiuocuz033mKxyYTcS7rXxwkqXVQoIE7BsahloFtnn5ZOu9YTC2dKslVSfYkzrI3W7Q0vBA=="/>
         </item>
         <item>
             <title>Peekaboo 3.2.0</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.2.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.2.0</sparkle:releaseNotesLink>
             <pubDate>Fri, 15 May 2026 04:35:36 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.2.0/Peekaboo-3.2.0.app.zip" sparkle:version="1" sparkle:shortVersionString="3.2.0" sparkle:minimumSystemVersion="15.0" length="14108605" type="application/octet-stream" sparkle:edSignature="x2kab/XQFJhKecLNgrylm87ucjolx/+VBg+iY6MSYOWD+rFTA16B/d+i2BhjcX+bfIu2RTUIL2usLVvkbD91AQ=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.2.0/Peekaboo-3.2.0.app.zip" sparkle:version="1" sparkle:shortVersionString="3.2.0" length="14108605" type="application/octet-stream" sparkle:edSignature="x2kab/XQFJhKecLNgrylm87ucjolx/+VBg+iY6MSYOWD+rFTA16B/d+i2BhjcX+bfIu2RTUIL2usLVvkbD91AQ=="/>
         </item>
         <item>
             <title>Peekaboo 3.1.2</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.1.2</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.1.2</sparkle:releaseNotesLink>
             <pubDate>Mon, 11 May 2026 06:02:00 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.1.2/Peekaboo-3.1.2.app.zip" sparkle:version="1" sparkle:shortVersionString="3.1.2" sparkle:minimumSystemVersion="15.0" length="14977547" type="application/octet-stream" sparkle:edSignature="zSHCZV1HviLScFyoiuX7esy2AQL9Nqe1lU5FaF99J5lTsK39woQKTzjF6ZHdaCWj8TCBUasI++bFcvonht43BA=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.1.2/Peekaboo-3.1.2.app.zip" sparkle:version="1" sparkle:shortVersionString="3.1.2" length="14977547" type="application/octet-stream" sparkle:edSignature="zSHCZV1HviLScFyoiuX7esy2AQL9Nqe1lU5FaF99J5lTsK39woQKTzjF6ZHdaCWj8TCBUasI++bFcvonht43BA=="/>
         </item>
         <item>
             <title>Peekaboo 3.1.1</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.1.1</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.1.1</sparkle:releaseNotesLink>
             <pubDate>Mon, 11 May 2026 05:24:18 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.1.1/Peekaboo-3.1.1.app.zip" sparkle:version="1" sparkle:shortVersionString="3.1.1" sparkle:minimumSystemVersion="15.0" length="14977524" type="application/octet-stream" sparkle:edSignature="kaTcBBlSGco1/3DVBZypU0ImpunsGW9NT32E+EMDWbawFjNUOUcUILkhHJ/fUUKGsYQTCEIFllGzwCnCDkLXCw=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.1.1/Peekaboo-3.1.1.app.zip" sparkle:version="1" sparkle:shortVersionString="3.1.1" length="14977524" type="application/octet-stream" sparkle:edSignature="kaTcBBlSGco1/3DVBZypU0ImpunsGW9NT32E+EMDWbawFjNUOUcUILkhHJ/fUUKGsYQTCEIFllGzwCnCDkLXCw=="/>
         </item>
         <item>
             <title>Peekaboo 3.0.0</title>
             <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.0.0</link>
             <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.0.0</sparkle:releaseNotesLink>
             <pubDate>Sun, 10 May 2026 06:19:41 +0000</pubDate>
-            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.0.0/Peekaboo-3.0.0.app.zip" sparkle:version="1" sparkle:shortVersionString="3.0.0" sparkle:minimumSystemVersion="15.0" length="15163019" type="application/octet-stream" sparkle:edSignature="8SgqHM5WCwDZyIEGoMTRNy7WfkHuMLKZ5cqdRkArMU5N1yyCGeJHrScoHccV1HHHgnHiLA6DHtdT2FF/sryuDg=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.0.0/Peekaboo-3.0.0.app.zip" sparkle:version="1" sparkle:shortVersionString="3.0.0" length="15163019" type="application/octet-stream" sparkle:edSignature="8SgqHM5WCwDZyIEGoMTRNy7WfkHuMLKZ5cqdRkArMU5N1yyCGeJHrScoHccV1HHHgnHiLA6DHtdT2FF/sryuDg=="/>
         </item>
         <item>
             <title>Peekaboo 3.0.0-beta4</title>
             <link>https://github.com/steipete/Peekaboo/releases/tag/v3.0.0-beta4</link>
             <sparkle:releaseNotesLink>https://github.com/steipete/Peekaboo/releases/tag/v3.0.0-beta4</sparkle:releaseNotesLink>
             <pubDate>Tue, 28 Apr 2026 01:07:46 +0000</pubDate>
-            <enclosure url="https://github.com/steipete/Peekaboo/releases/download/v3.0.0-beta4/Peekaboo-3.0.0-beta4.app.zip" sparkle:version="1" sparkle:shortVersionString="3.0.0-beta4" sparkle:minimumSystemVersion="15.0" length="14616053" type="application/octet-stream" sparkle:edSignature="IFy+LXma6xmpN7dFkUUIiZm4fqBQ5bGrmoeH4m++zPiwFXbOVwP5r9mjA2F8Ja9lT5PyBdPywGe1j2qcYUmtBA=="/>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/steipete/Peekaboo/releases/download/v3.0.0-beta4/Peekaboo-3.0.0-beta4.app.zip" sparkle:version="1" sparkle:shortVersionString="3.0.0-beta4" length="14616053" type="application/octet-stream" sparkle:edSignature="IFy+LXma6xmpN7dFkUUIiZm4fqBQ5bGrmoeH4m++zPiwFXbOVwP5r9mjA2F8Ja9lT5PyBdPywGe1j2qcYUmtBA=="/>
         </item>
     </channel>
 </rss>
