@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Stop an idle `peekaboo mcp` (and other window-tracking hosts) from burning CPU whenever unrelated applications launch or quit: AXorcist now indexes workspace applications by identity and stops re-reading resolved PIDs, cutting the cost from ~0.68 s to ~0.02 s of CPU per launch and quit on a Mac with ~600 running applications. Thanks @coygeek for the detailed report! #1005.
 - Update the shared Swift Log lock to 1.16.1 and Swift Configuration to 1.2.2 for corrected multiplexed log metadata and empty configuration values, preserving the supported Swift and macOS baselines.
 - Accept signed global coordinates for foreground MCP move and drag within existing magnitude bounds, preserving target guards and before-delivery validation. Thanks @rudycelekli! #963.
 - Preserve documentation source text through syntax highlighting, parse CRLF metadata, render unfinished EOF fences, retain link entities/query parameters, and assign unique heading targets. Thanks @rudycelekli! #931, #939, #940, #969, #971.
