@@ -153,6 +153,12 @@ func terminateAtDeadline() -> Never {
         status: 2)
 }
 
+func makeDeadlineWorkItem() -> DispatchWorkItem {
+    DispatchWorkItem { @Sendable in
+        terminateAtDeadline()
+    }
+}
+
 @available(macOS 14.2, *)
 func record(_ request: CaptureRequest) async throws -> CaptureEvidence {
     var address = AudioObjectPropertyAddress(
@@ -296,6 +302,12 @@ struct SystemAudioProbe {
             if arguments == ["--self-test-deadline"] {
                 terminateAtDeadline()
             }
+            if arguments == ["--self-test-scheduled-deadline"] {
+                let deadline = makeDeadlineWorkItem()
+                DispatchQueue.global().asyncAfter(deadline: .now() + 0.05, execute: deadline)
+                try await Task.sleep(for: .seconds(2))
+                throw ProbeError.invalid("Scheduled deadline did not terminate the process")
+            }
             if arguments == ["--self-test"] {
                 try runSelfTests()
                 return
@@ -306,9 +318,7 @@ struct SystemAudioProbe {
             }
             // Native HAL calls can block even after a successful start. The probe
             // is an isolated process; never use process exit as a GUI-host timeout.
-            let deadline = DispatchWorkItem {
-                terminateAtDeadline()
-            }
+            let deadline = makeDeadlineWorkItem()
             DispatchQueue.global().asyncAfter(deadline: .now() + request.seconds + 10, execute: deadline)
             defer { deadline.cancel() }
             let evidence = try await record(request)

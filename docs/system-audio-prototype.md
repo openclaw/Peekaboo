@@ -115,6 +115,39 @@ Installed Peekaboo remains unchanged.
 
 ## Integration after feasibility
 
+### Follow-up live validation (2026-10-10)
+
+The installed, Developer ID-signed Peekaboo GUI Bridge was used to operate System
+Settings. It was not modified or re-signed. The separate ad-hoc-signed prototype
+was added to **System Audio Recording Only**, and its switch was verified enabled.
+After the recorder changed, only its own grant was toggled off/on and rechecked.
+TCC logs attributed requests to the prototype identity. The enabled UI switch is
+not proof of successful native authorization or acquisition.
+
+The first real scheduled watchdog fired with `SIGTRAP`: its closure inherited
+main-actor isolation but ran on a global queue. The crash stack included
+`_dispatch_assert_queue_fail` and `closure #1 in static SystemAudioProbe.main()`.
+The watchdog now uses an explicitly `@Sendable` work item. Regression subprocesses
+schedule that same work-item factory on a global queue and verify exit status 2
+with both full and closed stderr pipes; those checks pass alongside the PCM tests.
+
+Two synthetic tone processes (440 Hz and 880 Hz) were launched together. Selected
+process capture, a retry after refreshing the grant, and explicit system capture
+each produced no final CAF or success receipt. The corrected GUI-launched recorder
+emitted its deadline diagnostic and ended in approximately 13.7 seconds for a
+three-second request plus ten-second deadline allowance. LaunchServices returned
+0, which is **not** the recorder's exit status. No recorder or test player remained
+after the runs; this does not prove native aggregate/tap cleanup.
+
+A one-second native sample of the system control showed acquisition blocked in
+`AudioDeviceCreateIOProcIDWithBlock`, through
+`HALC_ProxyIOContext::_TellServerAboutStreamUsage` and
+`HALC_ProxyObject::SetPropertyData`, waiting on Mach IPC. The active output was the
+built-in speakers at 48 kHz. Private partials were retained for investigation.
+Known-signal acquisition, process isolation, playback preservation, and native
+cleanup therefore remain unverified. This stack does not establish a permission
+dialog or a macOS defect as the cause.
+
 After proving the native lifecycle, move capture APIs into the shared automation layer and expose them as
 `capture audio` plus an MCP operation. Native work needs a separately contained worker,
 with verified permission attribution and explicit typed capability negotiation. Return

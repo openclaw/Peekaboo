@@ -75,6 +75,11 @@ func runSelfTests() throws {
     try testTerminationWithFullPipe(arguments: ["--self-test-deadline"], expectedStatus: 2)
     try testTerminationWithFullPipe(arguments: ["system", "nan", "fixture.caf"], expectedStatus: 1)
     try testTerminationWithFullPipe(arguments: ["--self-test-deadline"], expectedStatus: 2, closedReader: true)
+    try testTerminationWithFullPipe(arguments: ["--self-test-scheduled-deadline"], expectedStatus: 2)
+    try testTerminationWithFullPipe(
+        arguments: ["--self-test-scheduled-deadline"],
+        expectedStatus: 2,
+        closedReader: true)
     try testTerminationWithFullPipe(arguments: ["system", "nan", "fixture.caf"], expectedStatus: 1, closedReader: true)
     print(
         "PASS: request/source checks, PCM round-trip/statistics, overwrite guard, silence, full/closed-pipe exits")
