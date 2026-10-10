@@ -31,11 +31,21 @@ extension ConfigurationManager {
     /// Update configuration file with new values
     public func updateConfiguration(_ updates: (inout Configuration) -> Void) throws {
         try self.withStateLock {
-            var config = self.loadConfigurationFromPath(Self.configPath) ?? self.configuration ?? Configuration()
+            var config = try self.requireReadableConfigurationForMutation(
+                self.loadConfigurationFromPath(Self.configPath)) ?? self.configuration ?? Configuration()
             updates(&config)
             try self.saveConfiguration(config)
             self.configuration = config
         }
+    }
+
+    /// Missing files can use defaults or cached values; failed reads of existing files cannot.
+    func requireReadableConfigurationForMutation(_ loaded: Configuration?) throws -> Configuration? {
+        guard loaded != nil || !FileManager.default.fileExists(atPath: Self.configPath) else {
+            throw PeekabooError.fileIOError(
+                "Unable to read existing configuration at \(Self.configPath). Refusing to replace it.")
+        }
+        return loaded
     }
 
     func saveConfiguration(_ config: Configuration) throws {

@@ -5,7 +5,7 @@ extension ConfigurationManager {
         try self.validate(provider: provider, id: id)
 
         try self.withStateLock {
-            var config = self.loadConfiguration() ?? Configuration()
+            var config = try self.requireReadableConfigurationForMutation(self.loadConfiguration()) ?? Configuration()
             if config.customProviders == nil {
                 config.customProviders = [:]
             }
@@ -17,7 +17,7 @@ extension ConfigurationManager {
 
     public func removeCustomProvider(id: String) throws {
         try self.withStateLock {
-            var config = self.loadConfiguration() ?? Configuration()
+            var config = try self.requireReadableConfigurationForMutation(self.loadConfiguration()) ?? Configuration()
             config.customProviders?.removeValue(forKey: id)
             if config.customProviders?.isEmpty == true {
                 config.customProviders = nil
