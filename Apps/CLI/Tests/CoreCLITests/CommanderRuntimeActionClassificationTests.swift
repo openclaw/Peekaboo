@@ -9,8 +9,11 @@ struct CommanderRuntimeActionClassificationTests {
         for (path, descriptor) in Self.leafDescriptors(descriptors) {
             let expected = (descriptor.type.init() as? any ActionOutputFormattable)?.defaultEffect != nil
             for arguments in [
-                path,
+                ["/tmp/peekaboo-before"] + path,
+                ["pb"] + path,
+                ["peekaboo-4.9"] + path + ["--json"],
                 ["peekaboo"] + path,
+                ["/usr/local/bin/peekaboo"] + path,
                 ["/tmp/peekaboo"] + path + ["--json"],
                 ["peekaboo"] + path + ["--", "--json"],
             ] {
@@ -23,14 +26,14 @@ struct CommanderRuntimeActionClassificationTests {
         }
     }
 
-    @Test
-    func `omitted default subcommands keep the registered leaf classification`() throws {
+    @Test(arguments: ["peekaboo", "/tmp/peekaboo-before", "pb", "peekaboo-4.9"])
+    func `omitted default subcommands keep the registered leaf classification`(executable: String) throws {
         for descriptor in CommanderRegistryBuilder.buildDescriptors() {
             guard let defaultName = descriptor.metadata.defaultSubcommandName else { continue }
             let defaultCommand = try #require(descriptor.subcommands.first { $0.metadata.name == defaultName })
             let expected = (defaultCommand.type.init() as? any ActionOutputFormattable)?.defaultEffect != nil
             for suffix in [[], ["--json"], ["--unknown-option"], ["--", "--json"]] {
-                let arguments = ["peekaboo", descriptor.metadata.name] + suffix
+                let arguments = [executable, descriptor.metadata.name] + suffix
                 #expect(CommanderRuntimeRouter.isActionInvocation(argv: arguments) == expected)
             }
         }

@@ -9,6 +9,8 @@ read_when:
 
 This source-tree reference covers all 34 root commands in the upcoming v4 registry and is checked against the built binary's `--help` output. Use `peekaboo <command> --help` for every option and `peekaboo tools` for the separate MCP/agent tool catalog.
 
+The executable can be renamed or invoked through a symlink (for example, `pb see --help` or `peekaboo-4.9 --version`).
+
 ## Core commands
 
 | Command | Purpose / subcommands |

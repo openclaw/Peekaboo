@@ -293,25 +293,26 @@ struct CommanderBinderProgramResolutionTests {
         #expect(invocation.parsedValues.flags.contains("dryRun"))
     }
 
-    @Test
+    @Test(arguments: ["/tmp/peekaboo-before", "pb", "peekaboo-4.9", "peekaboo", "/usr/local/bin/peekaboo"])
     @MainActor
-    func `Runtime router treats full argv and argument tail equivalently`() throws {
+    func `Runtime router normalizes agent tasks for any executable name`(executable: String) throws {
         let full = try CommanderRuntimeRouter.resolve(argv: [
             "peekaboo",
             "agent",
             "list files",
             "--dry-run",
         ])
-        let tail = try CommanderRuntimeRouter.resolve(argv: [
+        let renamed = try CommanderRuntimeRouter.resolve(argv: [
+            executable,
             "agent",
             "list files",
             "--dry-run",
         ])
 
         #expect(full.metadata.name == "run")
-        #expect(full.metadata.name == tail.metadata.name)
-        #expect(ObjectIdentifier(full.type) == ObjectIdentifier(tail.type))
-        #expect(full.parsedValues == tail.parsedValues)
+        #expect(full.metadata.name == renamed.metadata.name)
+        #expect(ObjectIdentifier(full.type) == ObjectIdentifier(renamed.type))
+        #expect(full.parsedValues == renamed.parsedValues)
     }
 
     @Test
