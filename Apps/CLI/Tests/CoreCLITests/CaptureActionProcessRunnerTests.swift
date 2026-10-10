@@ -390,6 +390,116 @@ struct CaptureActionProcessRunnerTests {
     }
 
     @Test
+    func `exact byte cap at EOF is not truncation`() async throws {
+        let result = try await CaptureActionProcessRunner.run(
+            command: ["/usr/bin/perl", "-e", "print STDOUT 'x' x 65536; print STDERR 'x' x 65536;"],
+            timeoutSeconds: 5
+        )
+        #expect(result.succeeded)
+        #expect(result.stdout == String(repeating: "x", count: 65536))
+        #expect(result.stderr == result.stdout)
+        #expect(!result.stdoutTruncated)
+        #expect(!result.stderrTruncated)
+    }
+
+    @Test(arguments: [0, 1, 2, 3])
+    func `byte cap preserves the complete UTF8 prefix`(prefixBytes: Int) async throws {
+        let prefix = String(repeating: "A", count: prefixBytes)
+        for character in ["é", "€", "🙂"] {
+            let copies = (65536 - prefixBytes) / character.utf8.count
+            let expected = prefix + String(repeating: character, count: copies)
+            let script = "binmode STDOUT; binmode STDERR; my $s = pack('C*', " +
+                character.utf8.map(String.init).joined(separator: ",") + "); " +
+                "print STDOUT '\(prefix)', $s x \(copies + 2); " +
+                "print STDERR '\(prefix)', $s x \(copies + 2);"
+            let result = try await CaptureActionProcessRunner.run(
+                command: ["/usr/bin/perl", "-e", script],
+                timeoutSeconds: 5
+            )
+
+            #expect(result.succeeded)
+            #expect(result.stdout == expected)
+            #expect(result.stderr == expected)
+            #expect(result.stdoutTruncated)
+            #expect(result.stderrTruncated)
+            let stdout = CaptureActionManifestWriter.stream(result.stdout, truncated: result.stdoutTruncated)
+            let stderr = CaptureActionManifestWriter.stream(result.stderr, truncated: result.stderrTruncated)
+            #expect(stdout.byteCount == expected.utf8.count)
+            #expect(stderr.byteCount == expected.utf8.count)
+        }
+    }
+
+    @Test
+    func `split child writes retain the complete UTF8 prefix`() async throws {
+        let result = try await CaptureActionProcessRunner.run(
+            command: [
+                "/usr/bin/perl", "-e",
+                "select STDERR; $| = 1; select STDOUT; $| = 1; " +
+                    "print STDOUT 'x' x 65535; print STDERR 'x' x 65535; " +
+                    "for my $b (0xE2, 0x82, 0xAC) { print STDOUT pack('C', $b); " +
+                    "print STDERR pack('C', $b); select undef, undef, undef, 0.025; }",
+            ],
+            timeoutSeconds: 5
+        )
+        #expect(result.succeeded)
+        #expect(result.stdout == String(repeating: "x", count: 65535))
+        #expect(result.stderr == result.stdout)
+        #expect(result.stdoutTruncated)
+        #expect(result.stderrTruncated)
+    }
+
+    @Test(arguments: [[0xFF], [0xC0], [0xE0, 0x80], [0xED, 0xA0], [0xF0, 0x80], [0xF4, 0x90]])
+    func `invalid UTF8 stays strict with or without discarded bytes`(bytes: [UInt8]) async throws {
+        for discarded in [false, true] {
+            let script = "my $s = ('x' x \(65536 - bytes.count)) . pack('C*', " +
+                bytes.map(String.init).joined(separator: ",") + ") . ('x' x \(discarded ? 10 : 0)); " +
+                "print STDOUT $s; print STDERR $s;"
+            let result = try await CaptureActionProcessRunner.run(
+                command: ["/usr/bin/perl", "-e", script],
+                timeoutSeconds: 5
+            )
+            #expect(result.succeeded)
+            #expect(result.stdout.isEmpty)
+            #expect(result.stderr.isEmpty)
+            #expect(result.stdoutTruncated == discarded)
+            #expect(result.stderrTruncated == discarded)
+        }
+    }
+
+    @Test
+    func `a split trailing scalar cannot hide interior invalid UTF8`() async throws {
+        let result = try await CaptureActionProcessRunner.run(
+            command: [
+                "/usr/bin/perl", "-e",
+                "my $s = pack('C', 0xFF) . ('x' x 65534) . pack('C*', 0xE2, 0x82, 0xAC); " +
+                    "print STDOUT $s; print STDERR $s;"
+            ],
+            timeoutSeconds: 5
+        )
+        #expect(result.succeeded)
+        #expect(result.stdout.isEmpty)
+        #expect(result.stderr.isEmpty)
+        #expect(result.stdoutTruncated)
+        #expect(result.stderrTruncated)
+    }
+
+    @Test
+    func `incomplete UTF8 at true EOF stays strict`() async throws {
+        let result = try await CaptureActionProcessRunner.run(
+            command: [
+                "/usr/bin/perl", "-e",
+                "my $s = ('x' x 65535) . pack('C', 0xC3); print STDOUT $s; print STDERR $s;",
+            ],
+            timeoutSeconds: 5
+        )
+        #expect(result.succeeded)
+        #expect(result.stdout.isEmpty)
+        #expect(result.stderr.isEmpty)
+        #expect(!result.stdoutTruncated)
+        #expect(!result.stderrTruncated)
+    }
+
+    @Test
     func `fast child output retains its final bytes`() async throws {
         for index in 0..<50 {
             let expected = "capture-output-\(index)-tail"
