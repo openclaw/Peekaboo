@@ -34,6 +34,7 @@ enum CommanderRuntimeExecutor {
         }
     }
 
+    /// Runs full argv, including an executable name or path at index zero.
     static func resolveAndRun(
         arguments: [String],
         runtimeFactory: RuntimeFactory = .live

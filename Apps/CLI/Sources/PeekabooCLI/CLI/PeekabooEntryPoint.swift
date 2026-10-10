@@ -14,6 +14,7 @@ public func runPeekabooCLI() async {
 }
 
 /// Internal helper that runs the CLI and returns an exit code (used by tests).
+/// Expects full argv, including an executable name or path at index zero.
 @MainActor
 func executePeekabooCLI(arguments: [String]) async -> Int32 {
     // Publish owner-lease awareness before any long-lived CLI mode can reach ScreenCaptureKit.

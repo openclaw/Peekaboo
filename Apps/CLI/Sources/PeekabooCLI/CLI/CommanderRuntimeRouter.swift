@@ -9,6 +9,7 @@ struct CommanderResolvedCommand {
 
 @MainActor
 enum CommanderRuntimeRouter {
+    /// Resolves full argv, including an executable name or path at index zero.
     static func resolve(argv: [String]) throws -> CommanderResolvedCommand {
         let descriptors = CommanderRegistryBuilder.buildDescriptors()
         let trimmedArgs = Self.trimmedArguments(from: argv)
@@ -73,29 +74,17 @@ enum CommanderRuntimeRouter {
     }
 
     private static func trimmedArguments(from argv: [String]) -> [String] {
-        guard !argv.isEmpty else { return [] }
-        var args = argv
-        if args[0].hasSuffix("peekaboo") {
-            args.removeFirst()
-        }
-        return args
+        Array(argv.dropFirst())
     }
 
-    private static func normalizedDefaultSubcommandArguments(_ argv: [String]) -> [String] {
-        var arguments = argv
-        // Commander requires the root command before runtime flags; `peekaboo --json agent ...`
-        // is invalid independently of agent shorthand, so the command can only be at index 0 or 1.
-        let commandIndex = arguments.first?.hasSuffix("peekaboo") == true ? 1 : 0
-        guard arguments.indices.contains(commandIndex), arguments[commandIndex] == "agent" else {
-            return arguments
-        }
-        let nextIndex = commandIndex + 1
-        guard arguments.indices.contains(nextIndex) else { return arguments }
-        let token = arguments[nextIndex]
+    private static func normalizedDefaultSubcommandArguments(_ arguments: [String]) -> [String] {
+        guard arguments.first == "agent", arguments.count > 1 else { return arguments }
+        let token = arguments[1]
         let explicitSubcommands = Set(["run", "resume", "sessions", "chat"])
         guard !token.hasPrefix("-"), !explicitSubcommands.contains(token) else { return arguments }
-        arguments.insert("run", at: nextIndex)
-        return arguments
+        var normalized = arguments
+        normalized.insert("run", at: 1)
+        return normalized
     }
 
     private static func handleHelpRequest(

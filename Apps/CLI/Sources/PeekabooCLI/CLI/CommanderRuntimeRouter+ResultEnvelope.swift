@@ -2,6 +2,7 @@ import Commander
 
 extension CommanderRuntimeRouter {
     /// Classifies the selected command before Commander parses or binds its arguments.
+    /// Expects full argv, including an executable name or path at index zero.
     /// This keeps parse-time and binding-time failures in the same result-envelope context
     /// as failures thrown after the command instance is available.
     static func isActionInvocation(argv: [String]) -> Bool {
@@ -10,10 +11,7 @@ extension CommanderRuntimeRouter {
     }
 
     private static func resultEnvelopeCommand(argv: [String]) -> (any ParsableCommand.Type)? {
-        var arguments = argv[...]
-        if arguments.first?.hasSuffix("peekaboo") == true {
-            arguments.removeFirst()
-        }
+        var arguments = argv.dropFirst()
         guard let commandName = arguments.first else { return nil }
 
         // Envelope classification needs command types; signature reflection belongs to parsing.
