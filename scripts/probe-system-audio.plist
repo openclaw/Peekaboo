@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>probe-system-audio</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.pearcecodes.peekaboo.audio-prototype</string>
+    <key>CFBundleName</key>
+    <string>Peekaboo Audio Prototype</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Record selected process or system output locally to test Peekaboo audio capture. No microphone is used.</string>
+</dict>
+</plist>
