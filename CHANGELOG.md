@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Update the shared Swift Log lock to 1.16.1 and Swift Configuration to 1.2.2 for corrected multiplexed log metadata and empty configuration values, preserving the supported Swift and macOS baselines.
 - Accept signed global coordinates for foreground MCP move and drag within existing magnitude bounds, preserving target guards and before-delivery validation. Thanks @rudycelekli! #963.
 - Preserve documentation source text through syntax highlighting, parse CRLF metadata, render unfinished EOF fences, retain link entities/query parameters, and assign unique heading targets. Thanks @rudycelekli! #931, #939, #940, #969, #971.
 - Link the npm version page from the published GitHub release body, keeping scoped package paths literal and requiring the registry package name to match the local package before rendering.
