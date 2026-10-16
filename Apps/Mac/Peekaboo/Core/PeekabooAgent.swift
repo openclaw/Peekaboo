@@ -149,14 +149,17 @@ final class PeekabooAgent {
     }
 
     /// Common implementation for executing tasks with different content types.
-    private func executeTaskWithContent(_ content: ModelMessage.ContentPart) async throws {
+    private func executeTaskWithContent(
+        _ content: ModelMessage.ContentPart,
+        sessionId: String? = nil) async throws
+    {
         if self.taskRunner == nil {
             guard self.services.agent != nil else {
                 throw AgentError.serviceUnavailable
             }
         }
 
-        let prompt = self.pendingPrompt(for: content)
+        let prompt = self.pendingPrompt(for: content, sessionId: sessionId)
         if self.processingTask != nil {
             if self.runnerIsStopping {
                 self.promptsAcceptedWhileStopping.append(prompt)
@@ -173,10 +176,10 @@ final class PeekabooAgent {
         try await task.value
     }
 
-    private func pendingPrompt(for content: ModelMessage.ContentPart) -> PendingPrompt {
+    private func pendingPrompt(for content: ModelMessage.ContentPart, sessionId: String?) -> PendingPrompt {
         PendingPrompt(
             content: content,
-            sessionId: self.sessionStore.currentSession?.id ?? self.currentSessionId)
+            sessionId: sessionId ?? self.sessionStore.currentSession?.id ?? self.currentSessionId)
     }
 
     private func runQueuedTasks(first prompt: PendingPrompt) async throws {
@@ -248,13 +251,13 @@ final class PeekabooAgent {
         agentService: (any AgentServiceProtocol)?) async throws
     {
         let taskDescription = self.taskDescription(for: content)
+        try self.useSession(sessionId)
         self.prepareForTask(description: taskDescription)
         defer { self.cleanupAfterTask() }
 
         do {
             try Task.checkCancellation()
             let configuredAgent = try self.configuredAgent(agentService)
-            self.useSession(sessionId)
             let session = self.ensureSession()
             self.logUserMessage(content, in: session)
             let result = try await self.runCurrentTask(
@@ -303,9 +306,7 @@ final class PeekabooAgent {
 
     /// Resume a previous session
     func resumeSession(_ sessionId: String, withTask task: String) async throws {
-        self.currentSessionId = sessionId
-        self.useSession(sessionId)
-        try await self.executeTask(task)
+        try await self.executeTaskWithContent(.text(task), sessionId: sessionId)
     }
 
     /// List available sessions
@@ -330,6 +331,7 @@ final class PeekabooAgent {
         guard self.processingTask != nil else { return }
         self.runnerIsStopping = true
         self.queuedFollowUps.removeAll()
+        self.promptsAcceptedWhileStopping.removeAll()
         self.processingTask?.cancel()
         // Don't add a message here - it will be added when the cancellation is actually handled
     }
@@ -361,9 +363,11 @@ extension PeekabooAgent {
     }
 
     @MainActor
-    private func useSession(_ sessionId: String?) {
-        guard let sessionId,
-              let session = self.sessionStore.sessions.first(where: { $0.id == sessionId }) else { return }
+    private func useSession(_ sessionId: String?) throws {
+        guard let sessionId else { return }
+        guard let session = self.sessionStore.sessions.first(where: { $0.id == sessionId }) else {
+            throw AgentError.executionFailed("The queued session no longer exists")
+        }
         self.sessionStore.selectSession(session)
         self.currentSessionId = session.id
     }

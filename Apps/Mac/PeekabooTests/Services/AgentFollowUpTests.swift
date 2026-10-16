@@ -187,6 +187,82 @@ struct AgentFollowUpTests {
         #expect(original.contains { $0.contains("second") })
         #expect(moved.allSatisfy { !$0.contains("second") })
     }
+
+    @Test
+    func `Resuming another session waits until the live task finishes`() async throws {
+        let gate = FollowUpGate()
+        let (agent, store) = makeFollowUpAgent(gate: gate)
+        defer { gate.releaseAll() }
+        let original = try #require(store.currentSession)
+        let other = store.createSession(title: "Other", modelName: "test")
+        store.selectSession(original)
+
+        let first = Task { try await agent.executeTask("first") }
+        await gate.waitUntilEntered("first")
+        try await agent.resumeSession(other.id, withTask: "second")
+        #expect(store.currentSession?.id == original.id)
+        #expect(agent.currentSessionId == original.id)
+        #expect(!gate.didEnter("second"))
+
+        gate.release("first")
+        await gate.waitUntilEntered("second")
+        #expect(store.currentSession?.id == other.id)
+        gate.release("second")
+        try await first.value
+    }
+
+    @Test
+    func `A second Stop drops prompts accepted while cancellation unwinds`() async throws {
+        let gate = FollowUpGate()
+        gate.holdCancellation = true
+        let (agent, _) = makeFollowUpAgent(gate: gate)
+        defer { gate.releaseAll() }
+
+        let first = Task { try await agent.executeTask("first") }
+        await gate.waitUntilEntered("first")
+        agent.cancelCurrentTask()
+        try await agent.executeTask("retry")
+        agent.cancelCurrentTask()
+
+        let cancelled = await waitUntil { gate.wasCancelled("first") }
+        #expect(cancelled)
+        gate.finishHeldCancellation()
+        _ = await first.result
+        let settled = await waitUntil { !agent.isProcessing || gate.didEnter("retry") }
+        #expect(settled)
+        #expect(!gate.didEnter("retry"))
+        #expect(!agent.isProcessing)
+        gate.release("retry")
+    }
+
+    @Test
+    func `A deleted originating session cannot redirect a queued prompt`() async throws {
+        let gate = FollowUpGate()
+        let (agent, store) = makeFollowUpAgent(gate: gate)
+        defer { gate.releaseAll() }
+        let originalID = try #require(store.currentSession).id
+
+        let first = Task { try await agent.executeTask("first") }
+        await gate.waitUntilEntered("first")
+        try await agent.executeTask("discarded")
+        let other = store.createSession(title: "Other", modelName: "test")
+        store.sessions.removeAll { $0.id == originalID }
+
+        gate.release("first")
+        let settled = await waitUntil { !agent.isProcessing || gate.didEnter("discarded") }
+        #expect(settled)
+        let discardedDidRun = gate.didEnter("discarded")
+        #expect(!discardedDidRun)
+        gate.release("discarded")
+        let result = await first.result
+        let otherMessages = store.sessions.first { $0.id == other.id }?.messages.map(\.content) ?? []
+        #expect(otherMessages.allSatisfy { !$0.contains("discarded") })
+        guard case let .failure(error) = result else {
+            Issue.record("A deleted session should reject its queued prompt")
+            return
+        }
+        #expect(error as? AgentError == .executionFailed("The queued session no longer exists"))
+    }
 }
 
 @MainActor

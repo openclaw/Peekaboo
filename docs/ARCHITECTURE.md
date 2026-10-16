@@ -96,6 +96,12 @@ or transport queues so they do not hold the main actor or Swift's cooperative ex
 stop an underlying native call: for example, the application-inventory worker keeps its slot until that call returns,
 refusing new work instead of growing a queue behind it.
 
+Mac chat runs accepted follow-ups in order through one cancellable task. Stop cancels the active task and drops
+pending prompts. A prompt submitted while cancellation finishes waits for a new task; another Stop drops that prompt
+too. Queued prompts retain the session that accepted them. Resuming another session selects it only when its prompt
+starts, and a deleted session's queued prompts are rejected before provider execution instead of moving to the current
+conversation.
+
 Desktop operation lane admission uses one monotonic 15-second budget across its turnstiles and global, process, and
 window lock claims. Acquiring a lock after expiry does not authorize the operation: Peekaboo releases the acquired
 claims and returns a retry-safe `TIMEOUT` refusal before the operation body starts. Cancellation can end the wait
