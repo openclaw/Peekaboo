@@ -42,6 +42,14 @@ final class PeekabooAgent {
     @ObservationIgnored
     private var processingTask: Task<Void, any Error>?
 
+    /// Follow-ups accepted while a task is running. The live runner drains them in order.
+    @ObservationIgnored
+    private var queuedFollowUps: [ModelMessage.ContentPart] = []
+
+    /// Nil runs PeekabooAgentService. Tests suspend the model call here.
+    @ObservationIgnored
+    private let taskRunner: (@MainActor (String) async throws -> AgentExecutionResult)?
+
     /// Current session ID for continuity
     private(set) var currentSessionId: String?
 
@@ -101,11 +109,13 @@ final class PeekabooAgent {
     init(
         settings: PeekabooSettings,
         sessionStore: SessionStore,
-        services: PeekabooServices = PeekabooServices())
+        services: PeekabooServices = PeekabooServices(),
+        taskRunner: (@MainActor (String) async throws -> AgentExecutionResult)? = nil)
     {
         self.services = services
         self.settings = settings
         self.sessionStore = sessionStore
+        self.taskRunner = taskRunner
     }
 
     // MARK: - Public Methods
@@ -120,35 +130,63 @@ final class PeekabooAgent {
 
     /// Execute a task with the agent
     func executeTask(_ task: String) async throws {
-        guard self.services.agent != nil else {
-            throw AgentError.serviceUnavailable
+        if self.taskRunner == nil {
+            guard self.services.agent != nil else {
+                throw AgentError.serviceUnavailable
+            }
         }
 
         // Call the common implementation with text content
         try await self.executeTaskWithContent(.text(task))
     }
 
-    /// Common implementation for executing tasks with different content types
+    /// Common implementation for executing tasks with different content types.
     private func executeTaskWithContent(_ content: ModelMessage.ContentPart) async throws {
-        guard let agentService = services.agent else {
-            throw AgentError.serviceUnavailable
+        if self.taskRunner == nil {
+            guard self.services.agent != nil else {
+                throw AgentError.serviceUnavailable
+            }
         }
 
-        // Create a cancellable task
+        if self.processingTask != nil {
+            self.queuedFollowUps.append(content)
+            return
+        }
+
         let task = Task<Void, any Error> {
-            try await self.executeTaskInternal(content: content, agentService: agentService)
+            try await self.runQueuedTasks(first: content)
         }
-
-        // Assign the task and wait for it to complete
         self.processingTask = task
         try await task.value
+    }
+
+    private func runQueuedTasks(first content: ModelMessage.ContentPart) async throws {
+        var next: ModelMessage.ContentPart? = content
+        defer { self.finishRunner() }
+        while let current = next {
+            try Task.checkCancellation()
+            try await self.executeTaskInternal(content: current, agentService: self.services.agent)
+            next = self.popFollowUp()
+        }
+    }
+
+    private func popFollowUp() -> ModelMessage.ContentPart? {
+        guard !self.queuedFollowUps.isEmpty else { return nil }
+        return self.queuedFollowUps.removeFirst()
+    }
+
+    private func finishRunner() {
+        self.queuedFollowUps.removeAll()
+        self.isProcessing = false
+        self.currentTask = ""
+        self.processingTask = nil
     }
 
     /// Internal task execution helper
     @MainActor
     private func executeTaskInternal(
         content: ModelMessage.ContentPart,
-        agentService: any AgentServiceProtocol) async throws
+        agentService: (any AgentServiceProtocol)?) async throws
     {
         let taskDescription = self.taskDescription(for: content)
         self.prepareForTask(description: taskDescription)
@@ -156,21 +194,51 @@ final class PeekabooAgent {
 
         do {
             try Task.checkCancellation()
-            let agent = try self.peekabooAgent(from: agentService)
+            let configuredAgent = try self.configuredAgent(agentService)
             let session = self.ensureSession()
             self.logUserMessage(content, in: session)
-            let delegate = self.makeEventDelegate()
-            let result = try await self.runAgentTask(
+            let result = try await self.runCurrentTask(
                 content: content,
                 description: taskDescription,
-                agent: agent,
-                eventDelegate: delegate)
+                agent: configuredAgent)
             try Task.checkCancellation()
             await self.persistResult(result, for: session, taskDescription: taskDescription)
         } catch {
             try self.handleTaskError(error, taskDescription: taskDescription)
             throw error
         }
+    }
+
+    /// Cast before creating a session, matching the previous failure path.
+    @MainActor
+    private func configuredAgent(
+        _ agentService: (any AgentServiceProtocol)?) throws -> PeekabooAgentService?
+    {
+        guard self.taskRunner == nil else { return nil }
+        guard let agentService else {
+            throw AgentError.serviceUnavailable
+        }
+        return try self.peekabooAgent(from: agentService)
+    }
+
+    @MainActor
+    private func runCurrentTask(
+        content: ModelMessage.ContentPart,
+        description: String,
+        agent: PeekabooAgentService?) async throws -> AgentExecutionResult
+    {
+        if let taskRunner = self.taskRunner {
+            return try await taskRunner(description)
+        }
+        guard let agent else {
+            throw AgentError.serviceUnavailable
+        }
+        let delegate = self.makeEventDelegate()
+        return try await self.runAgentTask(
+            content: content,
+            description: description,
+            agent: agent,
+            eventDelegate: delegate)
     }
 
     /// Resume a previous session
@@ -198,6 +266,7 @@ final class PeekabooAgent {
 
     /// Cancel the current task
     func cancelCurrentTask() {
+        self.queuedFollowUps.removeAll()
         self.processingTask?.cancel()
         // Don't add a message here - it will be added when the cancellation is actually handled
     }
@@ -237,11 +306,12 @@ extension PeekabooAgent {
         self.lastTokenUsage = nil
     }
 
+    /// Per-step display reset. The runner keeps Stop available across queued follow-ups.
     @MainActor
     private func cleanupAfterTask() {
-        self.isProcessing = false
-        self.currentTask = ""
-        self.processingTask = nil
+        self.currentTool = nil
+        self.currentToolArgs = nil
+        self.isThinking = false
     }
 
     @MainActor
