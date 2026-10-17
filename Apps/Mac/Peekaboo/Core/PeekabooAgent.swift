@@ -42,6 +42,22 @@ final class PeekabooAgent {
     @ObservationIgnored
     private var processingTask: Task<Void, any Error>?
 
+    /// Follow-ups accepted while a task is running. The live runner drains them in order.
+    @ObservationIgnored
+    private var queuedFollowUps: [PendingPrompt] = []
+
+    /// Prompts accepted after Stop, while the cancelled runner is still unwinding.
+    @ObservationIgnored
+    private var promptsAcceptedWhileStopping: [PendingPrompt] = []
+
+    /// True after Stop until that runner finishes. New prompts must not join its queue.
+    @ObservationIgnored
+    private var runnerIsStopping = false
+
+    /// Nil runs PeekabooAgentService. Tests suspend the model call here.
+    @ObservationIgnored
+    private let taskRunner: (@MainActor (String) async throws -> AgentExecutionResult)?
+
     /// Current session ID for continuity
     private(set) var currentSessionId: String?
 
@@ -101,11 +117,13 @@ final class PeekabooAgent {
     init(
         settings: PeekabooSettings,
         sessionStore: SessionStore,
-        services: PeekabooServices = PeekabooServices())
+        services: PeekabooServices = PeekabooServices(),
+        taskRunner: (@MainActor (String) async throws -> AgentExecutionResult)? = nil)
     {
         self.services = services
         self.settings = settings
         self.sessionStore = sessionStore
+        self.taskRunner = taskRunner
     }
 
     // MARK: - Public Methods
@@ -120,51 +138,132 @@ final class PeekabooAgent {
 
     /// Execute a task with the agent
     func executeTask(_ task: String) async throws {
-        guard self.services.agent != nil else {
-            throw AgentError.serviceUnavailable
+        if self.taskRunner == nil {
+            guard self.services.agent != nil else {
+                throw AgentError.serviceUnavailable
+            }
         }
 
         // Call the common implementation with text content
         try await self.executeTaskWithContent(.text(task))
     }
 
-    /// Common implementation for executing tasks with different content types
-    private func executeTaskWithContent(_ content: ModelMessage.ContentPart) async throws {
-        guard let agentService = services.agent else {
-            throw AgentError.serviceUnavailable
+    /// Common implementation for executing tasks with different content types.
+    private func executeTaskWithContent(
+        _ content: ModelMessage.ContentPart,
+        sessionId: String? = nil) async throws
+    {
+        if self.taskRunner == nil {
+            guard self.services.agent != nil else {
+                throw AgentError.serviceUnavailable
+            }
         }
 
-        // Create a cancellable task
+        let prompt = self.pendingPrompt(for: content, sessionId: sessionId)
+        if self.processingTask != nil {
+            if self.runnerIsStopping {
+                self.promptsAcceptedWhileStopping.append(prompt)
+            } else {
+                self.queuedFollowUps.append(prompt)
+            }
+            return
+        }
+
         let task = Task<Void, any Error> {
-            try await self.executeTaskInternal(content: content, agentService: agentService)
+            try await self.runQueuedTasks(first: prompt)
         }
-
-        // Assign the task and wait for it to complete
         self.processingTask = task
         try await task.value
+    }
+
+    private func pendingPrompt(for content: ModelMessage.ContentPart, sessionId: String?) -> PendingPrompt {
+        PendingPrompt(
+            content: content,
+            sessionId: sessionId ?? self.sessionStore.currentSession?.id ?? self.currentSessionId)
+    }
+
+    private func runQueuedTasks(first prompt: PendingPrompt) async throws {
+        var next: PendingPrompt? = prompt
+        var failure: (any Error)?
+        defer { self.finishRunner() }
+        while let current = next {
+            if self.runnerIsStopping || Task.isCancelled {
+                self.queuedFollowUps.removeAll()
+                throw CancellationError()
+            }
+            do {
+                try await self.executeTaskInternal(
+                    content: current.content,
+                    sessionId: current.sessionId,
+                    agentService: self.services.agent)
+            } catch is CancellationError {
+                self.queuedFollowUps.removeAll()
+                throw CancellationError()
+            } catch {
+                if failure == nil {
+                    failure = error
+                }
+                if self.runnerIsStopping {
+                    self.queuedFollowUps.removeAll()
+                    throw CancellationError()
+                }
+            }
+            next = self.popFollowUp()
+        }
+        if let failure {
+            throw failure
+        }
+    }
+
+    private func popFollowUp() -> PendingPrompt? {
+        guard !self.queuedFollowUps.isEmpty else { return nil }
+        return self.queuedFollowUps.removeFirst()
+    }
+
+    /// Closes the current runner. Prompts accepted after Stop start a new one.
+    private func finishRunner() {
+        let acceptedWhileStopping = self.promptsAcceptedWhileStopping
+        self.promptsAcceptedWhileStopping.removeAll()
+        self.queuedFollowUps.removeAll()
+        self.runnerIsStopping = false
+        self.isProcessing = false
+        self.currentTask = ""
+        self.processingTask = nil
+        guard let first = acceptedWhileStopping.first else { return }
+
+        self.queuedFollowUps = Array(acceptedWhileStopping.dropFirst())
+        let task = Task<Void, any Error> {
+            do {
+                try await self.runQueuedTasks(first: first)
+            } catch {
+                // Each prompt already recorded its own failure or cancellation.
+            }
+        }
+        self.processingTask = task
+        self.isProcessing = true
     }
 
     /// Internal task execution helper
     @MainActor
     private func executeTaskInternal(
         content: ModelMessage.ContentPart,
-        agentService: any AgentServiceProtocol) async throws
+        sessionId: String?,
+        agentService: (any AgentServiceProtocol)?) async throws
     {
         let taskDescription = self.taskDescription(for: content)
+        try self.useSession(sessionId)
         self.prepareForTask(description: taskDescription)
         defer { self.cleanupAfterTask() }
 
         do {
             try Task.checkCancellation()
-            let agent = try self.peekabooAgent(from: agentService)
+            let configuredAgent = try self.configuredAgent(agentService)
             let session = self.ensureSession()
             self.logUserMessage(content, in: session)
-            let delegate = self.makeEventDelegate()
-            let result = try await self.runAgentTask(
+            let result = try await self.runCurrentTask(
                 content: content,
                 description: taskDescription,
-                agent: agent,
-                eventDelegate: delegate)
+                agent: configuredAgent)
             try Task.checkCancellation()
             await self.persistResult(result, for: session, taskDescription: taskDescription)
         } catch {
@@ -173,10 +272,41 @@ final class PeekabooAgent {
         }
     }
 
+    /// Cast before creating a session, matching the previous failure path.
+    @MainActor
+    private func configuredAgent(
+        _ agentService: (any AgentServiceProtocol)?) throws -> PeekabooAgentService?
+    {
+        guard self.taskRunner == nil else { return nil }
+        guard let agentService else {
+            throw AgentError.serviceUnavailable
+        }
+        return try self.peekabooAgent(from: agentService)
+    }
+
+    @MainActor
+    private func runCurrentTask(
+        content: ModelMessage.ContentPart,
+        description: String,
+        agent: PeekabooAgentService?) async throws -> AgentExecutionResult
+    {
+        if let taskRunner = self.taskRunner {
+            return try await taskRunner(description)
+        }
+        guard let agent else {
+            throw AgentError.serviceUnavailable
+        }
+        let delegate = self.makeEventDelegate()
+        return try await self.runAgentTask(
+            content: content,
+            description: description,
+            agent: agent,
+            eventDelegate: delegate)
+    }
+
     /// Resume a previous session
     func resumeSession(_ sessionId: String, withTask task: String) async throws {
-        self.currentSessionId = sessionId
-        try await self.executeTask(task)
+        try await self.executeTaskWithContent(.text(task), sessionId: sessionId)
     }
 
     /// List available sessions
@@ -198,9 +328,18 @@ final class PeekabooAgent {
 
     /// Cancel the current task
     func cancelCurrentTask() {
+        guard self.processingTask != nil else { return }
+        self.runnerIsStopping = true
+        self.queuedFollowUps.removeAll()
+        self.promptsAcceptedWhileStopping.removeAll()
         self.processingTask?.cancel()
         // Don't add a message here - it will be added when the cancellation is actually handled
     }
+}
+
+private struct PendingPrompt {
+    var content: ModelMessage.ContentPart
+    var sessionId: String?
 }
 
 // MARK: - Private Methods
@@ -224,6 +363,16 @@ extension PeekabooAgent {
     }
 
     @MainActor
+    private func useSession(_ sessionId: String?) throws {
+        guard let sessionId else { return }
+        guard let session = self.sessionStore.sessions.first(where: { $0.id == sessionId }) else {
+            throw AgentError.executionFailed("The queued session no longer exists")
+        }
+        self.sessionStore.selectSession(session)
+        self.currentSessionId = session.id
+    }
+
+    @MainActor
     private func prepareForTask(description: String) {
         self.isProcessing = true
         self.currentTask = description
@@ -237,11 +386,12 @@ extension PeekabooAgent {
         self.lastTokenUsage = nil
     }
 
+    /// Per-step display reset. The runner keeps Stop available across queued follow-ups.
     @MainActor
     private func cleanupAfterTask() {
-        self.isProcessing = false
-        self.currentTask = ""
-        self.processingTask = nil
+        self.currentTool = nil
+        self.currentToolArgs = nil
+        self.isThinking = false
     }
 
     @MainActor
