@@ -516,7 +516,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         window.title = session.title
         window.identifier = NSUserInterfaceItemIdentifier(AgentSessionUI.detailWindowIdentifier(sessionID: session.id))
         window.center()
-        self.sessionStore.selectSession(session)
         let rootView = SessionMainWindow(initialSessionId: session.id)
             .environment(self.sessionStore)
             .environment(self.agent)

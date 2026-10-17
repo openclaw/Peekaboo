@@ -82,20 +82,14 @@ struct StatusBarControllerTests {
             permissions: permissions,
             settings: settings,
             updater: DisabledUpdaterController())
-        defer {
-            controller.removeStatusItem()
-            for window in NSApp.windows where window.title == "Older" || window.title == "Current" {
-                window.close()
-            }
-        }
+        defer { controller.removeStatusItem() }
 
         let item = NSMenuItem(title: older.title, action: nil, keyEquivalent: "")
         item.representedObject = older.id
         controller.openSession(item)
 
-        #expect(sessionStore.currentSession?.id == older.id)
-        #expect(sessionStore.currentSession?.title == "Older")
-        #expect(current.title == "Current")
+        #expect(sessionStore.currentSession?.id == current.id)
+        #expect(sessionStore.currentSession?.title == "Current")
     }
 
     @Test
