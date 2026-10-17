@@ -66,6 +66,69 @@ struct StatusBarControllerTests {
     }
 
     @Test
+    func `opening a recent session selects that chat`() {
+        let settings = makeTestSettings()
+        settings.agentModeEnabled = true
+        let sessionStore = SessionStore(
+            storageURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("recent-session-\(UUID().uuidString).json"))
+        let older = sessionStore.createSession(title: "Older")
+        let current = sessionStore.createSession(title: "Current")
+        let permissions = Permissions(permissionsService: MockPermissionsService())
+        let agent = PeekabooAgent(settings: settings, sessionStore: sessionStore)
+        let controller = StatusBarController(
+            agent: agent,
+            sessionStore: sessionStore,
+            permissions: permissions,
+            settings: settings,
+            updater: DisabledUpdaterController())
+        defer { controller.removeStatusItem() }
+
+        let item = NSMenuItem(title: older.title, action: nil, keyEquivalent: "")
+        item.representedObject = older.id
+        controller.openSession(item)
+
+        #expect(sessionStore.currentSession?.id == current.id)
+        #expect(sessionStore.currentSession?.title == "Current")
+        #expect(SessionWindowSelection.initialSelection(
+            openedSessionId: older.id,
+            activeSessionId: current.id) == older.id)
+        #expect(!SessionWindowSelection.followsActiveSession(openedSessionId: older.id))
+        #expect(SessionWindowSelection.showsComposer(
+            sessionId: older.id,
+            activeSessionId: current.id,
+            windowKeepsOpenedSession: true))
+    }
+
+    @Test
+    func `the main window still follows the active chat`() {
+        #expect(SessionWindowSelection.followsActiveSession(openedSessionId: nil))
+        #expect(SessionWindowSelection.initialSelection(
+            openedSessionId: nil,
+            activeSessionId: "current") == "current")
+        #expect(!SessionWindowSelection.showsComposer(
+            sessionId: "older",
+            activeSessionId: "current",
+            windowKeepsOpenedSession: false))
+    }
+
+    @Test
+    func `a pinned task stays on the opened session`() {
+        let active = ConversationSession(id: "current", title: "Current")
+        let opened = ConversationSession(id: "older", title: "Older")
+        let resolved = AgentTaskSession.resolve(
+            pinnedSessionId: opened.id,
+            activeSession: active,
+            sessions: [active, opened])
+
+        #expect(resolved?.id == opened.id)
+        #expect(AgentTaskSession.resolve(
+            pinnedSessionId: nil,
+            activeSession: active,
+            sessions: [active, opened])?.id == active.id)
+    }
+
+    @Test
     func `Controller initializes with status item`() {
         _ = self.makeController()
 

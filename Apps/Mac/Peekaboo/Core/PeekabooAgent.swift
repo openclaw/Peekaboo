@@ -25,6 +25,22 @@ enum ToolExecutionStatus {
     case cancelled
 }
 
+enum AgentTaskSession {
+    /// A window opened for one session runs that session. Otherwise the active chat runs.
+    static func resolve(
+        pinnedSessionId: String?,
+        activeSession: ConversationSession?,
+        sessions: [ConversationSession]) -> ConversationSession?
+    {
+        if let pinnedSessionId,
+           let pinned = sessions.first(where: { $0.id == pinnedSessionId })
+        {
+            return pinned
+        }
+        return activeSession
+    }
+}
+
 /// Simplified agent interface for the Peekaboo Mac app.
 ///
 /// This class provides a clean interface to the PeekabooCore agent service,
@@ -44,6 +60,15 @@ final class PeekabooAgent {
 
     /// Current session ID for continuity
     private(set) var currentSessionId: String?
+
+    /// Session chosen by a window that must not move the active chat.
+    @ObservationIgnored
+    private var pinnedTaskSessionId: String?
+
+    /// Session captured for one event. Streaming events hop to the main
+    /// actor after the task method returns, so they cannot read the pin.
+    @ObservationIgnored
+    private var taskEventSessionId: String?
 
     /// Whether the agent is currently processing
     private(set) var isProcessing = false
@@ -126,6 +151,14 @@ final class PeekabooAgent {
 
         // Call the common implementation with text content
         try await self.executeTaskWithContent(.text(task))
+    }
+
+    /// Continue one session without making it the active chat.
+    func executeTask(_ task: String, in session: ConversationSession) async throws {
+        let previous = self.pinnedTaskSessionId
+        self.pinnedTaskSessionId = session.id
+        defer { self.pinnedTaskSessionId = previous }
+        try await self.executeTask(task)
     }
 
     /// Common implementation for executing tasks with different content types
@@ -253,7 +286,23 @@ extension PeekabooAgent {
     }
 
     @MainActor
+    private func sessionReceivingTaskEvents() -> ConversationSession? {
+        AgentTaskSession.resolve(
+            pinnedSessionId: self.taskEventSessionId ?? self.pinnedTaskSessionId,
+            activeSession: self.sessionStore.currentSession,
+            sessions: self.sessionStore.sessions)
+    }
+
     private func ensureSession() -> PeekabooCore.ConversationSession {
+        if let pinned = AgentTaskSession.resolve(
+            pinnedSessionId: self.pinnedTaskSessionId,
+            activeSession: nil,
+            sessions: self.sessionStore.sessions)
+        {
+            self.currentSessionId = pinned.id
+            return pinned
+        }
+
         if let current = self.sessionStore.currentSession {
             self.currentSessionId = current.id
             return current
@@ -277,9 +326,13 @@ extension PeekabooAgent {
 
     @MainActor
     private func makeEventDelegate() -> AgentEventDelegateWrapper {
-        AgentEventDelegateWrapper { [weak self] event in
+        let eventSessionId = self.sessionReceivingTaskEvents()?.id
+        return AgentEventDelegateWrapper { [weak self] event in
             guard let self else { return }
             Task { @MainActor in
+                let previous = self.taskEventSessionId
+                self.taskEventSessionId = eventSessionId
+                defer { self.taskEventSessionId = previous }
                 self.handleAgentEvent(event)
             }
         }
@@ -382,7 +435,7 @@ extension PeekabooAgent {
     private func handleTaskError(_ error: any Error, taskDescription: String) throws {
         if error is CancellationError {
             self.lastError = "Task was cancelled"
-            if let session = self.sessionStore.currentSession {
+            if let session = self.sessionReceivingTaskEvents() {
                 let cancelMessage = PeekabooCore.ConversationMessage(
                     role: .system,
                     content: "\(AgentDisplayTokens.Status.warning) Task was cancelled by user")
@@ -393,7 +446,7 @@ extension PeekabooAgent {
 
         self.lastError = error.localizedDescription
         self.lastFailedTask = taskDescription
-        if let session = self.sessionStore.currentSession {
+        if let session = self.sessionReceivingTaskEvents() {
             let errorMessage = PeekabooCore.ConversationMessage(
                 role: .system,
                 content: "\(AgentDisplayTokens.Status.failure) Error: \(error.localizedDescription)")
@@ -436,7 +489,7 @@ extension PeekabooAgent {
         self.currentTool = nil
         self.currentToolArgs = nil
 
-        guard let currentSession = sessionStore.currentSession,
+        guard let currentSession = self.sessionReceivingTaskEvents(),
               let sessionIndex = sessionStore.sessions.firstIndex(where: { $0.id == currentSession.id }) else { return }
 
         if let lastMessage = sessionStore.sessions[sessionIndex].messages.last,
@@ -467,7 +520,7 @@ extension PeekabooAgent {
         self.currentTool = nil
         self.currentToolArgs = nil
 
-        if let currentSession = sessionStore.currentSession {
+        if let currentSession = self.sessionReceivingTaskEvents() {
             let thinkingMessage = PeekabooCore.ConversationMessage(
                 role: .system,
                 content: "\(AgentDisplayTokens.Status.planning) \(content)")
@@ -489,7 +542,7 @@ extension PeekabooAgent {
             name: name,
             arguments: arguments)
 
-        if let currentSession = sessionStore.currentSession {
+        if let currentSession = self.sessionReceivingTaskEvents() {
             let toolMessage = ConversationMessage(
                 role: .system,
                 content: formattedMessage,
@@ -514,7 +567,7 @@ extension PeekabooAgent {
     }
 
     private func updateSessionToolMessage(name: String, result: String) {
-        guard let currentSession = sessionStore.currentSession,
+        guard let currentSession = self.sessionReceivingTaskEvents(),
               let sessionIndex = sessionStore.sessions.firstIndex(where: { $0.id == currentSession.id }) else { return }
 
         guard let toolMessageIndex = sessionStore.sessions[sessionIndex].messages.lastIndex(where: { message in
@@ -546,7 +599,7 @@ extension PeekabooAgent {
         self.toolExecutionHistory[index].result = result
         self.toolExecutionHistory[index].duration = duration
 
-        guard let currentSession = sessionStore.currentSession,
+        guard let currentSession = self.sessionReceivingTaskEvents(),
               let sessionIndex = sessionStore.sessions.firstIndex(where: { $0.id == currentSession.id }),
               let toolMessageIndex = sessionStore.sessions[sessionIndex].messages.lastIndex(where: { message in
                   message.role == .system &&

@@ -498,7 +498,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         NSApp.terminate(nil)
     }
 
-    @objc private func openSession(_ sender: NSMenuItem) {
+    @objc func openSession(_ sender: NSMenuItem) {
         guard AgentSessionUI.isAvailable(agentModeEnabled: self.settings.agentModeEnabled),
               let sessionId = sender.representedObject as? String,
               let session = sessionStore.sessions.first(where: { $0.id == sessionId }) else { return }
@@ -516,7 +516,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         window.title = session.title
         window.identifier = NSUserInterfaceItemIdentifier(AgentSessionUI.detailWindowIdentifier(sessionID: session.id))
         window.center()
-        let rootView = SessionMainWindow()
+        let rootView = SessionMainWindow(initialSessionId: session.id)
             .environment(self.sessionStore)
             .environment(self.agent)
 
