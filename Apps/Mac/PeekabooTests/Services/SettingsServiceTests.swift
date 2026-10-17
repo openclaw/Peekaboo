@@ -1403,6 +1403,121 @@ extension PeekabooSettingsConfigHydrationTests {
         }
     }
 
+    @Test
+    func `Removing agent visionModel stays removed`() throws {
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
+            let configPath = configDir.appendingPathComponent("config.json")
+            try Self.writeVisionFixture(
+                to: configPath,
+                providers: "openai/gpt-5.6,anthropic/claude-opus-5",
+                visionModel: nil)
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            settings.useCustomVisionModel = true
+            settings.customVisionProvider = "anthropic"
+            settings.customVisionModel = "claude-opus-5"
+            #expect(
+                try (Self.object(in: configPath)["agent"] as? [String: Any])?["visionModel"] as? String
+                    == "anthropic/claude-opus-5")
+
+            var stored = try Self.object(in: configPath)
+            var agent = try #require(stored["agent"] as? [String: Any])
+            agent.removeValue(forKey: "visionModel")
+            stored["agent"] = agent
+            try JSONSerialization.data(withJSONObject: stored, options: [.prettyPrinted])
+                .write(to: configPath)
+            ConfigurationManager.shared.resetForTesting()
+
+            let reloaded = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            let reloadedAgent = try Self.object(in: configPath)["agent"] as? [String: Any]
+            #expect(reloadedAgent?["visionModel"] == nil)
+            #expect(!reloaded.useCustomVisionModel)
+            #expect(reloaded.customVisionProvider.isEmpty)
+            #expect(
+                try (Self.object(in: configPath)["aiProviders"] as? [String: Any])?["providers"] as? String
+                    == "openai/gpt-5.6,anthropic/claude-opus-5")
+        }
+    }
+
+    @Test
+    func `A legacy vision toggle is copied once`() throws {
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
+            let configPath = configDir.appendingPathComponent("config.json")
+            try Self.writeVisionFixture(to: configPath, providers: "openai/gpt-5.6", visionModel: nil)
+            let defaults = UserDefaults.standard
+            defaults.set(true, forKey: "peekaboo.useCustomVisionModel")
+            defaults.set("anthropic", forKey: "peekaboo.customVisionProvider")
+            defaults.set("claude-opus-5", forKey: "peekaboo.customVisionModel")
+            ConfigurationManager.shared.resetForTesting()
+
+            _ = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            #expect(
+                try (Self.object(in: configPath)["agent"] as? [String: Any])?["visionModel"] as? String
+                    == "anthropic/claude-opus-5")
+
+            var stored = try Self.object(in: configPath)
+            var agent = try #require(stored["agent"] as? [String: Any])
+            agent.removeValue(forKey: "visionModel")
+            stored["agent"] = agent
+            try JSONSerialization.data(withJSONObject: stored, options: [.prettyPrinted])
+                .write(to: configPath)
+            ConfigurationManager.shared.resetForTesting()
+
+            _ = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            #expect(try (Self.object(in: configPath)["agent"] as? [String: Any])?["visionModel"] == nil)
+        }
+    }
+
+    @Test
+    func `Vision provider reloads outside the agent provider list`() throws {
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
+            let configPath = configDir.appendingPathComponent("config.json")
+            try Self.writeVisionFixture(
+                to: configPath,
+                providers: "openai/gpt-5.5",
+                visionModel: "anthropic/claude-opus-5",
+                defaultModel: "openai/gpt-5.5")
+            ConfigurationManager.shared.resetForTesting()
+
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            #expect(settings.useCustomVisionModel)
+            #expect(settings.customVisionProvider == "anthropic")
+            #expect(settings.customVisionModel == "claude-opus-5")
+            #expect(settings.selectedProvider == "openai")
+            #expect(
+                try (Self.object(in: configPath)["aiProviders"] as? [String: Any])?["providers"] as? String
+                    == "openai/gpt-5.5")
+        }
+    }
+
+    private static func writeVisionFixture(
+        to configPath: URL,
+        providers: String,
+        visionModel: String?,
+        defaultModel: String? = nil) throws
+    {
+        var agent: [String: Any] = [:]
+        if let defaultModel {
+            agent["defaultModel"] = defaultModel
+        }
+        if let visionModel {
+            agent["visionModel"] = visionModel
+        }
+        var root: [String: Any] = [
+            "aiProviders": ["providers": providers],
+            "defaults": [
+                "savePath": "~/Desktop/Screenshots",
+                "imageFormat": "png",
+            ],
+        ]
+        if !agent.isEmpty {
+            root["agent"] = agent
+        }
+        try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted]).write(to: configPath)
+    }
+
     private static func ollamaBaseURL(in configPath: URL) throws -> String? {
         let providers = try Self.object(in: configPath)["aiProviders"] as? [String: Any]
         return providers?["ollamaBaseUrl"] as? String

@@ -552,9 +552,14 @@ extension PeekabooSettings {
         let visionModel = config?.agent?.visionModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !visionModel.isEmpty {
             self.useCustomVisionModel = true
-            let selection = self.providerQualifiedModelSelection(from: visionModel)
+            let selection = self.visionProviderQualifiedModelSelection(from: visionModel)
             self.customVisionProvider = selection.provider ?? ""
             self.customVisionModel = selection.model
+        } else if self.visionConfigAbsenceIsAuthoritative() {
+            self.useCustomVisionModel = false
+            self.customVisionProvider = ""
+            self.userDefaults.set(false, forKey: self.namespaced("useCustomVisionModel"))
+            self.userDefaults.set("", forKey: self.namespaced("customVisionProvider"))
         }
     }
 
@@ -674,13 +679,22 @@ extension PeekabooSettings {
         return "\(provider)/\(model)"
     }
 
-    /// UserDefaults may already have the toggle on from before it was written to config.
+    /// Copies a pre-config vision toggle into `agent.visionModel` once.
+    /// After that, a missing config key stays missing.
     private func backfillVisionModelIfNeeded() {
-        guard self.useCustomVisionModel else { return }
-        let configured = self.configManager.loadConfiguration()?.agent?.visionModel?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard configured.isEmpty else { return }
-        self.persistVisionModel()
+        guard !self.visionConfigAbsenceIsAuthoritative() else { return }
+        if self.useCustomVisionModel {
+            let configured = self.configManager.loadConfiguration()?.agent?.visionModel?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if configured.isEmpty {
+                self.persistVisionModel()
+            }
+        }
+        self.userDefaults.set(true, forKey: self.namespaced("visionModelConfigAuthoritative"))
+    }
+
+    private func visionConfigAbsenceIsAuthoritative() -> Bool {
+        self.userDefaults.bool(forKey: self.namespaced("visionModelConfigAuthoritative"))
     }
 
     /// The default URL clears a saved custom value. Otherwise the next launch reloads it.
@@ -1044,6 +1058,22 @@ extension PeekabooSettings {
         default:
             provider
         }
+    }
+
+    /// Vision choices are not required to appear in the agent provider list.
+    private func visionProviderQualifiedModelSelection(from rawModel: String) -> (provider: String?, model: String) {
+        let parts = rawModel.split(separator: "/", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else {
+            return (nil, rawModel)
+        }
+        if let customProviderID = self.customProviderIdentifier(matching: parts[0]) {
+            return (customProviderID, parts[1])
+        }
+        let provider = Self.canonicalProviderIdentifier(parts[0])
+        guard Self.isKnownProviderIdentifier(provider) else {
+            return (nil, rawModel)
+        }
+        return (provider, parts[1])
     }
 
     private func providerQualifiedModelSelection(from rawModel: String) -> (provider: String?, model: String) {
