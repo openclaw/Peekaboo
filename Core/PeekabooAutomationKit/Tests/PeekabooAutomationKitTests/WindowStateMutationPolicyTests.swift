@@ -169,6 +169,41 @@ struct WindowStateMutationPolicyTests {
     }
 
     @Test
+    func `close verification treats an exited owner as the window being gone`() {
+        let presence = pinnedWindowCloseOwnerPresence(expectedIdentity: self.identity, observation: .absent)
+        let disposition = pinnedWindowClosePresenceDisposition(
+            windowServerEntryPresent: false,
+            minimizedAXPresence: presence,
+            expectedMinimized: false)
+        var verification = PinnedWindowCloseVerification()
+
+        #expect(presence == .missing)
+        #expect(disposition == .missing)
+        #expect(verification.observe(disposition, elapsed: .zero) == .pending)
+        #expect(verification.observe(disposition, elapsed: .seconds(4)) == .succeeded)
+    }
+
+    @Test
+    func `close verification still treats a reused owner PID as a replacement`() {
+        #expect(pinnedWindowCloseOwnerPresence(
+            expectedIdentity: self.identity,
+            observation: .identity(8)) == .replacement)
+        #expect(pinnedWindowCloseOwnerPresence(
+            expectedIdentity: self.identity,
+            observation: .permissionDenied) == .replacement)
+        #expect(pinnedWindowCloseOwnerPresence(
+            expectedIdentity: self.identity,
+            observation: .unavailable) == .replacement)
+    }
+
+    @Test
+    func `close verification defers to the AX scan while the owner generation is live`() {
+        #expect(pinnedWindowCloseOwnerPresence(
+            expectedIdentity: self.identity,
+            observation: .identity(7)) == nil)
+    }
+
+    @Test
     func `failed minimized close restores private minimized state`() {
         #expect(shouldRestoreMinimizedWindowAfterCloseFailure(
             wasMinimized: true,

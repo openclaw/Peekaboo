@@ -862,6 +862,26 @@ func pinnedWindowClosePresenceDisposition(
     return .unverifiable
 }
 
+/// Classifies the owner process before a close-verification AX scan.
+///
+/// An owner that has exited with no process at its PID took its windows with it, so the exact
+/// window is gone (for example the last window of an app that quits when it closes). A different
+/// process generation at the PID is still a replacement. Returns `nil` when the receipt's owner
+/// generation is still live and the AX scan should decide.
+func pinnedWindowCloseOwnerPresence(
+    expectedIdentity: WindowMutationIdentity,
+    observation: SystemIdentityResolver.ProcessStartIdentityObservation) -> PinnedMinimizedWindowAXPresence?
+{
+    switch observation {
+    case .absent:
+        .missing
+    case let .identity(identity) where identity == expectedIdentity.ownerProcessStartIdentity:
+        nil
+    case .identity, .permissionDenied, .unavailable:
+        .replacement
+    }
+}
+
 func pinnedMinimizedWindowAXPresence(
     expectedIdentity: WindowMutationIdentity,
     processStartIdentityBeforeScan: UInt64?,
@@ -1025,8 +1045,15 @@ private enum BoundedBackgroundWindowAX {
 
     static func windowPresence(expectedIdentity: WindowMutationIdentity) async -> PinnedMinimizedWindowAXPresence {
         await self.perform(expectedIdentity: expectedIdentity) {
-            let processStartIdentityBeforeScan = SystemIdentityResolver.processStartIdentity(
+            let ownerObservationBeforeScan = SystemIdentityResolver.processStartIdentityObservation(
                 expectedIdentity.ownerProcessIdentifier)
+            if let ownerPresence = pinnedWindowCloseOwnerPresence(
+                expectedIdentity: expectedIdentity,
+                observation: ownerObservationBeforeScan)
+            {
+                return ownerPresence
+            }
+            let processStartIdentityBeforeScan = ownerObservationBeforeScan.identity
             guard SystemIdentityResolver.validateWindowMutationOwnerGeneration(expectedIdentity),
                   let windowID = CGWindowID(exactly: expectedIdentity.windowID)
             else {

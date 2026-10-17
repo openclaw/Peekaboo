@@ -4,6 +4,7 @@
 
 - Keep the Mac app's chat history when `sessions.json` cannot be decoded: move the unreadable file aside instead of overwriting it, save atomically, and show a notice while saves are blocked. Thanks @SebTardif! #1102.
 - Save the Mac app's Ollama base URL to `config.json` so the CLI uses it, and clear it when reset to `http://localhost:11434` instead of restoring the old URL on the next launch. Thanks @SebTardif! #1104.
+- Report `window close` as closed when the owning process exits during close verification (for example the last window of an app that quits) instead of failing with a changed-identity error; a reused PID still counts as a replacement. Refs #1106.
 
 ## 4.9.5 - 2026-10-16
 
