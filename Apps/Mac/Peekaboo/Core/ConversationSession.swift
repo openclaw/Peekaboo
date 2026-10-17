@@ -88,6 +88,7 @@ final class SessionStore {
     func addMessage(_ message: ConversationMessage, to session: ConversationSession) {
         guard let index = sessions.firstIndex(where: { $0.id == session.id }) else { return }
         self.sessions[index].messages.append(message)
+        self.publishCurrentSession(at: index)
         Task { @MainActor in
             self.saveSessions()
         }
@@ -96,6 +97,7 @@ final class SessionStore {
     func updateSummary(_ summary: String, for session: ConversationSession) {
         guard let index = sessions.firstIndex(where: { $0.id == session.id }) else { return }
         self.sessions[index].summary = summary
+        self.publishCurrentSession(at: index)
         Task { @MainActor in
             self.saveSessions()
         }
@@ -104,6 +106,7 @@ final class SessionStore {
     func updateTitle(_ title: String, for session: ConversationSession) {
         guard let index = sessions.firstIndex(where: { $0.id == session.id }) else { return }
         self.sessions[index].title = title
+        self.publishCurrentSession(at: index)
         Task { @MainActor in
             self.saveSessions()
         }
@@ -132,9 +135,16 @@ final class SessionStore {
 
         let lastIndex = self.sessions[sessionIndex].messages.count - 1
         self.sessions[sessionIndex].messages[lastIndex] = message
+        self.publishCurrentSession(at: sessionIndex)
         Task { @MainActor in
             self.saveSessions()
         }
+    }
+
+    /// The menu bar reads `currentSession`, which is a separate copy of the struct.
+    private func publishCurrentSession(at index: Int) {
+        guard self.currentSession?.id == self.sessions[index].id else { return }
+        self.currentSession = self.sessions[index]
     }
 
     func selectSession(_ session: ConversationSession) {
