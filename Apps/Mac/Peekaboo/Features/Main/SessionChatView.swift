@@ -8,6 +8,7 @@ struct SessionChatView: View {
     @Environment(SessionStore.self) private var sessionStore
 
     let session: ConversationSession
+    var acceptsInput = false
     @State private var inputText = ""
     @State private var isProcessing = false
     @State private var hasConnectionError = false
@@ -16,12 +17,27 @@ struct SessionChatView: View {
         self.session.id == self.agent.currentSession?.id
     }
 
+    /// The session whose transcript should show the in-flight task.
+    private var isAgentTarget: Bool {
+        if let taskSessionId = self.agent.currentSessionId {
+            return taskSessionId == self.session.id
+        }
+        return self.isCurrentSession
+    }
+
+    private var showsComposer: Bool {
+        SessionWindowSelection.showsComposer(
+            sessionId: self.session.id,
+            activeSessionId: self.agent.currentSession?.id,
+            windowKeepsOpenedSession: self.acceptsInput)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
             SessionChatHeader(
                 session: self.session,
-                isActive: self.isCurrentSession && self.agent.isProcessing)
+                isActive: self.isAgentTarget && self.agent.isProcessing)
 
             Divider()
 
@@ -56,7 +72,7 @@ struct SessionChatView: View {
                         }
 
                         // Show progress indicator for active session
-                        if self.isCurrentSession, self.agent.isProcessing {
+                        if self.isAgentTarget, self.agent.isProcessing {
                             ProgressIndicatorView(agent: self.agent)
                                 .id("progress")
                                 .padding(.top, 8)
@@ -78,8 +94,8 @@ struct SessionChatView: View {
                 }
             }
 
-            // Input area (only for current session)
-            if self.isCurrentSession {
+            // The active chat, and a window opened for a specific session, can continue that chat.
+            if self.showsComposer {
                 Divider()
 
                 // Connection error banner
@@ -87,7 +103,8 @@ struct SessionChatView: View {
                     ConnectionErrorBanner(
                         hasConnectionError: self.$hasConnectionError,
                         agent: self.agent,
-                        isProcessing: self.$isProcessing)
+                        isProcessing: self.$isProcessing,
+                        retrySession: self.acceptsInput && !self.isCurrentSession ? self.session : nil)
                     Divider()
                 }
 
@@ -107,7 +124,7 @@ struct SessionChatView: View {
                     self.submitInput()
                 }
 
-            if self.agent.isProcessing, self.isCurrentSession {
+            if self.agent.isProcessing, self.isAgentTarget {
                 // Show stop button during execution
                 Button(action: {
                     self.agent.cancelCurrentTask()
@@ -132,7 +149,7 @@ struct SessionChatView: View {
     }
 
     private var placeholderText: String {
-        if self.agent.isProcessing, self.isCurrentSession {
+        if self.agent.isProcessing, self.isAgentTarget {
             "Ask a follow-up question..."
         } else {
             "Ask Peekaboo..."
@@ -148,7 +165,7 @@ struct SessionChatView: View {
         // Clear input immediately
         self.inputText = ""
 
-        if self.agent.isProcessing, self.isCurrentSession {
+        if self.agent.isProcessing, self.isAgentTarget {
             // During execution, just add as a follow-up message
             self.sessionStore.addMessage(
                 ConversationMessage(role: .user, content: trimmedInput),
@@ -157,7 +174,7 @@ struct SessionChatView: View {
             // Start a new execution with the follow-up
             Task {
                 do {
-                    try await self.agent.executeTask(trimmedInput)
+                    try await self.runTask(trimmedInput)
                 } catch {
                     print("Failed to execute follow-up: \(error)")
                 }
@@ -169,7 +186,7 @@ struct SessionChatView: View {
                 defer { isProcessing = false }
 
                 do {
-                    try await self.agent.executeTask(trimmedInput)
+                    try await self.runTask(trimmedInput)
                 } catch {
                     // Check if it's a connection error
                     let errorMessage = error.localizedDescription
@@ -180,6 +197,14 @@ struct SessionChatView: View {
                     print("Task error: \(errorMessage)")
                 }
             }
+        }
+    }
+
+    private func runTask(_ text: String) async throws {
+        if self.acceptsInput, self.session.id != self.agent.currentSession?.id {
+            try await self.agent.executeTask(text, in: self.session)
+        } else {
+            try await self.agent.executeTask(text)
         }
     }
 }
@@ -298,6 +323,7 @@ struct ConnectionErrorBanner: View {
     @Binding var hasConnectionError: Bool
     let agent: PeekabooAgent
     @Binding var isProcessing: Bool
+    var retrySession: ConversationSession?
 
     var body: some View {
         HStack {
@@ -322,7 +348,11 @@ struct ConnectionErrorBanner: View {
 
                         // Re-execute the last task
                         do {
-                            try await self.agent.executeTask(lastTask)
+                            if let retrySession = self.retrySession {
+                                try await self.agent.executeTask(lastTask, in: retrySession)
+                            } else {
+                                try await self.agent.executeTask(lastTask)
+                            }
                             self.hasConnectionError = false
                         } catch {
                             // Error persists
