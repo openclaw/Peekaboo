@@ -6,6 +6,7 @@ struct SessionMainWindow: View {
     @Environment(SessionStore.self) private var sessionStore
     @Environment(PeekabooAgent.self) private var agent
 
+    var initialSessionId: String?
     @State private var selectedSessionId: String?
     @State private var searchText = ""
 
@@ -21,7 +22,7 @@ struct SessionMainWindow: View {
         }
         .navigationTitle("Peekaboo Sessions")
         .onAppear {
-            self.selectedSessionId = self.sessionStore.currentSession?.id
+            self.selectedSessionId = self.initialSessionId ?? self.sessionStore.currentSession?.id
         }
         .onChange(of: self.sessionStore.currentSession?.id) { _, newId in
             self.selectedSessionId = newId

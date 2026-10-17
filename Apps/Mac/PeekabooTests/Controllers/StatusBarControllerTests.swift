@@ -66,6 +66,39 @@ struct StatusBarControllerTests {
     }
 
     @Test
+    func `opening a recent session selects that chat`() {
+        let settings = makeTestSettings()
+        settings.agentModeEnabled = true
+        let sessionStore = SessionStore(
+            storageURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("recent-session-\(UUID().uuidString).json"))
+        let older = sessionStore.createSession(title: "Older")
+        let current = sessionStore.createSession(title: "Current")
+        let permissions = Permissions(permissionsService: MockPermissionsService())
+        let agent = PeekabooAgent(settings: settings, sessionStore: sessionStore)
+        let controller = StatusBarController(
+            agent: agent,
+            sessionStore: sessionStore,
+            permissions: permissions,
+            settings: settings,
+            updater: DisabledUpdaterController())
+        defer {
+            controller.removeStatusItem()
+            for window in NSApp.windows where window.title == "Older" || window.title == "Current" {
+                window.close()
+            }
+        }
+
+        let item = NSMenuItem(title: older.title, action: nil, keyEquivalent: "")
+        item.representedObject = older.id
+        controller.openSession(item)
+
+        #expect(sessionStore.currentSession?.id == older.id)
+        #expect(sessionStore.currentSession?.title == "Older")
+        #expect(current.title == "Current")
+    }
+
+    @Test
     func `Controller initializes with status item`() {
         _ = self.makeController()
 
