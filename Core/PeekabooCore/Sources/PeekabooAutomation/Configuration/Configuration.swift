@@ -112,19 +112,23 @@ public struct Configuration: Codable {
         public var showThoughts: Bool?
         public var temperature: Double?
         public var maxTokens: Int?
+        /// `provider/modelId` used for screenshots and image analysis when set.
+        public var visionModel: String?
 
         public init(
             defaultModel: String? = nil,
             maxSteps: Int? = nil,
             showThoughts: Bool? = nil,
             temperature: Double? = nil,
-            maxTokens: Int? = nil)
+            maxTokens: Int? = nil,
+            visionModel: String? = nil)
         {
             self.defaultModel = defaultModel
             self.maxSteps = maxSteps
             self.showThoughts = showThoughts
             self.temperature = temperature
             self.maxTokens = maxTokens
+            self.visionModel = visionModel
         }
     }
 

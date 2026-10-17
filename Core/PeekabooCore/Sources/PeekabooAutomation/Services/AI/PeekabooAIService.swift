@@ -188,6 +188,23 @@ public final class PeekabooAIService {
         self.defaultVisionModel
     }
 
+    /// Nil-model image analysis choice. Throws the same way `resolveVisionModel(nil)` does.
+    func resolvedAnalysisVisionModel() throws -> LanguageModel {
+        let configured = self.configuration.configuration?.agent?.visionModel?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !configured.isEmpty,
+           let parsed = self.resolveConfiguredModel(configured),
+           parsed.supportsVision
+        {
+            return parsed
+        }
+
+        guard let defaultVisionModel else {
+            throw TachikomaError.unsupportedOperation("No configured vision-capable AI model is available")
+        }
+        return defaultVisionModel
+    }
+
     public init(configuration: ConfigurationManager = .shared) {
         self.configuration = configuration
         ConfigurationManager.configureTachikomaProfileDirectory()
@@ -342,10 +359,7 @@ public final class PeekabooAIService {
             return model
         }
 
-        guard let defaultVisionModel else {
-            throw TachikomaError.unsupportedOperation("No configured vision-capable AI model is available")
-        }
-        return defaultVisionModel
+        return try self.resolvedAnalysisVisionModel()
     }
 
     private static func parseProviderEntry(_ entry: String, configuration: ConfigurationManager) -> LanguageModel? {

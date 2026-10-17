@@ -91,18 +91,25 @@ final class PeekabooSettings {
         }
     }
 
-    /// Vision model override
+    /// Vision model override. Empty provider means a previously saved bare model id.
+    var customVisionProvider: String = "" {
+        didSet {
+            self.save()
+            self.persistVisionModel()
+        }
+    }
+
     var useCustomVisionModel: Bool = false {
         didSet {
             self.save()
-            self.updateConfigFile()
+            self.persistVisionModel()
         }
     }
 
     var customVisionModel: String = "gpt-5.6" {
         didSet {
             self.save()
-            self.updateConfigFile()
+            self.persistVisionModel()
         }
     }
 
@@ -362,6 +369,7 @@ final class PeekabooSettings {
         self.load()
         self.loadFromPeekabooConfig()
         self.migrateSettingsIfNeeded()
+        self.backfillVisionModelIfNeeded()
         if credentialCoordinator == nil {
             self.credentialCoordinator.runtimeDidChange = { [weak self] in
                 guard let self else { return }
@@ -393,6 +401,7 @@ extension PeekabooSettings {
         let defaultModel = self.defaultModel(for: self.selectedProvider)
         self.selectedModel = self.userDefaults.string(forKey: self.namespaced("selectedModel")) ?? defaultModel
         self.useCustomVisionModel = self.userDefaults.bool(forKey: self.namespaced("useCustomVisionModel"))
+        self.customVisionProvider = self.userDefaults.string(forKey: self.namespaced("customVisionProvider")) ?? ""
         self.customVisionModel = self.userDefaults.string(forKey: self.namespaced("customVisionModel")) ?? "gpt-5.6"
 
         self.temperature = self.nonZeroDouble(forKey: "temperature", fallback: 0.7)
@@ -455,6 +464,7 @@ extension PeekabooSettings {
         self.userDefaults.set(self.ollamaBaseURL, forKey: "\(self.keyPrefix)ollamaBaseURL")
         self.userDefaults.set(self.selectedModel, forKey: "\(self.keyPrefix)selectedModel")
         self.userDefaults.set(self.useCustomVisionModel, forKey: "\(self.keyPrefix)useCustomVisionModel")
+        self.userDefaults.set(self.customVisionProvider, forKey: "\(self.keyPrefix)customVisionProvider")
         self.userDefaults.set(self.customVisionModel, forKey: "\(self.keyPrefix)customVisionModel")
         self.userDefaults.set(self.temperature, forKey: "\(self.keyPrefix)temperature")
         self.userDefaults.set(self.maxTokens, forKey: "\(self.keyPrefix)maxTokens")
@@ -538,6 +548,14 @@ extension PeekabooSettings {
         if ollamaURL != "http://localhost:11434" {
             self.ollamaBaseURL = ollamaURL
         }
+
+        let visionModel = config?.agent?.visionModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !visionModel.isEmpty {
+            self.useCustomVisionModel = true
+            let selection = self.providerQualifiedModelSelection(from: visionModel)
+            self.customVisionProvider = selection.provider ?? ""
+            self.customVisionModel = selection.model
+        }
     }
 
     private func migrateSettingsIfNeeded() {
@@ -617,6 +635,52 @@ extension PeekabooSettings {
         } catch {
             print("Failed to update Ollama base URL in config.json: \(error)")
         }
+    }
+
+    /// Writes only `agent.visionModel`. A full settings save would rewrite unrelated keys.
+    private func persistVisionModel() {
+        guard !self.isLoading else { return }
+        do {
+            try self.configManager.updateConfiguration { config in
+                self.assignPersistedVisionModel(to: &config)
+            }
+        } catch {
+            print("Failed to update vision model in config.json: \(error)")
+        }
+    }
+
+    /// An enabled choice is stored as `provider/modelId`. Turning it off removes the key.
+    private func assignPersistedVisionModel(to config: inout Configuration) {
+        guard let value = self.persistedVisionModelValue() else {
+            config.agent?.visionModel = nil
+            return
+        }
+        if config.agent == nil {
+            config.agent = Configuration.AgentConfig()
+        }
+        config.agent?.visionModel = value
+    }
+
+    private func persistedVisionModelValue() -> String? {
+        guard self.useCustomVisionModel else { return nil }
+        let model = self.customVisionModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !model.isEmpty else { return nil }
+        let provider = self.customVisionProvider.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !provider.isEmpty else { return model }
+        let prefix = "\(provider)/"
+        if model.lowercased().hasPrefix(prefix.lowercased()) {
+            return model
+        }
+        return "\(provider)/\(model)"
+    }
+
+    /// UserDefaults may already have the toggle on from before it was written to config.
+    private func backfillVisionModelIfNeeded() {
+        guard self.useCustomVisionModel else { return }
+        let configured = self.configManager.loadConfiguration()?.agent?.visionModel?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard configured.isEmpty else { return }
+        self.persistVisionModel()
     }
 
     /// The default URL clears a saved custom value. Otherwise the next launch reloads it.

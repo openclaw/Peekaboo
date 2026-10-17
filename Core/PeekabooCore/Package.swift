@@ -200,5 +200,20 @@ let package = Package(
                 .process("Resources"),
             ],
             swiftSettings: testTargetSettings),
+        .testTarget(
+            name: "PeekabooCoreTests",
+            dependencies: [
+                "PeekabooCore",
+                "PeekabooAutomation",
+                "PeekabooAgentRuntime",
+                .product(name: "PeekabooVisualizer", package: "PeekabooVisualizer"),
+                .product(name: "Tachikoma", package: "Tachikoma"),
+            ],
+            path: "Tests/PeekabooCoreTests",
+            exclude: [
+                "MCP",
+                "Services/UI",
+            ],
+            swiftSettings: testTargetSettings),
     ],
     swiftLanguageModes: [.v6])

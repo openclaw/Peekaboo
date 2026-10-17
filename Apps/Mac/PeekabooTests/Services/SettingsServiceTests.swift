@@ -1354,6 +1354,55 @@ extension PeekabooSettingsConfigHydrationTests {
         }
     }
 
+    @Test
+    func `Custom vision model writes only agent visionModel`() throws {
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let template = """
+            {
+              "aiProviders": {
+                "providers": "openai/gpt-5.6,anthropic/claude-opus-5"
+              },
+              "defaults": {
+                "savePath": "~/Desktop/Screenshots",
+                "imageFormat": "png",
+                "captureMode": "window",
+                "captureFocus": "background"
+              },
+              "logging": {
+                "level": "info",
+                "path": "~/.peekaboo/logs/peekaboo.log"
+              }
+            }
+            """
+            try template.write(to: configPath, atomically: true, encoding: .utf8)
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            settings.useCustomVisionModel = true
+            settings.customVisionProvider = "anthropic"
+            settings.customVisionModel = "claude-opus-5"
+
+            let saved = try Self.object(in: configPath)
+            let savedProviders = try #require(saved["aiProviders"] as? [String: Any])
+            let savedAgent = try #require(saved["agent"] as? [String: Any])
+            #expect(savedAgent["visionModel"] as? String == "anthropic/claude-opus-5")
+            #expect(savedAgent["defaultModel"] == nil)
+            #expect(savedProviders["providers"] as? String == "openai/gpt-5.6,anthropic/claude-opus-5")
+            #expect((saved["defaults"] as? [String: Any])?["captureMode"] as? String == "window")
+            #expect((saved["logging"] as? [String: Any])?["level"] as? String == "info")
+
+            settings.useCustomVisionModel = false
+            let cleared = try Self.object(in: configPath)
+            let clearedProviders = try #require(cleared["aiProviders"] as? [String: Any])
+            let clearedAgent = cleared["agent"] as? [String: Any]
+            #expect(clearedAgent?["visionModel"] == nil)
+            #expect(clearedProviders["providers"] as? String == "openai/gpt-5.6,anthropic/claude-opus-5")
+            #expect((cleared["defaults"] as? [String: Any])?["captureFocus"] as? String == "background")
+        }
+    }
+
     private static func ollamaBaseURL(in configPath: URL) throws -> String? {
         let providers = try Self.object(in: configPath)["aiProviders"] as? [String: Any]
         return providers?["ollamaBaseUrl"] as? String

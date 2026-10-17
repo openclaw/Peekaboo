@@ -3,6 +3,7 @@
 //  PeekabooCore
 //
 
+import AppKit
 import Foundation
 import Tachikoma
 import Testing
@@ -84,6 +85,37 @@ struct PeekabooAIServiceTests {
         let service = PeekabooAIService()
         #expect(service.availableModels() == [.anthropic(.opus47), .openai(.gpt55)])
         #expect(service.resolvedDefaultModel == .anthropic(.opus47))
+    }
+
+    @Test
+    @MainActor
+    func `Uses configured vision model for nil-model analysis`() throws {
+        try self.withIsolatedAIService(
+            configJSON: """
+            {
+              "aiProviders": { "providers": "openai/gpt-5.6,anthropic/claude-opus-5" },
+              "agent": { "visionModel": "anthropic/claude-opus-5" }
+            }
+            """) { service in
+                #expect(service.resolvedDefaultVisionModel == .openai(.gpt56Sol))
+                let analysisModel = try service.resolvedAnalysisVisionModel()
+                #expect(analysisModel == .anthropic(.opus5))
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Nil-model analysis uses the first vision model without a vision override`() throws {
+        try self.withIsolatedAIService(
+            configJSON: """
+            {
+              "aiProviders": { "providers": "openai/gpt-5.6,anthropic/claude-opus-5" }
+            }
+            """) { service in
+                #expect(service.resolvedDefaultVisionModel == .openai(.gpt56Sol))
+                let analysisModel = try service.resolvedAnalysisVisionModel()
+                #expect(analysisModel == .openai(.gpt56Sol))
+            }
     }
 
     @Test
@@ -305,30 +337,20 @@ struct PeekabooAIServiceTests {
         #expect(service.availableModels().first == .openai(.gpt56Sol))
     }
 
-    @Test
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["OPENAI_API_KEY"] != nil, "OPENAI_API_KEY not configured"))
     @MainActor
     func `Generate text with default model`() async throws {
         let service = PeekabooAIService()
-
-        // Skip test if no API key is configured
-        guard ProcessInfo.processInfo.environment["OPENAI_API_KEY"] != nil else {
-            throw Issue.record("Skipping test - OPENAI_API_KEY not configured")
-        }
 
         let result = try await service.generateText(prompt: "Say 'Hello test' and nothing else")
         #expect(result.lowercased().contains("hello"))
         #expect(result.lowercased().contains("test"))
     }
 
-    @Test
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["OPENAI_API_KEY"] != nil, "OPENAI_API_KEY not configured"))
     @MainActor
     func `Analyze image data`() async throws {
         let service = PeekabooAIService()
-
-        // Skip test if no API key is configured
-        guard ProcessInfo.processInfo.environment["OPENAI_API_KEY"] != nil else {
-            throw Issue.record("Skipping test - OPENAI_API_KEY not configured")
-        }
 
         // Create a simple test image (1x1 red pixel)
         let imageData = self.createTestImageData()
@@ -342,15 +364,10 @@ struct PeekabooAIServiceTests {
         #expect(result.lowercased().contains("red") || result.lowercased().contains("color"))
     }
 
-    @Test
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["OPENAI_API_KEY"] != nil, "OPENAI_API_KEY not configured"))
     @MainActor
     func `Analyze image file`() async throws {
         let service = PeekabooAIService()
-
-        // Skip test if no API key is configured
-        guard ProcessInfo.processInfo.environment["OPENAI_API_KEY"] != nil else {
-            throw Issue.record("Skipping test - OPENAI_API_KEY not configured")
-        }
 
         // Create a temporary test image file
         let tempDir = FileManager.default.temporaryDirectory
@@ -381,15 +398,10 @@ struct PeekabooAIServiceTests {
         #expect(PeekabooAIService.imageFileURL(for: embeddedTildePath).path == embeddedTildePath)
     }
 
-    @Test
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["OPENAI_API_KEY"] != nil, "OPENAI_API_KEY not configured"))
     @MainActor
     func `Use custom model for generation`() async throws {
         let service = PeekabooAIService()
-
-        // Skip test if no API key is configured
-        guard ProcessInfo.processInfo.environment["OPENAI_API_KEY"] != nil else {
-            throw Issue.record("Skipping test - OPENAI_API_KEY not configured")
-        }
 
         let result = try await service.generateText(
             prompt: "Say 'Model test' and nothing else",
@@ -397,6 +409,74 @@ struct PeekabooAIServiceTests {
 
         #expect(result.lowercased().contains("model"))
         #expect(result.lowercased().contains("test"))
+    }
+
+    @MainActor
+    private func withIsolatedAIService(
+        configJSON: String,
+        _ body: @MainActor (PeekabooAIService) throws -> Void) throws
+    {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-config-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let configPath = tempDir.appendingPathComponent("config.json")
+        try configJSON.write(to: configPath, atomically: true, encoding: .utf8)
+
+        let isolatedKeys = [
+            "PEEKABOO_AI_PROVIDERS",
+            "OPENAI_API_KEY",
+            "OPENAI_ACCESS_TOKEN",
+            "OPENAI_REFRESH_TOKEN",
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_ACCESS_TOKEN",
+            "ANTHROPIC_REFRESH_TOKEN",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "X_AI_API_KEY",
+            "XAI_API_KEY",
+            "GROK_API_KEY",
+            "MINIMAX_API_KEY",
+            "MINIMAX_CN_API_KEY",
+            "MOONSHOT_API_KEY",
+            "KIMI_API_KEY",
+            "OPENROUTER_API_KEY",
+        ]
+        let savedKeys = isolatedKeys.map { key in
+            (key, getenv(key).map { String(cString: $0) })
+        }
+        let savedConfigDir = getenv("PEEKABOO_CONFIG_DIR").map { String(cString: $0) }
+        let savedDisableMigration = getenv("PEEKABOO_CONFIG_DISABLE_MIGRATION").map { String(cString: $0) }
+
+        setenv("PEEKABOO_CONFIG_DIR", tempDir.path, 1)
+        setenv("PEEKABOO_CONFIG_DISABLE_MIGRATION", "1", 1)
+        for key in isolatedKeys {
+            unsetenv(key)
+        }
+        defer {
+            if let savedConfigDir {
+                setenv("PEEKABOO_CONFIG_DIR", savedConfigDir, 1)
+            } else {
+                unsetenv("PEEKABOO_CONFIG_DIR")
+            }
+            if let savedDisableMigration {
+                setenv("PEEKABOO_CONFIG_DISABLE_MIGRATION", savedDisableMigration, 1)
+            } else {
+                unsetenv("PEEKABOO_CONFIG_DISABLE_MIGRATION")
+            }
+            for (key, value) in savedKeys {
+                if let value {
+                    setenv(key, value, 1)
+                } else {
+                    unsetenv(key)
+                }
+            }
+            ConfigurationManager.shared.resetForTesting()
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+
+        ConfigurationManager.shared.resetForTesting()
+        _ = ConfigurationManager.shared.loadConfiguration()
+        try body(PeekabooAIService())
     }
 
     /// Helper function to create test image data
