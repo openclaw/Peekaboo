@@ -1471,6 +1471,50 @@ extension PeekabooSettingsConfigHydrationTests {
     }
 
     @Test
+    func `A failed vision config load keeps the saved choice`() throws {
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
+            let configPath = configDir.appendingPathComponent("config.json")
+            try "{".write(to: configPath, atomically: true, encoding: .utf8)
+            let defaults = UserDefaults.standard
+            defaults.set(true, forKey: "peekaboo.useCustomVisionModel")
+            defaults.set("anthropic", forKey: "peekaboo.customVisionProvider")
+            defaults.set("claude-opus-5", forKey: "peekaboo.customVisionModel")
+            defaults.set(true, forKey: "peekaboo.visionModelConfigAuthoritative")
+            ConfigurationManager.shared.resetForTesting()
+
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            #expect(settings.useCustomVisionModel)
+            #expect(settings.customVisionProvider == "anthropic")
+            #expect(settings.customVisionModel == "claude-opus-5")
+            #expect(defaults.bool(forKey: "peekaboo.useCustomVisionModel"))
+            #expect(defaults.string(forKey: "peekaboo.customVisionProvider") == "anthropic")
+        }
+    }
+
+    @Test
+    func `A failed vision backfill stays retryable`() throws {
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
+            let configPath = configDir.appendingPathComponent("config.json")
+            try "{".write(to: configPath, atomically: true, encoding: .utf8)
+            let defaults = UserDefaults.standard
+            defaults.set(true, forKey: "peekaboo.useCustomVisionModel")
+            defaults.set("anthropic", forKey: "peekaboo.customVisionProvider")
+            defaults.set("claude-opus-5", forKey: "peekaboo.customVisionModel")
+            ConfigurationManager.shared.resetForTesting()
+
+            _ = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            #expect(!defaults.bool(forKey: "peekaboo.visionModelConfigAuthoritative"))
+
+            try Self.writeVisionFixture(to: configPath, providers: "openai/gpt-5.6", visionModel: nil)
+            ConfigurationManager.shared.resetForTesting()
+            _ = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            #expect(
+                try (Self.object(in: configPath)["agent"] as? [String: Any])?["visionModel"] as? String
+                    == "anthropic/claude-opus-5")
+        }
+    }
+
+    @Test
     func `Vision provider reloads outside the agent provider list`() throws {
         try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")

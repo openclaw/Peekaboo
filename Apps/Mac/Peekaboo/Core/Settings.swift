@@ -549,17 +549,21 @@ extension PeekabooSettings {
             self.ollamaBaseURL = ollamaURL
         }
 
-        let visionModel = config?.agent?.visionModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !visionModel.isEmpty {
-            self.useCustomVisionModel = true
-            let selection = self.visionProviderQualifiedModelSelection(from: visionModel)
-            self.customVisionProvider = selection.provider ?? ""
-            self.customVisionModel = selection.model
-        } else if self.visionConfigAbsenceIsAuthoritative() {
-            self.useCustomVisionModel = false
-            self.customVisionProvider = ""
-            self.userDefaults.set(false, forKey: self.namespaced("useCustomVisionModel"))
-            self.userDefaults.set("", forKey: self.namespaced("customVisionProvider"))
+        // A failed load is not an intentional missing key. Leave the saved choice alone.
+        if let loadedConfig = config {
+            let visionModel = loadedConfig.agent?.visionModel?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !visionModel.isEmpty {
+                self.useCustomVisionModel = true
+                let selection = self.visionProviderQualifiedModelSelection(from: visionModel)
+                self.customVisionProvider = selection.provider ?? ""
+                self.customVisionModel = selection.model
+            } else if self.visionConfigAbsenceIsAuthoritative() {
+                self.useCustomVisionModel = false
+                self.customVisionProvider = ""
+                self.userDefaults.set(false, forKey: self.namespaced("useCustomVisionModel"))
+                self.userDefaults.set("", forKey: self.namespaced("customVisionProvider"))
+            }
         }
     }
 
@@ -643,14 +647,18 @@ extension PeekabooSettings {
     }
 
     /// Writes only `agent.visionModel`. A full settings save would rewrite unrelated keys.
-    private func persistVisionModel() {
-        guard !self.isLoading else { return }
+    /// False means the copy did not land, so a later launch can try again.
+    @discardableResult
+    private func persistVisionModel() -> Bool {
+        guard !self.isLoading else { return false }
         do {
             try self.configManager.updateConfiguration { config in
                 self.assignPersistedVisionModel(to: &config)
             }
+            return true
         } catch {
             print("Failed to update vision model in config.json: \(error)")
+            return false
         }
     }
 
@@ -683,11 +691,12 @@ extension PeekabooSettings {
     /// After that, a missing config key stays missing.
     private func backfillVisionModelIfNeeded() {
         guard !self.visionConfigAbsenceIsAuthoritative() else { return }
+        guard let config = self.configManager.loadConfiguration() else { return }
         if self.useCustomVisionModel {
-            let configured = self.configManager.loadConfiguration()?.agent?.visionModel?
+            let configured = config.agent?.visionModel?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if configured.isEmpty {
-                self.persistVisionModel()
+            if configured.isEmpty, !self.persistVisionModel() {
+                return
             }
         }
         self.userDefaults.set(true, forKey: self.namespaced("visionModelConfigAuthoritative"))
