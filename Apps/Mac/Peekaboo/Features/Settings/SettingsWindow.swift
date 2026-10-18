@@ -516,6 +516,30 @@ struct AgentSettingsView: View {
         return Self.builtinName(forModelId: id) ?? id
     }
 
+    private func visionModelDisplayName() -> String {
+        let provider = self.settings.customVisionProvider
+        let modelId = self.settings.customVisionModel
+        if !provider.isEmpty {
+            for (candidate, models) in self.allModels
+                where candidate.caseInsensitiveCompare(provider) == .orderedSame
+            {
+                if let model = models.first(where: { $0.id == modelId }) {
+                    return model.name
+                }
+            }
+        }
+        return self.modelDisplayName(forId: modelId)
+    }
+
+    private func visionSelectionMatches(provider: String, modelId: String) -> Bool {
+        guard modelId == self.settings.customVisionModel else { return false }
+        let savedProvider = self.settings.customVisionProvider
+        if savedProvider.isEmpty {
+            return self.provider(for: modelId) == provider
+        }
+        return provider.caseInsensitiveCompare(savedProvider) == .orderedSame
+    }
+
     var body: some View {
         @Bindable var settings = self.settings
         Form {
@@ -608,10 +632,11 @@ struct AgentSettingsView: View {
                                 ForEach(models, id: \.id) { model in
                                     Button {
                                         self.settings.useCustomVisionModel = true
+                                        self.settings.customVisionProvider = provider
                                         self.settings.customVisionModel = model.id
                                     } label: {
                                         if self.settings.useCustomVisionModel,
-                                           model.id == self.settings.customVisionModel
+                                           self.visionSelectionMatches(provider: provider, modelId: model.id)
                                         {
                                             Label(model.name, systemImage: "checkmark")
                                         } else {
@@ -623,7 +648,7 @@ struct AgentSettingsView: View {
                         }
                     } label: {
                         if self.settings.useCustomVisionModel {
-                            Text(self.modelDisplayName(forId: self.settings.customVisionModel))
+                            Text(self.visionModelDisplayName())
                         } else {
                             Text("Same as agent model")
                         }
