@@ -48,7 +48,7 @@ services.installAgentRuntimeDefaults()
 
 Keep that instance alive while its installed factories are used: they capture it without retaining it. Tests and
 embedded hosts can instead pass explicit service contexts. See
-[`PeekabooServiceProviding`](../Core/PeekabooCore/Sources/PeekabooAgentRuntime/Support/PeekabooServiceProviding.swift)
+[`PeekabooServiceProviding`](https://github.com/openclaw/Peekaboo/blob/main/Core/PeekabooCore/Sources/PeekabooAgentRuntime/Support/PeekabooServiceProviding.swift)
 for the installation boundary and [agent chat](agent-chat.md) for execution lifecycle.
 
 `PeekabooAIService` resolves configured provider strings to Tachikoma `LanguageModel` values. Configuration and provider
