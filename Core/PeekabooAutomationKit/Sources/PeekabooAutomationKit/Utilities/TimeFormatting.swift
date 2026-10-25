@@ -18,14 +18,14 @@ private func renderDuration(_ seconds: TimeInterval, minuteLabel: String) -> Str
     }
     if seconds < 0.001 {
         let microseconds = (seconds * 1_000_000).rounded()
-        if microseconds >= 1_000 {
+        if microseconds >= 1000 {
             return "1ms"
         }
         return String(format: "%.0fµs", microseconds)
     }
     if seconds < 1 {
         let milliseconds = (seconds * 1000).rounded()
-        if milliseconds >= 1_000 {
+        if milliseconds >= 1000 {
             return "1.0s"
         }
         return String(format: "%.0fms", milliseconds)
