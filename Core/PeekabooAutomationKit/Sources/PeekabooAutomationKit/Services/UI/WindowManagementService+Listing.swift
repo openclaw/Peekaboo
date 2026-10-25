@@ -42,7 +42,7 @@ extension WindowManagementService {
             let windows = try await self.windows(for: app)
             guard index >= 0, index < windows.count else {
                 throw PeekabooError.invalidInput(
-                    "windowIndex: Index \(index) is out of range. Available windows: 0-\(windows.count - 1)")
+                    WindowIndexRangeError.message(index: index, count: windows.count))
             }
             return [windows[index]]
 
@@ -79,5 +79,14 @@ extension WindowManagementService {
         }
 
         return ObservationTargetResolver.bestWindow(from: windows)
+    }
+}
+
+enum WindowIndexRangeError {
+    static func message(index: Int, count: Int) -> String {
+        if count <= 0 {
+            return "windowIndex: Index \(index) is out of range. No windows are available."
+        }
+        return "windowIndex: Index \(index) is out of range. Available windows: 0-\(count - 1)"
     }
 }

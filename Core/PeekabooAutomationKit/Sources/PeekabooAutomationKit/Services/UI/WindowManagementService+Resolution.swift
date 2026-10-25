@@ -237,7 +237,7 @@ extension WindowManagementService {
 
         guard index >= 0, index < windows.count else {
             throw PeekabooError.invalidInput(
-                "windowIndex: Index \(index) is out of range. Available windows: 0-\(windows.count - 1)")
+                WindowIndexRangeError.message(index: index, count: windows.count))
         }
 
         return windows[index]
