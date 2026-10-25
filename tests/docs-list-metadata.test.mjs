@@ -41,6 +41,18 @@ test('JSON hint escapes and Unicode survive while nonstrings and blank hints are
   assert.doesNotMatch(stdout, /malformed|nested|\[object Object\]/);
 });
 
+test('multiline read_when entries drop YAML quotes and keep apostrophes', (t) => {
+  const stdout = runListing(t, {
+    'single.md': document('Single hints', "\n  - 'you can''t connect'\n  - 'plain hint'"),
+    'double.md': document('Double hints', '\n  - "it\'s ready"\n  - "say \\"hi\\""'),
+    'bare.md': document('Bare hints', '\n  - already plain'),
+  });
+  assert.match(stdout, /single\.md - Single hints\n  Read when: you can't connect; plain hint\n/);
+  assert.match(stdout, /double\.md - Double hints\n  Read when: it's ready; say "hi"\n/);
+  assert.match(stdout, /bare\.md - Bare hints\n  Read when: already plain\n/);
+  assert.doesNotMatch(stdout, /Read when: ['"]/);
+});
+
 test('empty inline arrays and multiline lists retain their existing meaning', (t) => {
   const stdout = runListing(t, {
     'empty.md': document('Empty hints', '[]'),

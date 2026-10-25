@@ -97,7 +97,7 @@ function extractMetadata(fullPath) {
 
     if (collectingReadWhen) {
       if (line.startsWith('- ')) {
-        const hint = line.slice(2).trim();
+        const hint = normalizeReadWhenHint(line.slice(2).trim());
         if (hint.length > 0) {
           readWhen.push(hint);
         }
@@ -122,6 +122,16 @@ function extractMetadata(fullPath) {
     summaryValue ?? deriveHeadingSummary(content.slice(endIndex + 4)) ?? '(add summary front matter)';
 
   return { summary, readWhen, issues };
+}
+
+function normalizeReadWhenHint(value) {
+  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1).replaceAll("''", "'");
+  }
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    return value.slice(1, -1).replace(/\\(.)/g, (_, character) => (character === 'n' ? '\n' : character));
+  }
+  return value;
 }
 
 function normalizeSummary(value) {
