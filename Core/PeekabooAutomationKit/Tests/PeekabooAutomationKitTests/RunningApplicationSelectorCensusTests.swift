@@ -156,6 +156,80 @@ struct RunningApplicationSelectorCensusTests {
         #expect(plan.selectorProof.candidateCount == 2)
     }
 
+    @Test(arguments: SelectorCensusMutationAction.allCases)
+    func `unresolved selectors dispatch no mutations while verified controls reach the spies`(
+        action: SelectorCensusMutationAction) async throws
+    {
+        let pid = ProcessInfo.processInfo.processIdentifier
+        _ = try #require(NSRunningApplication(processIdentifier: pid))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let coordinator = DesktopOperationLaneCoordinator(coordinationRootURL: directory)
+        var dispatches: [SelectorCensusMutationAction] = []
+        func service(_ applications: [NSRunningApplication]) -> ApplicationService {
+            ApplicationService(
+                operationLaneCoordinator: coordinator,
+                applicationOpenHandler: { _, _, _ in throw PeekabooError.notImplemented("Unused launch") },
+                processStartIdentityProvider: { _ in 10 },
+                applicationQuitHandler: { _, force in
+                    dispatches.append(force ? .forceQuit : .quit)
+                    return false
+                },
+                applicationHiddenProvider: { _ in action == .unhide },
+                applicationVisibilityHandler: { _, hidden in
+                    dispatches.append(hidden ? .hide : .unhide)
+                    return false
+                },
+                runningApplicationsProvider: { applications },
+                applicationProcessIdentifierResolver: SelectorCensusTestFixture.processIdentifier)
+        }
+        let tied = service([
+            SelectorCensusRunningApplication(),
+            SelectorCensusRunningApplication(),
+            SelectorCensusRunningApplication(processIdentifier: pid),
+        ])
+        for identifier in ["Fixture", "com.example.selector-census"] {
+            do {
+                try await action.invoke(tied, identifier: identifier)
+                Issue.record("Ambiguous mutation unexpectedly completed")
+            } catch let error as PeekabooError {
+                guard case let .ambiguousAppIdentifier(_, suggestions) = error else { throw error }
+                #expect(suggestions.count == 3)
+            }
+            #expect(dispatches.isEmpty)
+        }
+        // The positive control uses the same real PID and generation path. A fake or missing
+        // process cannot make the zero-dispatch assertion pass by failing before a reachable spy.
+        await #expect(throws: DesktopActionFailure.self) {
+            try await action.invoke(tied, identifier: "PID:\(pid)")
+        }
+        #expect(dispatches == [action])
+        dispatches.removeAll()
+
+        let higherPrecedence = service([
+            SelectorCensusRunningApplication(),
+            SelectorCensusRunningApplication(processIdentifier: pid, name: "Fixture Preview"),
+        ])
+        let unresolved = service([SelectorCensusRunningApplication()])
+        for refused in [higherPrecedence, unresolved] {
+            do {
+                try await action.invoke(refused, identifier: "Fixture")
+                Issue.record("Unverified mutation unexpectedly completed")
+            } catch let error as PeekabooError {
+                guard case .commandFailed = error else { throw error }
+            }
+            #expect(dispatches.isEmpty)
+        }
+        let unrelated = service([
+            SelectorCensusRunningApplication(name: "Unrelated", bundleIdentifier: "com.example.unrelated"),
+            SelectorCensusRunningApplication(processIdentifier: pid),
+        ])
+        await #expect(throws: DesktopActionFailure.self) {
+            try await action.invoke(unrelated, identifier: "Fixture")
+        }
+        #expect(dispatches == [action])
+    }
+
     @Test
     func `ambiguous third contender reaches no capture backend while exact PID does`() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -182,6 +256,27 @@ struct RunningApplicationSelectorCensusTests {
                 _ = try await service.captureWindow(appIdentifier: "PID:64002", windowIndex: nil)
             }
             #expect(backend.attempts == 1)
+        }
+    }
+}
+
+enum SelectorCensusMutationAction: CaseIterable, Sendable {
+    case quit
+    case forceQuit
+    case hide
+    case unhide
+
+    @MainActor
+    func invoke(_ service: ApplicationService, identifier: String) async throws {
+        switch self {
+        case .quit, .forceQuit:
+            _ = try await service.quitApplicationActionResult(request: .init(
+                identifier: identifier,
+                force: self == .forceQuit))
+        case .hide:
+            _ = try await service.hideApplicationActionResult(identifier: identifier)
+        case .unhide:
+            _ = try await service.unhideApplicationActionResult(identifier: identifier)
         }
     }
 }
