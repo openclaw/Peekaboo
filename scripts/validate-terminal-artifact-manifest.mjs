@@ -283,7 +283,7 @@ async function extractAndCompare(record, kind, expectedRoot, expectedIdentifier)
       const nodeBinary = path.join(extractedRoot, 'Contents', 'MacOS', 'node');
       const info = path.join(extractedRoot, 'Contents', 'Info.plist');
       if (plistValue(info, 'CFBundleIdentifier') !== 'boo.peekaboo.qualification-node' ||
-          plistValue(info, 'CFBundleShortVersionString') !== '26.9.0') {
+          plistValue(info, 'CFBundleShortVersionString') !== '26.12.1') {
         throw new Error('qualification Node Info.plist mismatch');
       }
       const embeddedSource = JSON.parse(await readFile(path.join(extractedRoot, 'Contents', 'Resources',
@@ -425,7 +425,7 @@ if (manifest.schema !== 7 || manifest.phase !== 'candidate_verified_not_installe
 const expectedRootEntries = [
   'Peekaboo-' + manifest.version + '.app.zip',
   'Peekaboo-' + manifest.version + '.dmg',
-  'PeekabooQualificationNode-26.9.0.app.zip',
+  'PeekabooQualificationNode-26.12.1.app.zip',
   'Playground-' + manifest.version + '.app.zip',
   'checksums.txt',
   'cli-notary-tree.json',
@@ -595,7 +595,7 @@ await validateBoundFile(manifest.artifacts.playground_app_zip, 'artifacts.playgr
   embeddedKey: 'embedded_manifest_sha256'
 });
 await validateBoundFile(manifest.artifacts.qualification_node_app_zip, 'artifacts.qualification_node_app_zip', {
-  expectedPath: 'PeekabooQualificationNode-26.9.0.app.zip',
+  expectedPath: 'PeekabooQualificationNode-26.12.1.app.zip',
   treePath: 'qualification-node-app-tree.json',
   embeddedKey: 'embedded_runtime_manifest_sha256',
   extraKeys: ['runtime']
@@ -738,7 +738,7 @@ exactKeys(nodeRuntime.inputs, ['arm64', 'x86_64'], 'qualification node inputs');
 for (const architecture of ['arm64', 'x86_64']) {
   exactKeys(nodeRuntime.inputs[architecture], ['url', 'archive_sha256', 'binary_sha256'], `node input ${architecture}`);
 }
-if (nodeRuntime.version !== '26.9.0' || nodeRuntime.identifier !== 'boo.peekaboo.qualification-node' ||
+if (nodeRuntime.version !== '26.12.1' || nodeRuntime.identifier !== 'boo.peekaboo.qualification-node' ||
     nodeRuntime.executable_path !== 'Contents/MacOS/node' ||
     JSON.stringify(nodeRuntime.architectures) !== JSON.stringify(['arm64', 'x86_64']) ||
     !exactSHA.test(nodeRuntime.unsigned_binary_sha256) || !Number.isSafeInteger(nodeRuntime.unsigned_binary_size) ||
@@ -757,20 +757,20 @@ if (nodeRuntime.version !== '26.9.0' || nodeRuntime.identifier !== 'boo.peekaboo
   throw new Error('qualification Node runtime contract mismatch');
 }
 if (!fixtureTools && (nodeRuntime.unsigned_binary_sha256 !==
-      '4f99ecbd96c3f65a7c41ad3bae312dc4f42bc0b3ed51d46925111238ec569d3d' ||
-    nodeRuntime.unsigned_binary_size !== 295829824 ||
-    nodeRuntime.license.sha256 !== '6b85ee1983d01fa2cdcdd5d1a3053c6221fae41d6a54e43b416bf35969fc4128' ||
+      'a86ff3ec10b5086ce10ae871f8c6b23bed8ac629fb6a91611cbcfe07afaf6460' ||
+    nodeRuntime.unsigned_binary_size !== 297440176 ||
+    nodeRuntime.license.sha256 !== '8e603aa87c70d36e497004f0dec63111511cb61b7d65ace12e10ea791599286c' ||
     nodeRuntime.entitlements.sha256 !== '6b8322742841af1b5b0e29b25383647950cf52de7f4e0567da0838cc59babdf1' ||
-    nodeRuntime.inputs.arm64.url !== 'https://nodejs.org/dist/v26.9.0/node-v26.9.0-darwin-arm64.tar.gz' ||
+    nodeRuntime.inputs.arm64.url !== 'https://nodejs.org/dist/v26.12.1/node-v26.12.1-darwin-arm64.tar.gz' ||
     nodeRuntime.inputs.arm64.archive_sha256 !==
-      '6f3de7ed853ee283b4bf24b6e426618f1d357401ce5815db1866eb85eb4b05d9' ||
+      '1901d539912c02afa10d1cc126943a8855a7eedebe830119463470db5e6c59e8' ||
     nodeRuntime.inputs.arm64.binary_sha256 !==
-      '8bebc3d846767864093af8619b1a6dc2ff01dea4f643b8bdb5e8cbd51bf6756d' ||
-    nodeRuntime.inputs.x86_64.url !== 'https://nodejs.org/dist/v26.9.0/node-v26.9.0-darwin-x64.tar.gz' ||
+      '06eb3f5762c2b6890e99d03f931bf01d9b20fd341dec1a8c1ef5c1809e66102b' ||
+    nodeRuntime.inputs.x86_64.url !== 'https://nodejs.org/dist/v26.12.1/node-v26.12.1-darwin-x64.tar.gz' ||
     nodeRuntime.inputs.x86_64.archive_sha256 !==
-      '06b2e742ed9025dc84adc830243b3f731956eac9c321bccd0ede384209af02a8' ||
+      'b85c2ea4420ad0bc4abf2dc6cf1f55130ed681f1cabf60cf3f526e4c9e2712ff' ||
     nodeRuntime.inputs.x86_64.binary_sha256 !==
-      '43d9dd9d9b9a6cf00f1d08b51e794982757a79ad5ff4c48721d692e896d2cbcd')) {
+      '4a1cb2b18065f49938d650eceedf4557a4b5561ab941ab66cb4ab3f4b38c8232')) {
   throw new Error('production qualification Node pins differ');
 }
 const cliTree = JSON.parse(await readFile(path.join(root, manifest.artifacts.cli.tree_manifest.path), 'utf8'));
