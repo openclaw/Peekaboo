@@ -352,7 +352,8 @@ private final class NativeSelectorFixture {
             try #require(ContinuousClock.now < deadline, "Owned fixture did not exit; retaining its bundle")
             try await Task.sleep(for: .milliseconds(20))
         }
-        try #require(self.launches.allSatisfy(\.completed), "Pending launch; retaining fixture bundles")
+        let allLaunchesCompleted = self.launches.allSatisfy(\.completed)
+        try #require(allLaunchesCompleted, "Pending launch; retaining fixture bundles")
         try self.removeRoot()
     }
 
