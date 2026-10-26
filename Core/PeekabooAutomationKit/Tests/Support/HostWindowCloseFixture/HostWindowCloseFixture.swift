@@ -1,11 +1,16 @@
 import AppKit
 import Darwin
+import Foundation
 import PeekabooAutomationKit
 
 @main
 private enum HostWindowCloseFixture {
     @MainActor
     static func main() {
+        if CommandLine.arguments.dropFirst().first?.hasPrefix("--selector-") == true {
+            self.runSelectorFixture()
+            return
+        }
         DispatchQueue.global().asyncAfter(deadline: .now() + 20) {
             FileHandle.standardError.write(Data("Host window close fixture timed out.\n".utf8))
             exit(124)
@@ -20,6 +25,82 @@ private enum HostWindowCloseFixture {
         }
         FileHandle.standardError.write(Data("AppKit run loop returned before fixture completion.\n".utf8))
         exit(1)
+    }
+
+    @MainActor
+    private static func runSelectorFixture() {
+        let arguments = CommandLine.arguments
+        guard arguments.count == 4,
+              ["--selector-launch", "--selector-payload", "--selector-plain"].contains(arguments[1]),
+              UUID(uuidString: arguments[2]) != nil,
+              arguments[3].hasPrefix("/")
+        else { exit(2) }
+        if arguments[1] == "--selector-launch" {
+            // LaunchServices registers Launcher before SETEXEC replaces it with Payload. The
+            // parent must observe AppKit's real -1 state; re-exec alone is never a passing proof.
+            let executable = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/Payload").path
+            let pointers = [executable, "--selector-payload", arguments[2], arguments[3]].map { strdup($0) }
+            defer { pointers.forEach { free($0) } }
+            var argv = pointers + [nil]
+            var attributes: posix_spawnattr_t?
+            guard posix_spawnattr_init(&attributes) == 0 else { exit(1) }
+            defer { posix_spawnattr_destroy(&attributes) }
+            guard posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETEXEC)) == 0 else { exit(1) }
+            var processIdentifier: pid_t = 0
+            _ = executable.withCString { posix_spawn(&processIdentifier, $0, nil, &attributes, &argv, environ) }
+            exit(1) // A successful SETEXEC never returns.
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 30) { exit(124) }
+        let pid = ProcessInfo.processInfo.processIdentifier
+        guard let generation = SystemIdentityResolver.processStartIdentity(pid) else { exit(1) }
+        let receipt = SelectorFixtureReceipt(nonce: arguments[2], pid: pid, generation: generation)
+        do {
+            let output = URL(fileURLWithPath: arguments[3])
+            guard output.deletingLastPathComponent() == Bundle.main.bundleURL.deletingLastPathComponent(),
+                  output.lastPathComponent == "\(arguments[2]).json"
+            else { exit(2) }
+            // Publish the whole ownership receipt before the parent can read it.
+            try JSONEncoder().encode(receipt).write(to: output, options: .atomic)
+        } catch { exit(1) }
+        let application = NSApplication.shared
+        let delegate = SelectorFixtureDelegate()
+        let stopURL = URL(fileURLWithPath: arguments[3]).deletingPathExtension().appendingPathExtension("stop")
+        let shutdown = DispatchSource.makeTimerSource(queue: .global())
+        shutdown.schedule(deadline: .now(), repeating: .milliseconds(50))
+        shutdown.setEventHandler {
+            if (try? String(contentsOf: stopURL, encoding: .utf8)) == arguments[2] {
+                exit(0)
+            }
+        }
+        shutdown.resume()
+        application.delegate = delegate
+        application.setActivationPolicy(.accessory)
+        withExtendedLifetime((delegate, shutdown)) { application.run() }
+        exit(1)
+    }
+}
+
+private struct SelectorFixtureReceipt: Encodable {
+    let nonce: String
+    let pid: pid_t
+    let generation: UInt64
+}
+
+@MainActor
+private final class SelectorFixtureDelegate: NSObject, NSApplicationDelegate {
+    private var window: NSWindow?
+
+    func applicationDidFinishLaunching(_: Notification) {
+        let window = NSWindow(
+            contentRect: CGRect(x: 100, y: 100, width: 160, height: 100),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false)
+        window.title = "Selector fixture"
+        window.isReleasedWhenClosed = false
+        window.animationBehavior = .none
+        window.orderFront(nil)
+        self.window = window
     }
 }
 

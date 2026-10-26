@@ -396,13 +396,13 @@ final class SelectorCensusRunningApplication: NSRunningApplication, @unchecked S
     }
 }
 
-private struct SelectorCensusCapturePermission: ScreenRecordingPermissionEvaluating {
+struct SelectorCensusCapturePermission: ScreenRecordingPermissionEvaluating {
     func hasPermission(logger _: CategoryLogger, policy _: ScreenRecordingPermissionProbePolicy) async -> Bool {
         true
     }
 }
 
-private struct SelectorCensusFrameSource: CaptureFrameSource {
+struct SelectorCensusFrameSource: CaptureFrameSource {
     @MainActor
     func nextFrame() async throws -> (cgImage: CGImage?, metadata: CaptureMetadata)? {
         nil
@@ -410,7 +410,7 @@ private struct SelectorCensusFrameSource: CaptureFrameSource {
 }
 
 @MainActor
-private final class SelectorCensusCaptureOperator: ModernScreenCaptureOperating, LegacyScreenCaptureOperating {
+final class SelectorCensusCaptureOperator: ModernScreenCaptureOperating, LegacyScreenCaptureOperating {
     private(set) var attempts = 0
 
     func captureScreen(
