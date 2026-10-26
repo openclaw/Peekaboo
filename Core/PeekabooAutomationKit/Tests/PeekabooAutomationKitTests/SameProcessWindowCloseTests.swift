@@ -14,15 +14,17 @@ struct SameProcessWindowCloseTests {
     @MainActor
     func `native unresolved census refuses before injected capture and lifecycle backends`() async throws {
         let fixture = try NativeSelectorFixture(executable: Self.fixtureExecutable)
-        var failure: (any Error)?
         do {
             let applications = try await fixture.launchAndQualify()
             try await self.verifyNativeSelectorBoundaries(fixture: fixture, applications: applications)
-        } catch { failure = error }
-        try await fixture.removeOwnedChildrenAndBundles()
-        if let failure {
-            throw failure
+        } catch is ExpectationFailedError {
+            // #require already records its issue; retain diagnostics without creating a duplicate.
+            print("NATIVE_SELECTOR_PRIMARY_EXPECTATION_FAILED \(fixture.launchDiagnostics())")
+        } catch {
+            Issue.record(error, "Native selector primary failure; \(fixture.launchDiagnostics())")
         }
+        // Report the primary failure before cleanup can fail closed with its own independent issue.
+        try await fixture.removeOwnedChildrenAndBundles()
     }
 
     private static var fixtureExecutable: URL {
@@ -173,15 +175,28 @@ private final class NativeSelectorFixture {
     @MainActor
     final class Launch {
         let receiptURL: URL
+        let diagnosticURL: URL
+        let diagnosticIdentity: UInt64
         let executableURL: URL
         let nonce = UUID().uuidString
         var completed = false
         var failed = false
+        var callbackApplicationPresent = false
+        var callbackErrorDomain = "none"
+        var callbackErrorCode = 0
         var receipt: Receipt?
 
-        init(root: URL, executableURL: URL) {
+        init(root: URL, executableURL: URL) throws {
             self.executableURL = executableURL
             self.receiptURL = root.appendingPathComponent("\(self.nonce).json")
+            self.diagnosticURL = root.appendingPathComponent("\(self.nonce).status")
+            let descriptor = open(self.diagnosticURL.path, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW | O_CLOEXEC, 0o600)
+            guard descriptor >= 0 else { throw NativeSelectorFailure("Could not prepare fixture diagnostics") }
+            defer { close(descriptor) }
+            var info = stat()
+            guard fstat(descriptor, &info) == 0
+            else { throw NativeSelectorFailure("Could not identify fixture diagnostics") }
+            self.diagnosticIdentity = info.st_ino
         }
     }
 
@@ -274,7 +289,7 @@ private final class NativeSelectorFixture {
 
     private func launch(bundle: URL, reexec: Bool) async throws {
         try self.checkDeadline()
-        let launch = Launch(root: self.root, executableURL: bundle.appendingPathComponent(
+        let launch = try Launch(root: self.root, executableURL: bundle.appendingPathComponent(
             "Contents/MacOS/\(reexec ? "Payload" : "Launcher")"))
         self.launches.append(launch)
         let configuration = NSWorkspace.OpenConfiguration()
@@ -288,10 +303,17 @@ private final class NativeSelectorFixture {
             launch.nonce,
             launch.receiptURL.path,
         ]
-        NSWorkspace.shared.openApplication(at: bundle, configuration: configuration) { _, error in
+        NSWorkspace.shared.openApplication(at: bundle, configuration: configuration) { application, error in
             let failed = error != nil
+            let present = application != nil
+            let failure = error.map { $0 as NSError }
+            let domain = Self.diagnosticDomain(failure?.domain ?? "none")
+            let code = failure?.code ?? 0
             Task { @MainActor in
                 launch.failed = failed
+                launch.callbackApplicationPresent = present
+                launch.callbackErrorDomain = domain
+                launch.callbackErrorCode = code
                 launch.completed = true
             }
         }
@@ -307,6 +329,63 @@ private final class NativeSelectorFixture {
             try await Task.sleep(for: .milliseconds(20))
         } while ContinuousClock.now < deadline
         throw NativeSelectorFailure("Owned fixture launch did not qualify within five seconds")
+    }
+
+    func launchDiagnostics() -> String {
+        self.launches.enumerated().map { index, launch in
+            "launch=\(index) callback=\(launch.completed) app=\(launch.callbackApplicationPresent) " +
+                "domain=\(launch.callbackErrorDomain) code=\(launch.callbackErrorCode) " +
+                "receipt=\(launch.receipt != nil) producer=\(self.producerDiagnostic(for: launch))"
+        }.joined(separator: "; ")
+    }
+
+    private func producerDiagnostic(for launch: Launch) -> String {
+        let descriptor = open(launch.diagnosticURL.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+        guard descriptor >= 0 else { return "unavailable" }
+        defer { close(descriptor) }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
+              info.st_ino == launch.diagnosticIdentity, info.st_uid == geteuid(), info.st_nlink == 1,
+              info.st_mode & 0o777 == 0o600, info.st_size > 0, info.st_size < 512
+        else { return "missing-or-invalid" }
+        var bytes = [UInt8](repeating: 0, count: Int(info.st_size))
+        let count = bytes.withUnsafeMutableBytes { read(descriptor, $0.baseAddress, $0.count) }
+        guard count == bytes.count,
+              let record = String(bytes: bytes, encoding: .utf8)
+        else { return "unreadable" }
+        let parts = record.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+        let stages = [
+            "entry",
+            "arguments-invalid",
+            "spawnattr-init",
+            "spawnattr-flags",
+            "spawn",
+            "spawn-return",
+            "generation-missing",
+            "receipt-validation",
+            "receipt-published",
+            "receipt-write",
+        ]
+        guard parts.count == 4, stages.contains(parts[0]), let code = Int(parts[1]),
+              let flags = Int(parts[2]), (0...3).contains(flags), Self.diagnosticDomain(parts[3]) == parts[3]
+        else { return "invalid-record" }
+        // The status is diagnostic only: no fields feed receipt validation, dispatch, or cleanup admission.
+        return "\(parts[0]),code=\(code),flags=\(flags),domain=\(parts[3])"
+    }
+
+    private nonisolated static func diagnosticDomain(_ domain: String) -> String {
+        let domains = [
+            "none",
+            "other",
+            "NSCocoaErrorDomain",
+            "NSPOSIXErrorDomain",
+            "NSOSStatusErrorDomain",
+            "NSMachErrorDomain",
+            "NSWorkspaceErrorDomain",
+            "RBSRequestErrorDomain",
+            "RBSServiceErrorDomain",
+        ]
+        return domains.contains(domain) ? domain : "other"
     }
 
     private func readReceipt(for launch: Launch) throws {
@@ -374,9 +453,9 @@ private final class NativeSelectorFixture {
     }
 }
 
-private struct NativeSelectorFailure: Error {
-    let message: String
+private struct NativeSelectorFailure: Error, CustomStringConvertible {
+    let description: String
     init(_ message: String) {
-        self.message = message
+        self.description = message
     }
 }

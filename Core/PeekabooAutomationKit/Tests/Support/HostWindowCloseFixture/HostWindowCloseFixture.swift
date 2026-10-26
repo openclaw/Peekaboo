@@ -30,11 +30,18 @@ private enum HostWindowCloseFixture {
     @MainActor
     private static func runSelectorFixture() {
         let arguments = CommandLine.arguments
+        let diagnostics = SelectorFixtureDiagnostics(arguments: arguments)
+        diagnostics?.record("entry", code: arguments.count, flags: [
+            "--selector-launch", "--selector-payload", "--selector-plain",
+        ].firstIndex(of: arguments.dropFirst().first ?? "").map { $0 + 1 } ?? 0)
         guard arguments.count == 4,
               ["--selector-launch", "--selector-payload", "--selector-plain"].contains(arguments[1]),
               UUID(uuidString: arguments[2]) != nil,
               arguments[3].hasPrefix("/")
-        else { exit(2) }
+        else {
+            diagnostics?.record("arguments-invalid")
+            exit(2)
+        }
         if arguments[1] == "--selector-launch" {
             // LaunchServices registers Launcher before SETEXEC replaces it with Payload. The
             // parent must observe AppKit's real -1 state; re-exec alone is never a passing proof.
@@ -43,25 +50,49 @@ private enum HostWindowCloseFixture {
             defer { pointers.forEach { free($0) } }
             var argv = pointers + [nil]
             var attributes: posix_spawnattr_t?
-            guard posix_spawnattr_init(&attributes) == 0 else { exit(1) }
+            let initialized = posix_spawnattr_init(&attributes)
+            guard initialized == 0 else {
+                diagnostics?.record("spawnattr-init", code: Int(initialized))
+                exit(1)
+            }
             defer { posix_spawnattr_destroy(&attributes) }
-            guard posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETEXEC)) == 0 else { exit(1) }
+            let flags = posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETEXEC))
+            guard flags == 0 else {
+                diagnostics?.record("spawnattr-flags", code: Int(flags))
+                exit(1)
+            }
             var processIdentifier: pid_t = 0
-            _ = executable.withCString { posix_spawn(&processIdentifier, $0, nil, &attributes, &argv, environ) }
+            // Bits report executable availability and Bundle agreement, without publishing either path.
+            let spawnFlags = (FileManager.default.isExecutableFile(atPath: executable) ? 1 : 0) |
+                (Bundle.main.bundleURL.resolvingSymlinksInPath() == diagnostics?.bundleURL ? 2 : 0)
+            diagnostics?.record("spawn", flags: spawnFlags)
+            let result = executable.withCString {
+                posix_spawn(&processIdentifier, $0, nil, &attributes, &argv, environ)
+            }
+            diagnostics?.record("spawn-return", code: Int(result), flags: spawnFlags)
             exit(1) // A successful SETEXEC never returns.
         }
         DispatchQueue.global().asyncAfter(deadline: .now() + 30) { exit(124) }
         let pid = ProcessInfo.processInfo.processIdentifier
-        guard let generation = SystemIdentityResolver.processStartIdentity(pid) else { exit(1) }
+        guard let generation = SystemIdentityResolver.processStartIdentity(pid) else {
+            diagnostics?.record("generation-missing")
+            exit(1)
+        }
         let receipt = SelectorFixtureReceipt(nonce: arguments[2], pid: pid, generation: generation)
         do {
             let output = URL(fileURLWithPath: arguments[3])
-            guard output.deletingLastPathComponent() == Bundle.main.bundleURL.deletingLastPathComponent(),
-                  output.lastPathComponent == "\(arguments[2]).json"
-            else { exit(2) }
+            let parentMatches = output.deletingLastPathComponent() == Bundle.main.bundleURL.deletingLastPathComponent()
+            let nameMatches = output.lastPathComponent == "\(arguments[2]).json"
+            diagnostics?.record("receipt-validation", flags: (parentMatches ? 1 : 0) | (nameMatches ? 2 : 0))
+            guard parentMatches, nameMatches else { exit(2) }
             // Publish the whole ownership receipt before the parent can read it.
             try JSONEncoder().encode(receipt).write(to: output, options: .atomic)
-        } catch { exit(1) }
+            diagnostics?.record("receipt-published")
+        } catch {
+            let failure = error as NSError
+            diagnostics?.record("receipt-write", code: failure.code, domain: failure.domain)
+            exit(1)
+        }
         let application = NSApplication.shared
         let delegate = SelectorFixtureDelegate()
         let stopURL = URL(fileURLWithPath: arguments[3]).deletingPathExtension().appendingPathExtension("stop")
@@ -77,6 +108,71 @@ private enum HostWindowCloseFixture {
         application.setActivationPolicy(.accessory)
         withExtendedLifetime((delegate, shutdown)) { application.run() }
         exit(1)
+    }
+}
+
+/// Diagnostic bytes never attest process ownership or authorize parent cleanup.
+private final class SelectorFixtureDiagnostics {
+    let bundleURL: URL
+    private let descriptor: Int32
+
+    init?(arguments: [String]) {
+        guard arguments.count == 4, UUID(uuidString: arguments[2]) != nil else { return nil }
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        let count = proc_pidpath(getpid(), &buffer, UInt32(buffer.count))
+        guard count > 0 else { return nil }
+        guard let path = String(
+            bytes: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, encoding: .utf8)
+        else { return nil }
+        let executable = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+        let directory = executable.deletingLastPathComponent()
+        let contents = directory.deletingLastPathComponent()
+        let bundle = contents.deletingLastPathComponent()
+        let root = bundle.deletingLastPathComponent()
+        // Derive the private destination from the kernel executable path, independently of Bundle.main.
+        guard ["Launcher", "Payload"].contains(executable.lastPathComponent),
+              directory.lastPathComponent == "MacOS", contents.lastPathComponent == "Contents",
+              ["Unresolved.app", "Readable.app"].contains(bundle.lastPathComponent),
+              root.lastPathComponent.hasPrefix("pb-native-selector-"),
+              root.deletingLastPathComponent() == URL(fileURLWithPath: "/tmp").resolvingSymlinksInPath(),
+              URL(fileURLWithPath: arguments[3]) == root.appendingPathComponent("\(arguments[2]).json")
+        else { return nil }
+        let parent = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard parent >= 0 else { return nil }
+        defer { close(parent) }
+        var info = stat()
+        guard fstat(parent, &info) == 0, info.st_uid == geteuid(), info.st_mode & 0o777 == 0o700 else { return nil }
+        let descriptor = openat(parent, "\(arguments[2]).status", O_WRONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+        guard descriptor >= 0 else { return nil }
+        guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
+              info.st_uid == geteuid(), info.st_mode & 0o777 == 0o600, info.st_nlink == 1,
+              info.st_size >= 0, info.st_size < 512
+        else {
+            close(descriptor)
+            return nil
+        }
+        self.bundleURL = bundle
+        self.descriptor = descriptor
+    }
+
+    deinit { close(self.descriptor) }
+
+    func record(_ stage: String, code: Int = 0, flags: Int = 0, domain: String = "none") {
+        let domains = [
+            "none",
+            "NSCocoaErrorDomain",
+            "NSPOSIXErrorDomain",
+            "NSOSStatusErrorDomain",
+            "NSMachErrorDomain",
+            "NSWorkspaceErrorDomain",
+            "RBSRequestErrorDomain",
+            "RBSServiceErrorDomain",
+        ]
+        let boundedDomain = domains.contains(domain) ? domain : "other"
+        let bytes = Array("\(stage)|\(code)|\(flags)|\(boundedDomain)".utf8)
+        guard bytes.count < 512, ftruncate(self.descriptor, 0) == 0,
+              lseek(self.descriptor, 0, SEEK_SET) == 0 else { return }
+        _ = bytes.withUnsafeBytes { write(self.descriptor, $0.baseAddress, $0.count) }
     }
 }
 
