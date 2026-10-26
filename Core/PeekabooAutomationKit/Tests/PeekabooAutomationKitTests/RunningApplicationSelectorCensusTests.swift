@@ -336,7 +336,7 @@ final class SelectorCensusRunningApplication: NSRunningApplication, @unchecked S
     private let fixtureBundleIdentifier: String
     private let fixtureBundlePath: String
     private let fixtureExecutablePath: String
-    private let terminated: Bool
+    private let fixtureTerminated: Bool
 
     init(
         processIdentifier: pid_t = -1,
@@ -351,7 +351,7 @@ final class SelectorCensusRunningApplication: NSRunningApplication, @unchecked S
         self.fixtureBundleIdentifier = bundleIdentifier
         self.fixtureBundlePath = bundlePath
         self.fixtureExecutablePath = executablePath
-        self.terminated = terminated
+        self.fixtureTerminated = terminated
         super.init()
     }
 
@@ -376,7 +376,7 @@ final class SelectorCensusRunningApplication: NSRunningApplication, @unchecked S
     }
 
     override var isTerminated: Bool {
-        self.terminated
+        self.fixtureTerminated
     }
 
     override var isActive: Bool {
