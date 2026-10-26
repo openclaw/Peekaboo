@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
