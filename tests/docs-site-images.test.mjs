@@ -21,3 +21,9 @@ test('markdown images render as images', (t) => {
   assert.doesNotMatch(article, /<img[^>]+title=/);
   assert.doesNotMatch(article, /!\[Peekaboo|<a[^>]*>Peekaboo banner<\/a>|<a[^>]*>CI<\/a>/);
 });
+
+test('image alt text restores inline-code stash contents before escaping', (t) => {
+  const article = render(t, '![Open `file` and `"other"`](assets/peekaboo.png)');
+  assert.match(article, /alt="Open `file` and `&quot;other&quot;`"/);
+  assert.doesNotMatch(article, /\u0000/);
+});

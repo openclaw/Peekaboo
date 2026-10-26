@@ -515,11 +515,12 @@ function inline(text, currentRel, inheritedStash = []) {
     return `\u0000${stash.length - 1}\u0000`;
   });
   out = out.replace(/!\[([^\]]*)\]\(((?:[^()]|\([^()]*\))+)\)/g, (raw, alt, href) => {
+    const altText = alt.replace(/\u0000(\d+)\u0000/g, (_, i) => stash[Number(i)].raw);
     const destination = imageSource(href
       .replace(/\u0000(\d+)\u0000/g, (_, i) => stash[Number(i)].raw)
       .replace(/\\\|/g, "|"));
     stash.push({
-      html: `<img src="${escapeAttr(destination)}" alt="${escapeAttr(alt)}">`,
+      html: `<img src="${escapeAttr(destination)}" alt="${escapeAttr(altText)}">`,
       raw,
     });
     return `\u0000${stash.length - 1}\u0000`;
