@@ -136,6 +136,7 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
         _ hidden: Bool) throws -> Bool
     typealias ApplicationVisibilitySleepHandler = @MainActor (_ duration: Duration) async throws -> Void
     typealias RunningApplicationProcessIdentifiersProvider = @Sendable () -> [pid_t]
+    typealias ApplicationInventorySeedProvider = @Sendable () -> RunningApplicationSelectorCensus.InventorySeed
     typealias RunningApplicationsProvider = @Sendable () -> [NSRunningApplication]
     typealias ApplicationProcessIdentifierResolver = @Sendable (NSRunningApplication) -> pid_t?
     typealias ApplicationWindowCatalogProvider = @Sendable () -> [WindowIdentityInfo]?
@@ -173,7 +174,7 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
     let applicationNativeVisibilityHandler: ApplicationNativeVisibilityHandler
     let applicationVisibilityHandler: ApplicationVisibilityHandler?
     let applicationVisibilitySleepHandler: ApplicationVisibilitySleepHandler
-    let runningApplicationProcessIdentifiersProvider: RunningApplicationProcessIdentifiersProvider
+    let applicationInventorySeedProvider: ApplicationInventorySeedProvider
     let runningApplicationsProvider: RunningApplicationsProvider
     let applicationProcessIdentifierResolver: ApplicationProcessIdentifierResolver
     let applicationWindowCatalogProvider: ApplicationWindowCatalogProvider
@@ -238,16 +239,13 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
         runningApplicationsForURLProvider: @escaping RunningApplicationsForURLProvider = {
             ApplicationService.runningApplicationCandidates(for: $0)
         },
-        applicationSelectorCandidatesProvider: @escaping ApplicationSelectorCandidatesProvider = {
-            NSWorkspace.shared.runningApplications
-                .filter { !$0.isTerminated }
-                .compactMap(ApplicationService.identifierCandidate)
-        },
+        applicationSelectorCandidatesProvider: ApplicationSelectorCandidatesProvider? = nil,
         applicationMutationCandidateProvider: @escaping ApplicationMutationCandidateProvider = { pid in
             guard let application = NSRunningApplication(processIdentifier: pid), !application.isTerminated else {
                 return nil
             }
-            return ApplicationService.identifierCandidate(application)
+            let entry = RunningApplicationSelectorCensus.Entry(application)
+            return entry.processIdentifier == pid ? entry.candidate : nil
         },
         relaunchTargetResolver: RelaunchTargetResolver? = nil,
         relaunchQuitHandler: RelaunchQuitHandler? = nil,
@@ -321,7 +319,14 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
         self.applicationOpenHandler = applicationOpenHandler
         self.defaultApplicationOpenHandler = defaultApplicationOpenHandler
         self.runningApplicationsForURLProvider = runningApplicationsForURLProvider
-        self.applicationSelectorCandidatesProvider = applicationSelectorCandidatesProvider
+        let selectorCensusProvider: @Sendable () -> RunningApplicationSelectorCensus = {
+            RunningApplicationSelectorCensus(
+                applications: runningApplicationsProvider(),
+                processIdentifierResolver: applicationProcessIdentifierResolver)
+        }
+        self.applicationSelectorCandidatesProvider = applicationSelectorCandidatesProvider ?? {
+            selectorCensusProvider().candidates
+        }
         self.applicationMutationCandidateProvider = applicationMutationCandidateProvider
         self.relaunchTargetResolver = relaunchTargetResolver
         self.relaunchQuitHandler = relaunchQuitHandler
@@ -348,8 +353,14 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
         self.applicationVisibilitySleepHandler = applicationVisibilitySleepHandler
         self.runningApplicationsProvider = runningApplicationsProvider
         self.applicationProcessIdentifierResolver = applicationProcessIdentifierResolver
-        self.runningApplicationProcessIdentifiersProvider = runningApplicationProcessIdentifiersProvider ?? {
-            runningApplicationsProvider().compactMap(applicationProcessIdentifierResolver)
+        self.applicationInventorySeedProvider = if let runningApplicationProcessIdentifiersProvider {
+            {
+                RunningApplicationSelectorCensus.InventorySeed(
+                    processIdentifiers: runningApplicationProcessIdentifiersProvider(),
+                    omissionWarnings: [])
+            }
+        } else {
+            { selectorCensusProvider().inventorySeed }
         }
         self.applicationWindowCatalogProvider = applicationWindowCatalogProvider
         self.applicationInventoryNowProvider = applicationInventoryNowProvider

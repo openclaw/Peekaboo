@@ -140,7 +140,9 @@ public enum ApplicationIdentifierMatcher {
         let ambiguitySuggestions: [String] = selection.winningIndices.count > 1
             ? selection.winningIndices.map { index in
                 let candidate = candidates[index]
-                return "\(candidate.name) (PID:\(candidate.processIdentifier))"
+                return candidate.processIdentifier > 0
+                    ? "\(candidate.name) (PID:\(candidate.processIdentifier))"
+                    : "\(candidate.name) (process identity unavailable)"
             }
             : []
         return Resolution(
@@ -176,7 +178,10 @@ public enum ApplicationIdentifierMatcher {
 
     private static func processIdentifier(in identifier: String) -> Int32? {
         guard identifier.uppercased().hasPrefix("PID:") else { return nil }
-        return Int32(identifier.dropFirst("PID:".count))
+        guard let processIdentifier = Int32(identifier.dropFirst("PID:".count)), processIdentifier > 0 else {
+            return nil
+        }
+        return processIdentifier
     }
 
     private struct Selection {

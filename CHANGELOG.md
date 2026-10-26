@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Retain live applications with an unresolved process identity when checking selector ambiguity, so capture, inspection, launch receipts and app mutations cannot silently choose another instance. Report omitted unresolved applications as a partial inventory while preserving verified PID targeting.
 - Wait 250ms instead of 150ms before restoring the previous clipboard after a temporary paste, and document that restoration is time-based: an app that reads the clipboard later than the restore delay can paste the previous contents, so raise `--restore-delay` (MCP `restore_delay_ms`) for slow receivers. #1140, refs #1111.
 
 ## 4.9.7 - 2026-10-23
