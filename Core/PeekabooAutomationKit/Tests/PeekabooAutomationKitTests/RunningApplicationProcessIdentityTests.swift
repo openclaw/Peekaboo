@@ -95,22 +95,37 @@ struct RunningApplicationProcessIdentityTests {
 @MainActor
 struct ApplicationPIDRecoveryTests {
     @Test
-    func `inventory recovers negative PID drops unrecoverable and preserves ordinary row`() async throws {
+    func `inventory recovers negative PID reports unrecoverable omission and preserves ordinary row`() async throws {
         let service = Self.service()
         let output = try await service.listApplications()
         let rows = output.data.applications.sorted { $0.processIdentifier < $1.processIdentifier }
         #expect(rows.map(\.processIdentifier) == [PIDRecoveryFixture.pid, PIDRecoveryFixture.ordinaryPID])
         #expect(rows.map(\.name) == ["Reexec", "Ordinary"])
         #expect(rows.allSatisfy { $0.processStartIdentity == 10 && $0.windowCount == 0 })
-        #expect(output.summary.status == .success)
+        #expect(output.summary.status == .partial)
+        #expect(output.summary.counts["omittedApplications"] == 1)
+        #expect(output.metadata.warnings.contains { $0.contains("lacked a verified process identifier") })
     }
 
-    @Test(arguments: ["PID:64001", "com.example.reexec", "Reexec"])
+    @Test(arguments: ["PID:64001", "com.example.reexec"])
     func `selectors carry recovered PID`(identifier: String) async throws {
         let application = try await Self.service().getApplicationWithWindowCount(identifier: identifier)
         #expect(application.processIdentifier == PIDRecoveryFixture.pid)
         #expect(application.processStartIdentity == 10)
         #expect(application.name == "Reexec")
+    }
+
+    @Test
+    func `unresolved name contender prevents selecting a recovered process`() async throws {
+        do {
+            let application = try await Self.service().findApplication(identifier: "Reexec")
+            Issue.record("Ambiguous name unexpectedly selected PID \(application.processIdentifier)")
+        } catch let error as PeekabooError {
+            guard case let .ambiguousAppIdentifier(_, suggestions) = error else { throw error }
+            #expect(suggestions.count == 2)
+            #expect(suggestions.contains { $0.contains("PID:64001") })
+            #expect(suggestions.contains { $0.contains("process identity unavailable") })
+        }
     }
 
     @Test
