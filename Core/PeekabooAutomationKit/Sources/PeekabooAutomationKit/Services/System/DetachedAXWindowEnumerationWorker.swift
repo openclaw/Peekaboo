@@ -174,8 +174,34 @@ enum DetachedAXWindowEnumerationWorker {
         if windows.count > limit {
             incomplete = true
         }
+        let lookup = AXWindowLookup(
+            application: application,
+            processIdentifier: request.processIdentifier,
+            messagingTimeout: { self.remainingMessagingTimeout(until: deadline) },
+            readAttribute: { element, name in
+                let read = self.rawAttributeRead(name, of: element, deadline: deadline)
+                incomplete = incomplete || read.isIncomplete
+                return read.error == .success ? read.value : nil
+            })
+        let additionalWindows = lookup.additionalWindows(
+            excluding: Set(descriptors.compactMap { $0.windowID.flatMap(CGWindowID.init(exactly:)) }))
+        for window in additionalWindows.prefix(max(0, limit - descriptors.count)) {
+            guard let read = self.readDescriptor(
+                window,
+                expectedProcessIdentifier: request.processIdentifier,
+                deadline: deadline)
+            else {
+                incomplete = true
+                continue
+            }
+            descriptors.append(read.descriptor)
+            incomplete = incomplete || read.incomplete
+        }
+        incomplete = incomplete || windows.count + additionalWindows.count > limit
+        timedOut = timedOut || ContinuousClock.now >= deadline
         try self.validateIdentity(request)
-        // `reportedWindowCount` is the raw AXWindows count. This worker does not apply
+        // `reportedWindowCount` is the raw AXWindows count; focused/main-only rows can exceed it.
+        // This worker does not apply
         // renderability filtering: every successfully read row produces a descriptor, and any
         // deadline, read, owner, or maximum-count shortfall sets `incomplete` above.
         return DetachedAXWindowEnumerationResult(
@@ -205,11 +231,8 @@ enum DetachedAXWindowEnumerationWorker {
         guard AXUIElementGetPid(window, &ownerPID) == .success,
               self.isExpectedOwner(
                   observedProcessIdentifier: ownerPID,
-                  expectedProcessIdentifier: expectedProcessIdentifier)
-        else {
-            return nil
-        }
-        guard let values = self.descriptorValues(window, deadline: deadline) else { return nil }
+                  expectedProcessIdentifier: expectedProcessIdentifier),
+              let values = self.descriptorValues(window, deadline: deadline) else { return nil }
 
         let title = AXDescriptorReader.stringValue(values[0]) ?? ""
         let position = AXDescriptorReader.cgPointValue(values[1])

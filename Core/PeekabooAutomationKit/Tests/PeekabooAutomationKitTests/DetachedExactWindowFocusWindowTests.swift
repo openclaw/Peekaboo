@@ -9,6 +9,50 @@ struct DetachedExactWindowFocusWindowTests {
     private let second = AXUIElementCreateApplication(-102)
     private let third = AXUIElementCreateApplication(-103)
 
+    @Test
+    func `empty readable inventory permits a verified focused or main fallback`() throws {
+        let result = DetachedExactWindowFocusReader.targetWindow(
+            expectedWindowID: 42,
+            inventory: .init(error: .success, value: []),
+            copyWindowID: { _, _ in Issue.record("There are no enumerated windows"); return .failure },
+            fallbackWindow: { self.second })
+
+        #expect(try CFEqual(result.get(), self.second))
+    }
+
+    @Test
+    func `enumerated exact focus root does not invoke fallback`() throws {
+        let result = DetachedExactWindowFocusReader.targetWindow(
+            expectedWindowID: 42,
+            inventory: .init(error: .success, value: [self.first]),
+            copyWindowID: { _, id in id = 42; return .success },
+            fallbackWindow: {
+                Issue.record("An enumerated exact match must remain primary")
+                return self.second
+            })
+
+        #expect(try CFEqual(result.get(), self.first))
+    }
+
+    @Test
+    func `unreadable inventory does not weaken focus-root failure through fallback`() {
+        let result = DetachedExactWindowFocusReader.targetWindow(
+            expectedWindowID: 42,
+            inventory: .init(error: .success, value: [self.first]),
+            copyWindowID: { _, _ in .cannotComplete },
+            fallbackWindow: {
+                Issue.record("An unreadable inventory must retain its failure")
+                return self.second
+            })
+
+        #expect(throws: FocusedElementReceiptError.windowObservationFailed(
+            stage: .inventoryWindowID,
+            errorCode: AXError.cannotComplete.rawValue))
+        {
+            try result.get()
+        }
+    }
+
     @Test(arguments: [
         AXError.cannotComplete,
         .invalidUIElement,

@@ -125,21 +125,17 @@ public final class WindowIdentityService {
     {
         guard let pid = RunningApplicationProcessIdentity.resolve(app) else { return nil }
         let appElement = Element(AXUIElementCreateApplication(pid))
-        guard let windows = try? appElement.withMessagingTimeout(
+        let windows = (try? appElement.withMessagingTimeout(
             messagingTimeout,
-            operation: { $0.windows() })
-        else {
+            operation: { $0.windows() })) ?? []
+        let lookup = AXWindowLookup(
+            application: appElement.underlyingElement,
+            processIdentifier: pid,
+            messagingTimeout: { messagingTimeout })
+        guard let window = lookup.findWindow(byID: windowID, among: windows.map(\.underlyingElement)) else {
             return nil
         }
-        for window in windows {
-            let matches = try? window.withMessagingTimeout(messagingTimeout) { childWindow in
-                self.resolver.windowID(from: childWindow) == windowID
-            }
-            if matches == true {
-                return AXWindowHandle(app: AXApp(app), element: window)
-            }
-        }
-        return nil
+        return AXWindowHandle(app: AXApp(app), element: Element(window))
     }
 
     func findWindow(byID windowID: CGWindowID) -> AXWindowHandle? {
@@ -147,8 +143,7 @@ public final class WindowIdentityService {
     }
 
     func focusedWindowID(for app: NSRunningApplication, timeout: TimeInterval) -> CGWindowID? {
-        guard timeout > 0 else { return nil }
-        guard let pid = RunningApplicationProcessIdentity.resolve(app) else { return nil }
+        guard timeout > 0, let pid = RunningApplicationProcessIdentity.resolve(app) else { return nil }
         let appElement = Element(AXUIElementCreateApplication(pid))
         guard let focusedWindow = try? appElement.withMessagingTimeout(
             Float(timeout),
