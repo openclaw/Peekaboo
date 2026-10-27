@@ -201,9 +201,8 @@ enum DetachedAXWindowEnumerationWorker {
         timedOut = timedOut || ContinuousClock.now >= deadline
         try self.validateIdentity(request)
         // `reportedWindowCount` is the raw AXWindows count; focused/main-only rows can exceed it.
-        // This worker does not apply
-        // renderability filtering: every successfully read row produces a descriptor, and any
-        // deadline, read, owner, or maximum-count shortfall sets `incomplete` above.
+        // This worker does not apply renderability filtering: every successfully read row produces a
+        // descriptor, and any deadline, read, owner, or maximum-count shortfall sets `incomplete` above.
         return DetachedAXWindowEnumerationResult(
             descriptors: descriptors,
             focusedWindowID: focusedWindowID,
