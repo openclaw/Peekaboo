@@ -91,25 +91,9 @@ enum BackgroundWindowChromeReader {
         func read(retained: BackgroundWindowChromeAdmission?) throws -> BackgroundWindowChromeAdmission {
             try self.validateWindowServer()
             let application = AXUIElementCreateApplication(self.target.identity.ownerProcessIdentifier)
-            let windows = try self.elements(kAXWindowsAttribute, of: application)
-            guard windows.count <= self.nodeLimit
-            else { throw Self.refusal("The native window count exceeds the bound.") }
-            var matches: [AXUIElement] = []
-            for window in windows {
-                if try self.windowID(window) == self.target.identity.windowID {
-                    matches.append(window)
-                }
-            }
-            guard matches.count == 1, let window = matches.first,
-                  retained.map({ CFEqual($0.window.element, window) }) ?? true
-            else { throw Self.refusal("There is no unique matching retained native window.") }
+            let window = try self.resolveWindow(application: application, retained: retained)
             try self.validateWindow(window)
-            let names: [String] = try self.call(window) {
-                guard let result = self.access.names(window) else {
-                    throw Self.refusal("Window attribute names could not be read.")
-                }
-                return result
-            }
+            let names = try self.attributeNames(of: window)
 
             var references: [AXUIElement] = []
             var controls: [CGRect] = []
@@ -260,6 +244,45 @@ enum BackgroundWindowChromeReader {
             else { throw Self.refusal("The native element process or window owner does not match.") }
         }
 
+        private func resolveWindow(
+            application: AXUIElement,
+            retained: BackgroundWindowChromeAdmission?) throws -> AXUIElement
+        {
+            let windows = try self.elements(kAXWindowsAttribute, of: application)
+            guard windows.count <= self.nodeLimit
+            else { throw Self.refusal("The native window count exceeds the bound.") }
+            var matches: [AXUIElement] = []
+            for window in windows where try self.windowID(window) == self.target.identity.windowID {
+                matches.append(window)
+            }
+            if matches.isEmpty,
+               let windowID = CGWindowID(exactly: self.target.identity.windowID),
+               let window = AXWindowLookup(
+                   application: application,
+                   processIdentifier: self.target.identity.ownerProcessIdentifier,
+                   messagingTimeout: {
+                       let remaining = self.now().duration(to: self.deadline).components
+                       let seconds = Double(remaining.seconds) + Double(remaining.attoseconds) / 1e18
+                       return seconds > 0 ? Float(min(0.05, seconds)) : nil
+                   },
+                   readAttribute: { element, name in
+                       guard let read = try? self.attribute(name, of: element), read.error == .success else {
+                           return nil
+                       }
+                       return read.value
+                   },
+                   windowID: { (try? self.windowID($0)).flatMap(CGWindowID.init(exactly:)) },
+                   ownerPID: { element in try? self.call(element) { self.access.processID(element) } })
+                   .findWindow(byID: windowID)
+            {
+                matches.append(window)
+            }
+            guard matches.count == 1, let window = matches.first,
+                  retained.map({ CFEqual($0.window.element, window) }) ?? true
+            else { throw Self.refusal("There is no unique matching retained native window.") }
+            return window
+        }
+
         private func windowID(_ element: AXUIElement) throws -> Int {
             try self.call(element) {
                 guard let result = self.access.windowID(element) else {
@@ -291,6 +314,15 @@ enum BackgroundWindowChromeReader {
                     throw Self.refusal("The native child count could not be read.")
                 }
                 return count
+            }
+        }
+
+        private func attributeNames(of element: AXUIElement) throws -> [String] {
+            try self.call(element) {
+                guard let result = self.access.names(element) else {
+                    throw Self.refusal("Window attribute names could not be read.")
+                }
+                return result
             }
         }
 
@@ -365,7 +397,8 @@ enum BackgroundWindowChromeReader {
         private static func refusal(_ causeDescription: String) -> DesktopActionFailure {
             .preDispatchRefusal(
                 reason: .targetUnavailable,
-                message: "Cannot prove a blank, unchanged standard-window chrome point for background keyboard preparation.",
+                message: "Cannot prove a blank, unchanged standard-window chrome point " +
+                    "for background keyboard preparation.",
                 hint: "Observe the exact window again; no foreground fallback or guessed click is permitted.",
                 causeDescription: causeDescription)
         }

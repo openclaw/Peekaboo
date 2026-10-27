@@ -88,24 +88,20 @@ enum DetachedExactWindowFocusReader {
         defer { AXUIElementSetMessagingTimeout(focusedElement, 0) }
         var focusedProcessIdentifier: pid_t = 0
         guard AXUIElementGetPid(focusedElement, &focusedProcessIdentifier) == .success,
-              focusedProcessIdentifier == processIdentifier
-        else {
-            return nil
-        }
-
-        guard let metadata = self.readMetadata(
-            copyAttributes: { names in
-                self.readBeforeDeadline(
-                    deadline,
-                    applyTimeout: { AXUIElementSetMessagingTimeout(focusedElement, $0) == .success },
-                    read: {
-                        var values: CFArray?
-                        let error = AXUIElementCopyMultipleAttributeValues(
-                            focusedElement, names as CFArray, [], &values)
-                        return (error, values as? [Any])
-                    })
-            },
-            copyAttribute: { self.attributeRead($0, of: focusedElement, deadline: deadline) })
+              focusedProcessIdentifier == processIdentifier,
+              let metadata = self.readMetadata(
+                  copyAttributes: { names in
+                      self.readBeforeDeadline(
+                          deadline,
+                          applyTimeout: { AXUIElementSetMessagingTimeout(focusedElement, $0) == .success },
+                          read: {
+                              var values: CFArray?
+                              let error = AXUIElementCopyMultipleAttributeValues(
+                                  focusedElement, names as CFArray, [], &values)
+                              return (error, values as? [Any])
+                          })
+                  },
+                  copyAttribute: { self.attributeRead($0, of: focusedElement, deadline: deadline) })
         else { return nil }
         let snapshot = self.snapshot(
             element: focusedElement,
@@ -314,7 +310,9 @@ enum DetachedExactWindowFocusReader {
         phase: KeyboardFocusValidationPhase) -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
     {
         guard expected.processIdentifier > 0 else { return .failure(.missingProcessIdentifier) }
-        guard expected.windowID > 0 else { return .failure(.missingWindowIdentifier) }
+        guard expected.windowID > 0, let requestedID = CGWindowID(exactly: expected.windowID) else {
+            return .failure(.missingWindowIdentifier)
+        }
         guard !expected.frame.isEmpty else { return .failure(.missingElementFrame) }
 
         let application = AXUIElementCreateApplication(expected.processIdentifier)
@@ -326,6 +324,13 @@ enum DetachedExactWindowFocusReader {
             copyWindowID: { element, windowID in
                 AXUIElementSetMessagingTimeout(element, self.messagingTimeout)
                 return AXWindowIDResolver.copyWindowID(element, into: &windowID)
+            },
+            fallbackWindow: {
+                AXWindowLookup(
+                    application: application,
+                    processIdentifier: expected.processIdentifier,
+                    messagingTimeout: { self.messagingTimeout })
+                    .findWindow(byID: requestedID)
             })
         {
         case let .success(value): window = value
@@ -424,7 +429,8 @@ enum DetachedExactWindowFocusReader {
     static func targetWindow(
         expectedWindowID: Int,
         inventory: AXDescriptorReader.SingleAttributeRead?,
-        copyWindowID: (AXUIElement, inout CGWindowID) -> AXError)
+        copyWindowID: (AXUIElement, inout CGWindowID) -> AXError,
+        fallbackWindow: () -> AXUIElement? = { nil })
         -> Result<AXUIElement, FocusedElementReceiptError>
     {
         guard let inventory else { return .failure(.windowObservationFailed(stage: .inventory, errorCode: nil)) }
@@ -451,6 +457,9 @@ enum DetachedExactWindowFocusReader {
             }
         }
         // An unreadable entry is not evidence that the requested window disappeared.
+        if firstUnreadable == nil, let window = fallbackWindow() {
+            return .success(window)
+        }
         return .failure(firstUnreadable ?? .windowNotFound)
     }
 

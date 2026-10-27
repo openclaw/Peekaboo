@@ -495,6 +495,16 @@ enum DetachedAXObservationWorker {
             {
                 return windows[exactIndex]
             }
+            // Duplicate exact entries remain ambiguous; only a genuine inventory miss may fall back.
+            if !candidates.contains(where: { $0.windowID == requestedID }),
+               let window = AXWindowLookup(
+                   application: application,
+                   processIdentifier: request.processIdentifier,
+                   messagingTimeout: { self.remainingMessagingTimeout(until: deadline) })
+                   .findWindow(byID: cgWindowID)
+            {
+                return window
+            }
             throw PeekabooError.windowNotFound(
                 criteria: "accessible window id \(requestedID) owned by PID \(request.processIdentifier)")
         }
@@ -826,8 +836,8 @@ extension DetachedAXObservationWorker {
         node: Int,
         deadline: ContinuousClock.Instant) -> Bool?
     {
-        guard recoveredType == .textField || ElementClassifier.supportsValueMetadata(for: role) else { return nil }
-        guard let timeout = self.remainingMessagingTimeout(until: deadline) else { return nil }
+        guard recoveredType == .textField || ElementClassifier.supportsValueMetadata(for: role),
+              let timeout = self.remainingMessagingTimeout(until: deadline) else { return nil }
         AXUIElementSetMessagingTimeout(element, timeout)
         var isSettable = DarwinBoolean(false)
         let startedAt = AXObservationReadDiagnostics.start()
