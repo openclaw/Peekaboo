@@ -237,12 +237,13 @@ struct ElementDetectionWindowResolver {
             let timeout = Float(min(max(context?.accessibilityTimeoutSeconds ?? 1, 0.05), 1))
             appElement.setMessagingTimeout(timeout)
             defer { appElement.setMessagingTimeout(0) }
-            let matchingWindow = appElement.windowsWithTimeout(timeout: timeout)?.first { window in
-                self.windowIdentityService.getWindowID(
-                    from: window,
-                    messagingTimeout: min(timeout, 0.25)) == cgWindowID
-            }
-            if let window = matchingWindow {
+            let windows = appElement.windowsWithTimeout(timeout: timeout) ?? []
+            let lookup = AXWindowLookup(
+                application: appElement.underlyingElement,
+                processIdentifier: processIdentifier,
+                messagingTimeout: { min(timeout, 0.25) })
+            if let nativeWindow = lookup.findWindow(byID: cgWindowID, among: windows.map(\.underlyingElement)) {
+                let window = Element(nativeWindow)
                 window.setMessagingTimeout(min(timeout, 0.25))
                 defer { window.setMessagingTimeout(0) }
                 let title = window.title() ?? "Untitled"
@@ -368,15 +369,13 @@ struct ElementDetectionWindowResolver {
             .sorted { $0.bounds.size.area > $1.bounds.size.area }
         self.logger.notice("CG fallback renderable windows: \(renderable.count) / \(cgWindows.count)")
 
-        if let title {
-            if let matching = orderedWindows.first(where: {
-                $0.title?.localizedCaseInsensitiveContains(title) == true
-            }), let element = self.windowIdentityService.findWindow(byID: matching.windowID)?.element {
-                let fallbackTarget = app.localizedName ?? "app"
-                let fallbackTitle = matching.title ?? "Untitled"
-                self.logger.info("Using CG fallback window '\(fallbackTitle)' for \(fallbackTarget)")
-                return element
-            }
+        if let title, let matching = orderedWindows.first(where: {
+            $0.title?.localizedCaseInsensitiveContains(title) == true
+        }), let element = self.windowIdentityService.findWindow(byID: matching.windowID)?.element {
+            let fallbackTarget = app.localizedName ?? "app"
+            let fallbackTitle = matching.title ?? "Untitled"
+            self.logger.info("Using CG fallback window '\(fallbackTitle)' for \(fallbackTarget)")
+            return element
         }
 
         for info in orderedWindows {
@@ -415,9 +414,9 @@ struct ElementDetectionWindowResolver {
 
             let targetWindowInfo: ServiceWindowInfo? = if let title,
                                                           let match = ordered
-                                                              .first(where: {
-                                                                  $0.title.localizedCaseInsensitiveContains(title)
-                                                              })
+                                                            .first(where: {
+                                                                $0.title.localizedCaseInsensitiveContains(title)
+                                                            })
             {
                 match
             } else {

@@ -5,6 +5,50 @@ import Testing
 @testable import PeekabooAutomationKit
 
 struct BackgroundWindowChromeReaderTests {
+    @Test(arguments: [kAXFocusedWindowAttribute, kAXMainWindowAttribute])
+    func `empty inventory resolves verified focused or main window chrome`(attribute: String) throws {
+        let fixture = Fixture()
+        var access = fixture.access()
+        let read = access.attribute
+        access.attribute = { element, name in
+            if name == kAXWindowsAttribute {
+                return (.success, [] as CFArray)
+            }
+            if name == attribute {
+                return (.success, fixture.nodes[0])
+            }
+            return read(element, name)
+        }
+
+        let admitted = try BackgroundWindowChromeReader.read(target: fixture.target(), access: access)
+        #expect(admitted.window == RetainedFocusElement(element: fixture.nodes[0]))
+    }
+
+    @Test(arguments: [false, true])
+    func `focused chrome fallback refuses a different window or owner`(wrongOwner: Bool) throws {
+        let fixture = Fixture()
+        var access = fixture.access()
+        let read = access.attribute
+        access.attribute = { element, name in
+            if name == kAXWindowsAttribute {
+                return (.success, [] as CFArray)
+            }
+            if name == kAXFocusedWindowAttribute {
+                return (.success, fixture.nodes[0])
+            }
+            return read(element, name)
+        }
+        if wrongOwner {
+            access.processID = { _ in 99 }
+        } else {
+            access.windowID = { _ in 99 }
+        }
+
+        #expect(throws: DesktopActionFailure.self) {
+            try BackgroundWindowChromeReader.read(target: fixture.target(), access: access)
+        }
+    }
+
     private enum AuxiliaryScenario: CaseIterable {
         case contained, leafEscapes, intermediateEscapes, wrongPID, missingWindowID, zeroWindowID
         case sheet, dialogWindow, malformedFrame, incompleteChildren, noncanonicalButton, foreignControl
@@ -27,7 +71,8 @@ struct BackgroundWindowChromeReaderTests {
             #expect(after.window == before.window)
             #expect(throws: DesktopActionFailure.self) {
                 try BackgroundWindowChromeReader.read(
-                    target: fixture.target(), retained: after,
+                    target: fixture.target(),
+                    retained: after,
                     access: self.auxiliaryAccess(fixture, scenario: .leafEscapes))
             }
         } else {
@@ -286,13 +331,8 @@ struct BackgroundWindowChromeReaderTests {
             guard isIntermediate || isAuxiliary || CFEqual(element, aliasContainer) else {
                 return attribute(element, name)
             }
-            var frame = CGRect(x: 55, y: 9, width: 14, height: 14)
-            if (scenario == .leafEscapes && isAuxiliary) || (scenario == .intermediateEscapes && isIntermediate) {
-                frame.size.width = 40
-            }
-            if scenario == .malformedFrame, isAuxiliary {
-                frame.size.width = 0
-            }
+            var frame = self.auxiliaryFrame(
+                scenario: scenario, isAuxiliary: isAuxiliary, isIntermediate: isIntermediate)
             if CFEqual(element, aliasContainer) {
                 frame = fixture.frames[5]
             }
@@ -312,24 +352,12 @@ struct BackgroundWindowChromeReaderTests {
             }
         }
         access.childCount = { element in
-            if CFEqual(element, zoom) {
-                return scenario == .noncanonicalButton ? 0 : 1
-            }
-            if CFEqual(element, minimize), scenario == .secondControlOrigin {
-                return 1
-            }
-            if CFEqual(element, intermediate) || CFEqual(element, aliasContainer) {
-                return 1
-            }
-            if CFEqual(element, auxiliary) {
-                return scenario == .incompleteChildren ? nil : 0
-            }
-            if CFEqual(element, body),
-               [.noncanonicalButton, .ordinaryAliasFirst, .restrictedAliasFirst].contains(scenario)
-            {
-                return 1
-            }
-            return childCount(element)
+            self.auxiliaryChildCount(
+                element,
+                fixture: fixture,
+                scenario: scenario,
+                nodes: (intermediate, auxiliary, aliasContainer),
+                fallback: childCount)
         }
         access.children = { element, count in
             if CFEqual(element, zoom) || (CFEqual(element, minimize) && scenario == .secondControlOrigin) {
@@ -367,6 +395,48 @@ struct BackgroundWindowChromeReaderTests {
             return processID(element)
         }
         return access
+    }
+
+    private func auxiliaryChildCount(
+        _ element: AXUIElement,
+        fixture: Fixture,
+        scenario: AuxiliaryScenario,
+        nodes: (intermediate: AXUIElement, auxiliary: AXUIElement, aliasContainer: AXUIElement),
+        fallback: (AXUIElement) -> Int?) -> Int?
+    {
+        if CFEqual(element, fixture.nodes[3]) {
+            return scenario == .noncanonicalButton ? 0 : 1
+        }
+        if CFEqual(element, fixture.nodes[2]), scenario == .secondControlOrigin {
+            return 1
+        }
+        if CFEqual(element, nodes.intermediate) || CFEqual(element, nodes.aliasContainer) {
+            return 1
+        }
+        if CFEqual(element, nodes.auxiliary) {
+            return scenario == .incompleteChildren ? nil : 0
+        }
+        if CFEqual(element, fixture.nodes[5]),
+           [.noncanonicalButton, .ordinaryAliasFirst, .restrictedAliasFirst].contains(scenario)
+        {
+            return 1
+        }
+        return fallback(element)
+    }
+
+    private func auxiliaryFrame(
+        scenario: AuxiliaryScenario,
+        isAuxiliary: Bool,
+        isIntermediate: Bool) -> CGRect
+    {
+        var frame = CGRect(x: 55, y: 9, width: 14, height: 14)
+        if (scenario == .leafEscapes && isAuxiliary) || (scenario == .intermediateEscapes && isIntermediate) {
+            frame.size.width = 40
+        }
+        if scenario == .malformedFrame, isAuxiliary {
+            frame.size.width = 0
+        }
+        return frame
     }
 
     private struct Fixture {
@@ -423,8 +493,10 @@ struct BackgroundWindowChromeReaderTests {
                 names: { _ in [kAXTitleUIElementAttribute, "AXProxy", "AXFullScreenButton", "AXToolbarButton"] },
                 childCount: { CFEqual($0, self.nodes[0]) ? 5 : 0 },
                 children: { _, _ in Array(self.nodes.dropFirst()) },
-                windowID: { _ in 100 }, processID: { _ in 8100 },
-                hit: { _, _ in self.nodes[0] }, setTimeout: { _, _ in .success },
+                windowID: { _ in 100 },
+                processID: { _ in 8100 },
+                hit: { _, _ in self.nodes[0] },
+                setTimeout: { _, _ in .success },
                 windowIsCurrent: { _ in true })
         }
     }
