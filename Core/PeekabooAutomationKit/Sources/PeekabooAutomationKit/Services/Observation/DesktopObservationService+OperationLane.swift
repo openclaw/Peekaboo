@@ -14,6 +14,12 @@ struct DesktopObservationLanePlan: Sendable {
         expectedWindowIdentity: nil)
 }
 
+enum DesktopObservationLaneValidationPhase: String, Sendable {
+    case beforeOperation = "before the operation"
+    case afterOperation = "after the operation"
+    case afterCapture = "after capture"
+}
+
 extension DesktopObservationService {
     func withDesktopOperationLane<T: Sendable>(
         for request: DesktopObservationRequest,
@@ -23,9 +29,9 @@ extension DesktopObservationService {
         case .caller:
             let plan = self.operationLanePlan(for: request)
             return try await self.operationLaneCoordinator.run(scope: plan.scope, access: plan.access) {
-                try self.validateCurrentLaneIdentity(plan)
+                try self.validateCurrentLaneIdentity(plan, phase: .beforeOperation)
                 let result = try await operation(plan)
-                try self.validateCurrentLaneIdentity(plan)
+                try self.validateCurrentLaneIdentity(plan, phase: .afterOperation)
                 return result
             }
         case .service:
@@ -106,15 +112,23 @@ extension DesktopObservationService {
         }
     }
 
-    func validateCurrentLaneIdentity(_ plan: DesktopObservationLanePlan?) throws {
+    func validateCurrentLaneIdentity(
+        _ plan: DesktopObservationLanePlan?,
+        phase: DesktopObservationLaneValidationPhase) throws
+    {
         guard let plan else { return }
         if let expectedWindowIdentity = plan.expectedWindowIdentity {
             guard let windowID = CGWindowID(exactly: expectedWindowIdentity.windowID),
-                  let currentWindowIdentity = self.windowMutationIdentityProvider(windowID),
-                  Self.sameWindowIdentity(currentWindowIdentity, expectedWindowIdentity)
+                  let currentWindowIdentity = self.windowMutationIdentityProvider(windowID)
             else {
                 throw DesktopObservationError.targetChanged(
-                    "the exact window owner, process generation, or bounds changed during observation")
+                    "the exact window identity could not be re-read \(phase.rawValue) " +
+                        "(the window or its owner process was unavailable, or its bounds moved while being read)")
+            }
+            guard Self.sameWindowIdentity(currentWindowIdentity, expectedWindowIdentity) else {
+                let changes = Self.windowIdentityChanges(currentWindowIdentity, expectedWindowIdentity)
+                throw DesktopObservationError.targetChanged(
+                    "the exact window \(changes) changed \(phase.rawValue)")
             }
             return
         }
@@ -123,7 +137,7 @@ extension DesktopObservationService {
            expectedProcessIdentity.processStartIdentity
         {
             throw DesktopObservationError.targetChanged(
-                "the target process generation changed during observation")
+                "the target process generation changed \(phase.rawValue)")
         }
     }
 
@@ -153,5 +167,26 @@ extension DesktopObservationService {
             lhs.ownerProcessIdentifier == rhs.ownerProcessIdentifier &&
             lhs.ownerProcessStartIdentity == rhs.ownerProcessStartIdentity &&
             lhs.capturedBounds == rhs.capturedBounds
+    }
+
+    private static func windowIdentityChanges(
+        _ current: WindowMutationIdentity,
+        _ expected: WindowMutationIdentity) -> String
+    {
+        var changes: [String] = []
+        if current.windowID != expected.windowID {
+            changes.append("window ID")
+        }
+        if current.ownerProcessIdentifier != expected.ownerProcessIdentifier {
+            changes.append("owner PID")
+        }
+        if current.ownerProcessStartIdentity != expected.ownerProcessStartIdentity {
+            changes.append("owner process generation")
+        }
+        if current.capturedBounds != expected.capturedBounds {
+            changes.append("bounds")
+        }
+        guard let last = changes.popLast() else { return "" }
+        return changes.isEmpty ? last : "\(changes.joined(separator: ", ")) and \(last)"
     }
 }

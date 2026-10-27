@@ -651,7 +651,7 @@ public final class DesktopObservationService: DesktopObservationActionResultProv
                     named: captureSpanName,
                     metadata: rawCapture.metadata.diagnostics?.observationSpanMetadata ?? [:])
                 try Self.validateCaptureReceipt(rawCapture, for: target)
-                try self.validateCurrentLaneIdentity(lanePlan)
+                try self.validateCurrentLaneIdentity(lanePlan, phase: .afterCapture)
             } catch {
                 throw Self.failurePreservingResolution(
                     error,

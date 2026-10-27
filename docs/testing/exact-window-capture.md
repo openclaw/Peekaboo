@@ -14,6 +14,12 @@ planner, so partly visible or straddling windows do not inherit the primary disp
 display contains their entire bounds. This check supplements the existing owner-generation, window-identity,
 and bounds receipts; it does not replace them.
 
+Exact-window observation lane failures distinguish an identity that could not be re-read (the window or owner
+process was gone, or the bounds moved between the resolver's two reads) from a changed window ID, owner PID, owner
+process generation, or bounds. Messages name only the affected components, without their values, and say whether the
+check failed before the operation, after capture, or after the operation. The `targetChanged` error case and error
+code remain unchanged, as do the identity checks and recovery policy.
+
 ## Verified local reproduction (2026-09-05)
 
 On macOS 27.0 (26A5425a), with a 2× display and OpenClaw Foundation Developer ID signatures, the installed
