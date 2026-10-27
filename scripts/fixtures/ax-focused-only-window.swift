@@ -25,7 +25,10 @@ final class FocusedOnlyApplication: NSApplication {
 }
 
 MainActor.assumeIsolated {
-    let application = FocusedOnlyApplication()
+    // AppKit traps if a second NSApplication is created; let +sharedApplication instantiate the subclass.
+    guard let application = FocusedOnlyApplication.shared as? FocusedOnlyApplication else {
+        fatalError("NSApp was created before the fixture application")
+    }
     application.setActivationPolicy(.regular)
     let window = NSWindow(
         contentRect: NSRect(x: 200, y: 200, width: 480, height: 220),
@@ -60,5 +63,6 @@ MainActor.assumeIsolated {
     window.makeKeyAndOrderFront(nil)
     application.activate()
     print("pid=\(ProcessInfo.processInfo.processIdentifier) window_id=\(window.windowNumber)")
+    fflush(stdout)
     application.run()
 }
