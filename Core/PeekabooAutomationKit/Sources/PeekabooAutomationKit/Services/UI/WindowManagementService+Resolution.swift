@@ -115,10 +115,10 @@ extension WindowManagementService {
                         processIdentifiers: [ownerPID],
                         timeout: 1)
                 }).value,
-                   snapshot.windowID == id,
-                   snapshot.ownerProcessIdentifier == ownerPID,
-                   snapshot.ownerProcessStartIdentity == originalIdentity.ownerProcessStartIdentity,
-                   SystemIdentityResolver.processStartIdentity(ownerPID) == snapshot.ownerProcessStartIdentity
+                    snapshot.windowID == id,
+                    snapshot.ownerProcessIdentifier == ownerPID,
+                    snapshot.ownerProcessStartIdentity == originalIdentity.ownerProcessStartIdentity,
+                    SystemIdentityResolver.processStartIdentity(ownerPID) == snapshot.ownerProcessStartIdentity
                 {
                     return [windowInfo.withExactAXState(
                         title: snapshot.title,
@@ -138,9 +138,9 @@ extension WindowManagementService {
                 processIdentifiers: processIdentifiers,
                 timeout: 2)
         }).value,
-           snapshot.windowID == id,
-           SystemIdentityResolver.processStartIdentity(snapshot.ownerProcessIdentifier) ==
-           snapshot.ownerProcessStartIdentity
+            snapshot.windowID == id,
+            SystemIdentityResolver.processStartIdentity(snapshot.ownerProcessIdentifier) ==
+            snapshot.ownerProcessStartIdentity
         {
             let identity = WindowMutationIdentity(
                 windowID: id,
