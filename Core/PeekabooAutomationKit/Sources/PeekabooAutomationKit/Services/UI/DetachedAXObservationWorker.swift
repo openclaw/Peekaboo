@@ -501,7 +501,7 @@ enum DetachedAXObservationWorker {
                    application: application,
                    processIdentifier: request.processIdentifier,
                    messagingTimeout: { self.remainingMessagingTimeout(until: deadline) })
-                .findWindow(byID: cgWindowID)
+                   .findWindow(byID: cgWindowID)
             {
                 return window
             }

@@ -273,7 +273,7 @@ enum BackgroundWindowChromeReader {
                    },
                    windowID: { (try? self.windowID($0)).flatMap(CGWindowID.init(exactly:)) },
                    ownerPID: { element in try? self.call(element) { self.access.processID(element) } })
-                .findWindow(byID: windowID)
+                   .findWindow(byID: windowID)
             {
                 matches.append(window)
             }

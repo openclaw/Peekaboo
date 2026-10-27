@@ -414,9 +414,9 @@ struct ElementDetectionWindowResolver {
 
             let targetWindowInfo: ServiceWindowInfo? = if let title,
                                                           let match = ordered
-                                                            .first(where: {
-                                                                $0.title.localizedCaseInsensitiveContains(title)
-                                                            })
+                                                              .first(where: {
+                                                                  $0.title.localizedCaseInsensitiveContains(title)
+                                                              })
             {
                 match
             } else {
