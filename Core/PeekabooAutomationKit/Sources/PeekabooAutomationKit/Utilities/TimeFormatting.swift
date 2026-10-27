@@ -16,30 +16,23 @@ private func renderDuration(_ seconds: TimeInterval, minuteLabel: String) -> Str
     guard seconds.isFinite else {
         return "an unknown duration"
     }
+    // Promote only when the printed value reaches the next unit, so ordinary ties keep printf's rounding.
     if seconds < 0.001 {
-        let microseconds = (seconds * 1_000_000).rounded()
-        if microseconds >= 1000 {
-            return "1ms"
-        }
-        return String(format: "%.0fµs", microseconds)
+        let microseconds = String(format: "%.0f", seconds * 1_000_000)
+        return microseconds == "1000" ? "1ms" : "\(microseconds)µs"
     }
     if seconds < 1 {
-        let milliseconds = (seconds * 1000).rounded()
-        if milliseconds >= 1000 {
-            return "1.0s"
-        }
-        return String(format: "%.0fms", milliseconds)
+        let milliseconds = String(format: "%.0f", seconds * 1000)
+        return milliseconds == "1000" ? "1.0s" : "\(milliseconds)ms"
     }
     if seconds < 60 {
-        let roundedSeconds = (seconds * 10).rounded() / 10
-        if roundedSeconds >= 60 {
-            return "1\(minuteLabel) 0s"
-        }
-        return String(format: "%.1fs", roundedSeconds)
+        let tenths = String(format: "%.1f", seconds)
+        return tenths == "60.0" ? "1\(minuteLabel) 0s" : "\(tenths)s"
     }
 
     let minuteValue = seconds / 60
-    guard minuteValue <= Double(Int.max) else {
+    // Double(Int.max) rounds up to 2^63, which Int cannot hold.
+    guard minuteValue < Double(Int.max) else {
         return "an unknown duration"
     }
     let minutes = Int(minuteValue)

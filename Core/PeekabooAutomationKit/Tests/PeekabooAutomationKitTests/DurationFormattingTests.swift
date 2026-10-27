@@ -10,9 +10,12 @@ struct DurationFormattingTests {
         (60.0, "1m 0s"),
         (90.0, "1m 30s"),
         (5.1, "5.1s"),
+        (1.25, "1.2s"),
+        (2.75, "2.8s"),
         (1.0, "1.0s"),
         (0.9995, "1.0s"),
         (0.9994, "999ms"),
+        (0.0625, "62ms"),
         (0.001, "1ms"),
         (0.0009995, "1ms"),
         (0.0009994, "999µs"),
@@ -35,7 +38,13 @@ struct DurationFormattingTests {
         #expect(formatDetailedDuration(seconds) == expected)
     }
 
-    @Test(arguments: [Double.nan, Double.infinity, -Double.infinity, Double.greatestFiniteMagnitude])
+    @Test(arguments: [
+        Double.nan,
+        Double.infinity,
+        -Double.infinity,
+        Double.greatestFiniteMagnitude,
+        60 * Double(Int.max),
+    ])
     func `unrepresentable durations stay readable`(seconds: Double) {
         #expect(formatDuration(seconds) == "an unknown duration")
         #expect(formatDetailedDuration(seconds) == "an unknown duration")
