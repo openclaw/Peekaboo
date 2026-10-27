@@ -29,7 +29,7 @@ extension ApplicationService {
     public func applicationMutationInventory() async throws
         -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo>
     {
-        let processIdentifiersProvider = self.runningApplicationProcessIdentifiersProvider
+        let seedProvider = self.applicationInventorySeedProvider
         let identityProvider = self.mutationIdentityObservationProvider
         let eligibilityProvider = self.mutationEligibilityProvider
         let candidateProvider = self.applicationMutationCandidateProvider
@@ -38,7 +38,7 @@ extension ApplicationService {
                 seconds: self.remainingInventoryTime(until: deadline))
             {
                 Self.readMutationInventory(
-                    processIdentifiersProvider: processIdentifiersProvider,
+                    seed: seedProvider(),
                     identityProvider: identityProvider,
                     eligibilityProvider: eligibilityProvider,
                     candidateProvider: candidateProvider)
@@ -47,17 +47,17 @@ extension ApplicationService {
     }
 
     private nonisolated static func readMutationInventory(
-        processIdentifiersProvider: RunningApplicationProcessIdentifiersProvider,
+        seed: RunningApplicationSelectorCensus.InventorySeed,
         identityProvider: MutationIdentityObservationProvider,
         eligibilityProvider: MutationEligibilityProvider,
         candidateProvider: ApplicationMutationCandidateProvider)
         -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo>
     {
-        let processIdentifiers = Array(Set(processIdentifiersProvider()))
+        let processIdentifiers = Array(Set(seed.processIdentifiers))
             .filter { $0 > 0 }
             .sorted()
         var applications: [ServiceApplicationInfo] = []
-        var warnings: [String] = []
+        var warnings = seed.omissionWarnings
         for processIdentifier in processIdentifiers {
             let observation = identityProvider(processIdentifier)
             guard let generation = observation.identity,
@@ -158,20 +158,21 @@ extension ApplicationService {
         let startTime = Date()
         self.logger.info("Listing all running applications")
 
-        let processIdentifiersProvider = self.runningApplicationProcessIdentifiersProvider
+        let seedProvider = self.applicationInventorySeedProvider
         let frontmostProvider = self.frontmostProcessIdentifierProvider
         let windowCatalogProvider = self.applicationWindowCatalogProvider
         let generationProvider = self.processStartIdentityProvider
         let identityObservationProvider = self.mutationIdentityObservationProvider
-        let candidates = try await self.applicationInventoryWorker.run(
+        let (candidates, unresolvedOmissionWarnings) = try await self.applicationInventoryWorker.run(
             seconds: self.remainingInventoryTime(until: overallDeadline))
         {
-            let processIdentifiers = Array(Set(processIdentifiersProvider()))
+            let seed = seedProvider()
+            let processIdentifiers = Array(Set(seed.processIdentifiers))
                 .filter { $0 > 0 }
             let frontmostProcessIdentifier = frontmostProvider()
             let windowCatalog = windowCatalogProvider()
             let windowsByProcessIdentifier = Dictionary(grouping: windowCatalog ?? [], by: \.ownerPID)
-            return processIdentifiers.compactMap { processIdentifier -> ApplicationInventoryCandidate? in
+            let candidates = processIdentifiers.compactMap { processIdentifier -> ApplicationInventoryCandidate? in
                 let processStartIdentity = generationProvider(processIdentifier)
                 // LaunchServices may retain reaped PIDs. Match mutation inventory's absence proof;
                 // a permission denial, unavailable read, or new generation must still stay partial.
@@ -191,6 +192,7 @@ extension ApplicationService {
                     fallbackName: rawWindows.lazy.compactMap(\.applicationName).first,
                     isActive: frontmostProcessIdentifier == processIdentifier)
             }
+            return (candidates, seed.omissionWarnings)
         }
         self.logger.debug("Found \(candidates.count) running processes")
 
@@ -231,7 +233,7 @@ extension ApplicationService {
         }
         try Task.checkCancellation()
 
-        let (observedApplications, omissionWarnings) = try await self.applicationInventoryWorker.run(
+        let (observedApplications, readOmissionWarnings) = try await self.applicationInventoryWorker.run(
             seconds: self.remainingInventoryTime(until: overallDeadline))
         {
             var applications: [ServiceApplicationInfo] = []
@@ -254,6 +256,7 @@ extension ApplicationService {
             return (applications, omissionWarnings)
         }
         var applications = observedApplications
+        let omissionWarnings = unresolvedOmissionWarnings + readOmissionWarnings
         applications.sort { app1, app2 -> Bool in
             app1.name == app2.name
                 ? app1.processIdentifier < app2.processIdentifier
@@ -496,47 +499,17 @@ extension ApplicationService {
     public func findApplication(identifier: String) async throws -> ServiceApplicationInfo {
         self.logger.info("Finding application with identifier: \(identifier, privacy: .public)")
 
-        let runningApps = self.runningApplicationsProvider().compactMap { app -> (NSRunningApplication, pid_t)? in
-            guard !app.isTerminated, let pid = self.applicationProcessIdentifierResolver(app) else { return nil }
-            return (app, pid)
+        let census = RunningApplicationSelectorCensus(
+            applications: self.runningApplicationsProvider(),
+            processIdentifierResolver: self.applicationProcessIdentifierResolver)
+        let selected = try census.resolve(identifier: identifier)
+        let application = self.createApplicationInfo(
+            from: selected.application,
+            processIdentifier: selected.processIdentifier)
+        let proof = application.processIdentity.map {
+            selected.resolution.proof(selectedProcessIdentity: $0)
         }
-        let candidates = runningApps.map { Self.identifierCandidate($0.0, processIdentifier: $0.1) }
-        if let resolution = try ApplicationIdentifierMatcher.resolution(for: identifier, in: candidates) {
-            guard !resolution.hasWinningTie else {
-                throw PeekabooError.ambiguousAppIdentifier(
-                    identifier,
-                    suggestions: resolution.ambiguitySuggestions)
-            }
-            let (app, pid) = runningApps[resolution.index]
-            let application = self.createApplicationInfo(from: app, processIdentifier: pid)
-            let proof = application.processIdentity.map {
-                resolution.proof(selectedProcessIdentity: $0)
-            }
-            return application.withSelectorResolutionProofs(proof.map { [$0] })
-        }
-
-        self.logger.error("Application not found: \(identifier, privacy: .public)")
-        throw PeekabooError.appNotFound(identifier)
-    }
-
-    nonisolated static func identifierCandidate(_ app: NSRunningApplication) -> ApplicationIdentifierMatcher
-    .Candidate? {
-        guard let pid = RunningApplicationProcessIdentity.resolve(app) else { return nil }
-        return self.identifierCandidate(app, processIdentifier: pid)
-    }
-
-    nonisolated static func identifierCandidate(
-        _ app: NSRunningApplication,
-        processIdentifier: pid_t) -> ApplicationIdentifierMatcher.Candidate
-    {
-        .init(
-            processIdentifier: processIdentifier,
-            bundleIdentifier: app.bundleIdentifier,
-            name: app.localizedName ?? app.bundleIdentifier ?? "Unknown",
-            bundlePath: app.bundleURL?.path,
-            executablePath: app.executableURL?.path,
-            allowsFuzzyMatching: app.activationPolicy != .prohibited,
-            isRegularApplication: app.activationPolicy == .regular)
+        return application.withSelectorResolutionProofs(proof.map { [$0] })
     }
 
     public func getFrontmostApplication() async throws -> ServiceApplicationInfo {

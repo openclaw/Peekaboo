@@ -8,38 +8,43 @@ import PeekabooFoundation
 }
 
 struct PeekabooApplicationResolver: ApplicationResolving {
+    private let runningApplicationsProvider: ApplicationService.RunningApplicationsProvider
+    private let processIdentifierResolver: ApplicationService.ApplicationProcessIdentifierResolver
+
+    init(
+        runningApplicationsProvider: @escaping ApplicationService.RunningApplicationsProvider = {
+            NSWorkspace.shared.runningApplications
+        },
+        processIdentifierResolver: @escaping ApplicationService.ApplicationProcessIdentifierResolver =
+            RunningApplicationProcessIdentity.resolve)
+    {
+        self.runningApplicationsProvider = runningApplicationsProvider
+        self.processIdentifierResolver = processIdentifierResolver
+    }
+
     @MainActor
     func frontmostApplication() async throws -> ServiceApplicationInfo {
         guard let frontmost = NSWorkspace.shared.frontmostApplication else {
             throw NotFoundError.application("frontmost")
         }
-        guard let pid = RunningApplicationProcessIdentity.resolve(frontmost) else {
+        guard let pid = self.processIdentifierResolver(frontmost), pid > 0 else {
             throw NotFoundError.application("frontmost")
         }
         return Self.applicationInfo(from: frontmost, processIdentifier: pid)
     }
 
     func findApplication(identifier: String) async throws -> ServiceApplicationInfo {
-        let runningApps = NSWorkspace.shared.runningApplications.compactMap { app -> (NSRunningApplication, pid_t)? in
-            guard !app.isTerminated, let pid = RunningApplicationProcessIdentity.resolve(app) else { return nil }
-            return (app, pid)
+        let census = RunningApplicationSelectorCensus(
+            applications: self.runningApplicationsProvider(),
+            processIdentifierResolver: self.processIdentifierResolver)
+        let selected = try census.resolve(identifier: identifier)
+        let application = Self.applicationInfo(
+            from: selected.application,
+            processIdentifier: selected.processIdentifier)
+        let proof = application.processIdentity.map {
+            selected.resolution.proof(selectedProcessIdentity: $0)
         }
-        let candidates = runningApps.map { ApplicationService.identifierCandidate($0.0, processIdentifier: $0.1) }
-        if let resolution = try ApplicationIdentifierMatcher.resolution(for: identifier, in: candidates) {
-            guard !resolution.hasWinningTie else {
-                throw PeekabooError.ambiguousAppIdentifier(
-                    identifier,
-                    suggestions: resolution.ambiguitySuggestions)
-            }
-            let (app, pid) = runningApps[resolution.index]
-            let application = Self.applicationInfo(from: app, processIdentifier: pid)
-            let proof = application.processIdentity.map {
-                resolution.proof(selectedProcessIdentity: $0)
-            }
-            return application.withSelectorResolutionProofs(proof.map { [$0] })
-        }
-
-        throw PeekabooError.appNotFound(identifier)
+        return application.withSelectorResolutionProofs(proof.map { [$0] })
     }
 
     private static func applicationInfo(

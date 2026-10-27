@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -182,16 +183,64 @@ struct ApplicationServiceLaunchSelectorProofTests {
         }
     }
 
+    @Test(arguments: [false, true])
+    @MainActor
+    func `unresolved ambient path contender remains a tie unless launch requests a new instance`(
+        createsNewInstance: Bool) async throws
+    {
+        let path = "/Applications/Fixture.app"
+        let service = SelectorCensusTestFixture.service(applications: [
+            SelectorCensusRunningApplication(),
+            SelectorCensusRunningApplication(processIdentifier: 42),
+        ])
+        let application = Self.application(path: path)
+        let launch = Self.launch(path: path, createsNewInstance: createsNewInstance)
+        if createsNewInstance {
+            let result = try await service.bindSelectorResolution(application, launch: launch)
+            #expect(result.selectorResolutionProofs?.first?.candidateCount == 1)
+        } else {
+            await #expect(throws: PeekabooError.self) {
+                _ = try await service.bindSelectorResolution(application, launch: launch)
+            }
+        }
+    }
+
+    @Test
+    @MainActor
+    func `unresolved ambient exact winner prevents a launched fuzzy candidate claiming its receipt`() async {
+        let path = "/Applications/Fixture.app"
+        let service = SelectorCensusTestFixture.service(applications: [
+            SelectorCensusRunningApplication(),
+            SelectorCensusRunningApplication(processIdentifier: 42, name: "Fixture Preview"),
+        ])
+        let launch = ApplicationService.PreparedApplicationLaunch(
+            applicationURL: URL(fileURLWithPath: path),
+            openURLs: [],
+            activates: false,
+            waitUntilReady: false,
+            waitForWindow: false,
+            createsNewInstance: false,
+            disablesRunningApplicationSubstitution: false,
+            requestedRunningApplicationIdentity: nil,
+            applicationIdentifier: "Fixture")
+        await #expect(throws: PeekabooError.self) {
+            _ = try await service.bindSelectorResolution(
+                Self.application(path: path, name: "Fixture Preview"),
+                launch: launch)
+        }
+    }
+
     private static func application(
         path: String,
         pid: Int32 = 42,
-        executablePath: String? = nil) -> ServiceApplicationInfo
+        executablePath: String? = nil,
+        name: String = "Fixture") -> ServiceApplicationInfo
     {
         ServiceApplicationInfo(
             processIdentifier: pid,
             processStartIdentity: 1001,
             bundleIdentifier: "org.example.launch-selector-fixture",
-            name: "Fixture",
+            name: name,
             bundlePath: path,
             executablePath: executablePath ?? "\(path)/Contents/MacOS/Fixture",
             isActive: true,
