@@ -113,30 +113,24 @@ private enum HostWindowCloseFixture {
 
 /// Diagnostic bytes never attest process ownership or authorize parent cleanup.
 private final class SelectorFixtureDiagnostics {
-    let bundleURL: URL
+    private(set) var bundleURL: URL?
     private let descriptor: Int32
+    private var pathFlags = 0
 
     init?(arguments: [String]) {
-        guard arguments.count == 4, UUID(uuidString: arguments[2]) != nil else { return nil }
-        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
-        let count = proc_pidpath(getpid(), &buffer, UInt32(buffer.count))
-        guard count > 0 else { return nil }
-        guard let path = String(
-            bytes: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, encoding: .utf8)
+        guard arguments.count == 4, UUID(uuidString: arguments[2]) != nil, arguments[3].hasPrefix("/")
         else { return nil }
-        let executable = URL(fileURLWithPath: path).resolvingSymlinksInPath()
-        let directory = executable.deletingLastPathComponent()
-        let contents = directory.deletingLastPathComponent()
-        let bundle = contents.deletingLastPathComponent()
-        let root = bundle.deletingLastPathComponent()
-        // Derive the private destination from the kernel executable path, independently of Bundle.main.
-        guard ["Launcher", "Payload"].contains(executable.lastPathComponent),
-              directory.lastPathComponent == "MacOS", contents.lastPathComponent == "Contents",
-              ["Unresolved.app", "Readable.app"].contains(bundle.lastPathComponent),
-              root.lastPathComponent.hasPrefix("pb-native-selector-"),
-              root.deletingLastPathComponent() == URL(fileURLWithPath: "/tmp").resolvingSymlinksInPath(),
-              URL(fileURLWithPath: arguments[3]) == root.appendingPathComponent("\(arguments[2]).json")
+        let output = URL(fileURLWithPath: arguments[3])
+        let requestedRoot = output.deletingLastPathComponent()
+        let temporaryParent = URL(fileURLWithPath: "/tmp").resolvingSymlinksInPath()
+        // Admit only the existing private diagnostic file. Kernel and Bundle observations below
+        // must not prevent recording entry, and this file never grants process ownership.
+        guard output.lastPathComponent == "\(arguments[2]).json",
+              requestedRoot.lastPathComponent.hasPrefix("pb-native-selector-"),
+              requestedRoot.deletingLastPathComponent().resolvingSymlinksInPath() == temporaryParent
         else { return nil }
+        // Resolve the temporary parent only; O_NOFOLLOW must still reject a symlink at the root itself.
+        let root = temporaryParent.appendingPathComponent(requestedRoot.lastPathComponent, isDirectory: true)
         let parent = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard parent >= 0 else { return nil }
         defer { close(parent) }
@@ -151,8 +145,41 @@ private final class SelectorFixtureDiagnostics {
             close(descriptor)
             return nil
         }
-        self.bundleURL = bundle
         self.descriptor = descriptor
+        self.record("child-admitted")
+
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        let count = proc_pidpath(getpid(), &buffer, UInt32(buffer.count))
+        guard count > 0 else {
+            self.record("kernel-observation", code: Int(errno))
+            return
+        }
+        self.pathFlags |= 1
+        guard let path = String(
+            bytes: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, encoding: .utf8)
+        else {
+            self.record("kernel-observation", code: Int(count))
+            return
+        }
+        self.pathFlags |= 2
+        let executable = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+        let directory = executable.deletingLastPathComponent()
+        let contents = directory.deletingLastPathComponent()
+        let bundle = contents.deletingLastPathComponent()
+        self.bundleURL = bundle
+        if ["Launcher", "Payload"].contains(executable.lastPathComponent),
+           directory.lastPathComponent == "MacOS", contents.lastPathComponent == "Contents",
+           ["Unresolved.app", "Readable.app"].contains(bundle.lastPathComponent)
+        {
+            self.pathFlags |= 4
+        }
+        if bundle.deletingLastPathComponent() == root {
+            self.pathFlags |= 8
+        }
+        if Bundle.main.bundleURL.resolvingSymlinksInPath() == bundle {
+            self.pathFlags |= 16
+        }
+        self.record("kernel-observation", code: Int(count))
     }
 
     deinit { close(self.descriptor) }
@@ -169,7 +196,8 @@ private final class SelectorFixtureDiagnostics {
             "RBSServiceErrorDomain",
         ]
         let boundedDomain = domains.contains(domain) ? domain : "other"
-        let bytes = Array("\(stage)|\(code)|\(flags)|\(boundedDomain)".utf8)
+        // Low two bits describe the stage; higher bits retain query/UTF8/layout/root/Bundle agreement.
+        let bytes = Array("\(stage)|\(code)|\(flags | (self.pathFlags << 2))|\(boundedDomain)".utf8)
         guard bytes.count < 512, ftruncate(self.descriptor, 0) == 0,
               lseek(self.descriptor, 0, SEEK_SET) == 0 else { return }
         _ = bytes.withUnsafeBytes { write(self.descriptor, $0.baseAddress, $0.count) }

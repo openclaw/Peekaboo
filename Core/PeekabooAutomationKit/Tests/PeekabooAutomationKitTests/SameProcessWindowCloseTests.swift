@@ -184,6 +184,8 @@ private final class NativeSelectorFixture {
         var callbackApplicationPresent = false
         var callbackErrorDomain = "none"
         var callbackErrorCode = 0
+        var callbackPIDClass = "no-app"
+        var callbackFlags = 0
         var receipt: Receipt?
 
         init(root: URL, executableURL: URL) throws {
@@ -197,6 +199,10 @@ private final class NativeSelectorFixture {
             guard fstat(descriptor, &info) == 0
             else { throw NativeSelectorFailure("Could not identify fixture diagnostics") }
             self.diagnosticIdentity = info.st_ino
+            let marker = Array("parent-prepared|0|0|none".utf8)
+            let written = marker.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) }
+            guard written == marker.count
+            else { throw NativeSelectorFailure("Could not initialize fixture diagnostics") }
         }
     }
 
@@ -309,11 +315,24 @@ private final class NativeSelectorFixture {
             let failure = error.map { $0 as NSError }
             let domain = Self.diagnosticDomain(failure?.domain ?? "none")
             let code = failure?.code ?? 0
+            let pid = application?.processIdentifier
+            let pidClass = pid.map { $0 == -1 ? "missing" : ($0 > 0 ? "positive" : "other") } ?? "no-app"
+            let callbackBundle = application?.bundleURL?.resolvingSymlinksInPath()
+            let callbackExecutable = application?.executableURL?.resolvingSymlinksInPath()
+            let expectedBundle = bundle.resolvingSymlinksInPath()
+            // Callback-time bits only: terminated, bundle present/matches, executable present/Launcher/Payload.
+            // AppKit properties are individually atomic but do not attest a coherent native process identity.
+            let flags: Int = (application?.isTerminated == true ? 1 : 0) | (callbackBundle != nil ? 2 : 0) |
+                (callbackBundle == expectedBundle ? 4 : 0) | (callbackExecutable != nil ? 8 : 0) |
+                (callbackExecutable == expectedBundle.appendingPathComponent("Contents/MacOS/Launcher") ? 16 : 0) |
+                (callbackExecutable == expectedBundle.appendingPathComponent("Contents/MacOS/Payload") ? 32 : 0)
             Task { @MainActor in
                 launch.failed = failed
                 launch.callbackApplicationPresent = present
                 launch.callbackErrorDomain = domain
                 launch.callbackErrorCode = code
+                launch.callbackPIDClass = pidClass
+                launch.callbackFlags = flags
                 launch.completed = true
             }
         }
@@ -335,6 +354,7 @@ private final class NativeSelectorFixture {
         self.launches.enumerated().map { index, launch in
             "launch=\(index) callback=\(launch.completed) app=\(launch.callbackApplicationPresent) " +
                 "domain=\(launch.callbackErrorDomain) code=\(launch.callbackErrorCode) " +
+                "pidClass=\(launch.callbackPIDClass) callbackFlags=\(launch.callbackFlags) " +
                 "receipt=\(launch.receipt != nil) producer=\(self.producerDiagnostic(for: launch))"
         }.joined(separator: "; ")
     }
@@ -344,10 +364,13 @@ private final class NativeSelectorFixture {
         guard descriptor >= 0 else { return "unavailable" }
         defer { close(descriptor) }
         var info = stat()
-        guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
+        guard fstat(descriptor, &info) == 0 else { return "stat-unavailable" }
+        guard info.st_mode & S_IFMT == S_IFREG,
               info.st_ino == launch.diagnosticIdentity, info.st_uid == geteuid(), info.st_nlink == 1,
-              info.st_mode & 0o777 == 0o600, info.st_size > 0, info.st_size < 512
-        else { return "missing-or-invalid" }
+              info.st_mode & 0o777 == 0o600
+        else { return "invalid-metadata" }
+        guard info.st_size > 0 else { return "empty" }
+        guard info.st_size < 512 else { return "oversized" }
         var bytes = [UInt8](repeating: 0, count: Int(info.st_size))
         let count = bytes.withUnsafeMutableBytes { read(descriptor, $0.baseAddress, $0.count) }
         guard count == bytes.count,
@@ -355,6 +378,9 @@ private final class NativeSelectorFixture {
         else { return "unreadable" }
         let parts = record.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
         let stages = [
+            "parent-prepared",
+            "child-admitted",
+            "kernel-observation",
             "entry",
             "arguments-invalid",
             "spawnattr-init",
@@ -367,8 +393,11 @@ private final class NativeSelectorFixture {
             "receipt-write",
         ]
         guard parts.count == 4, stages.contains(parts[0]), let code = Int(parts[1]),
-              let flags = Int(parts[2]), (0...3).contains(flags), Self.diagnosticDomain(parts[3]) == parts[3]
+              let flags = Int(parts[2]), (0...127).contains(flags), Self.diagnosticDomain(parts[3]) == parts[3]
         else { return "invalid-record" }
+        if parts[0] == "parent-prepared" {
+            return "parent-prepared(no-admitted-child-stage-observed)"
+        }
         // The status is diagnostic only: no fields feed receipt validation, dispatch, or cleanup admission.
         return "\(parts[0]),code=\(code),flags=\(flags),domain=\(parts[3])"
     }
