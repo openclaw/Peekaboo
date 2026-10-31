@@ -199,6 +199,23 @@ extension ConfigurationManager {
         return nil
     }
 
+    /// Get the TypeSafe API key for Jev verdicts (`see --jev-*`) with proper precedence:
+    /// `PEEKABOO_JEV_API_KEY`, then `TYPESAFE_API_KEY` from the environment, then the
+    /// `TYPESAFE_API_KEY` credential.
+    public func getTypeSafeAPIKey() -> String? {
+        for key in ["PEEKABOO_JEV_API_KEY", "TYPESAFE_API_KEY"] {
+            if let envValue = self.environmentValue(for: key), !envValue.isEmpty {
+                return envValue
+            }
+        }
+
+        if let credValue = credentials["TYPESAFE_API_KEY"], !credValue.isEmpty {
+            return credValue
+        }
+
+        return nil
+    }
+
     /// Get MiniMax API key with proper precedence
     public func getMiniMaxAPIKey() -> String? {
         if let envValue = self.environmentValue(for: "MINIMAX_API_KEY") {

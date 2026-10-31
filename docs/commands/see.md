@@ -94,6 +94,9 @@ peekaboo see --app Calendar --window-id 12345 --ocr --json --path /tmp/calendar.
 
 # Require a new AX traversal without capturing pixels
 peekaboo see --app TextEdit --tree --no-screenshot --fresh --json
+
+# Ask Jev which element a description means, and print only that element
+peekaboo see --app Notes --window-id 12345 --jev-pick "the button that creates a note"
 ```
 
 ## When to use
@@ -129,6 +132,9 @@ peekaboo see --app TextEdit --tree --no-screenshot --fresh --json
 | `--depth <n>` | Override AX traversal depth (`PEEKABOO_AX_MAX_DEPTH` fallback, default 12). |
 | `--max-elements <n>` | Override maximum collected AX elements (`PEEKABOO_AX_MAX_ELEMENTS` fallback, default 1000). |
 | `--max-children <n>` | Override maximum AX children visited per node (`PEEKABOO_AX_MAX_CHILDREN` fallback, default 250). |
+| `--jev-pick <description>` | Print only the element a description means, chosen by TypeSafe Jev, with its probability and the snapshot ID. Needs element detection. See [Jev verdicts](#jev-verdicts). |
+| `--jev-check <statement>` | Print only Jev's probability that a statement about the window is true, judged from the element tree and, unless `--no-screenshot`, the screenshot. |
+| `--jev-locate <description>` | Print only a box, in screenshot pixels, around something visible in the screenshot. Needs the screenshot. |
 
 With an explicit `--bridge-socket`, omitted or `auto` capture can use classic on that same host when another process
 holds the ScreenCaptureKit lease. The selected host must pass readiness and authenticate its process generation,
@@ -183,6 +189,41 @@ ROI JSON adds `coordinate_context.viewport`:
 - `source_image_size` is the uncropped source raster size.
 
 Returned `ui_elements[].bounds` are clipped and translated into ROI-local logical coordinates for presentation. The snapshot retains their global action coordinates, so copy element IDs into element-targeted commands such as `click` and `action` rather than replaying the displayed bounds. `type` does not accept an element ID; focus the field with a background `click`, run `see` again, then type with the new snapshot. For coordinate work, use `coordinate_context.logical_bounds` to convert ROI pixels to global points and pass `--global`, or prefer the MCP `image_pixels`/`normalized` mapping described in [MCP](../MCP.md#exact-window-roi).
+
+## Jev verdicts
+
+`--jev-pick`, `--jev-check` and `--jev-locate` hand the observation to TypeSafe's
+[Jev](https://typesafe.ai) decision model and print one verdict instead of the element map. Jev answers typed
+questions (a choice among elements, a yes/no probability, or a box) rather than generating text, so an agent reads a
+single line instead of the tree or the image. The observation itself is unchanged: same target resolution, snapshot
+and receipt. Verdicts never act on the window.
+
+```bash
+export PEEKABOO_JEV_API_KEY=…   # or TYPESAFE_API_KEY, or TYPESAFE_API_KEY in ~/.peekaboo/credentials
+
+peekaboo see --app Notes --window-id 12345 --jev-pick "the button that creates a note"
+# PICK elem_12 button "New Note" p=0.99 next=0.01 snapshot=ps1_… jev_ms=320
+
+peekaboo see --app Notes --window-id 12345 --tree --no-screenshot --jev-check "The sidebar is hidden."
+# NO p_yes=0.02 jev_ms=250
+
+peekaboo see --app Notes --window-id 12345 --jev-locate "the formatting toolbar"
+# FOUND x=310 y=12 w=420 h=28 conf=0.82 visible=0.97 jev_ms=400
+```
+
+- **Pick** offers Jev every actionable element plus labelled controls and groups, including disabled ones, so
+  "the Send button" resolves to a disabled Send button rather than a lookalike. `UNSURE` replaces `PICK` unless the
+  probability is at least 0.6, or at least 0.5 and twice the runner-up. JSON adds `actionable`, because a labelled
+  row may need a different interaction than an element click. Act on a confident pick with the printed snapshot.
+- **Check** sends the compact element tree, and the screenshot unless `--no-screenshot`, with the statement.
+- **Locate** asks for a box and, separately, whether the thing is visible. Boxes are approximate; prefer element
+  targets for clicks.
+- `--json` returns the verdict in the usual success envelope with the target receipt, plus Jev's token `usage`.
+
+Screenshots are fitted to Jev's 280–1568 px bounds before sending. Image and box requests use TypeSafe's opt-in
+`TypeSafe-Danger-Zone-Images` header, since TypeSafe still marks image input experimental. `PEEKABOO_JEV_MODEL`
+selects the model (default `jev-latest`); `PEEKABOO_JEV_BOX_MODEL` selects the one answering boxes (default
+`jev-preview`). The screenshot and element labels are sent to TypeSafe's API.
 
 ## Optional web focus fallback
 

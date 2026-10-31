@@ -244,6 +244,39 @@ struct ConfigurationManagerEnvironmentTests {
     }
 
     @Test
+    func `getTypeSafeAPIKey prefers the Peekaboo variable, then TypeSafe's, then the credential`() throws {
+        let keys = ["PEEKABOO_JEV_API_KEY", "TYPESAFE_API_KEY"]
+        let previous = keys.reduce(into: [String: String]()) { values, key in
+            if let value = getenv(key) {
+                values[key] = String(cString: value)
+            }
+        }
+        keys.forEach { unsetenv($0) }
+        defer {
+            for key in keys {
+                if let value = previous[key] {
+                    setenv(key, value, 1)
+                } else {
+                    unsetenv(key)
+                }
+            }
+        }
+
+        try withIsolatedConfigurationEnvironment { _ in
+            #expect(self.manager.getTypeSafeAPIKey() == nil)
+
+            try self.manager.saveCredentials(["TYPESAFE_API_KEY": "stored-key"])
+            #expect(self.manager.getTypeSafeAPIKey() == "stored-key")
+
+            setenv("TYPESAFE_API_KEY", "typesafe-environment-key", 1)
+            #expect(self.manager.getTypeSafeAPIKey() == "typesafe-environment-key")
+
+            setenv("PEEKABOO_JEV_API_KEY", "peekaboo-environment-key", 1)
+            #expect(self.manager.getTypeSafeAPIKey() == "peekaboo-environment-key")
+        }
+    }
+
+    @Test
     func `getSelectedProvider canonicalizes Google aliases from config`() throws {
         try withIsolatedConfigurationEnvironment { configDir in
             let configPath = configDir.appendingPathComponent("config.json")

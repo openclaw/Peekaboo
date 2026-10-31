@@ -98,7 +98,7 @@ extension SeeCommand: CommanderSignatureProviding {
                     help: "Maximum AX children per node (env: PEEKABOO_AX_MAX_CHILDREN)",
                     long: "max-children"
                 ),
-            ],
+            ] + self.jevOptions,
             flags: [
                 .commandFlag(
                     "annotate",
@@ -153,4 +153,23 @@ extension SeeCommand: CommanderSignatureProviding {
             ]
         )
     }
+
+    /// Options that hand the observation to Jev and print one verdict instead of the element map.
+    private static let jevOptions: [OptionDefinition] = [
+        .commandOption(
+            "jevPick",
+            help: "Ask Jev which element a description means; prints only that element",
+            long: "jev-pick"
+        ),
+        .commandOption(
+            "jevCheck",
+            help: "Ask Jev a yes/no question about the window's tree and screenshot",
+            long: "jev-check"
+        ),
+        .commandOption(
+            "jevLocate",
+            help: "Ask Jev for a box around something visible in the screenshot",
+            long: "jev-locate"
+        ),
+    ]
 }

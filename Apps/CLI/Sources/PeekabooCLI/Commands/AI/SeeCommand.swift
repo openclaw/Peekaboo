@@ -91,6 +91,15 @@ RuntimeBackedCommand {
     @Option(help: "Analyze captured content with AI")
     var analyze: String?
 
+    @Option(help: "Ask Jev which element a description means; prints only that element")
+    var jevPick: String?
+
+    @Option(help: "Ask Jev a yes/no question about the window's tree and screenshot")
+    var jevCheck: String?
+
+    @Option(help: "Ask Jev for a box around something visible in the screenshot")
+    var jevLocate: String?
+
     @Option(
         name: .long,
         help: """
@@ -276,7 +285,7 @@ RuntimeBackedCommand {
                 }
 
                 try Task.checkCancellation()
-                try commandCopy.renderResults(context: context)
+                try await commandCopy.renderObservation(context: context)
                 commandCopy.emitAnnotationStatus(context: context)
                 logger.operationComplete(
                     "see_command",
@@ -424,6 +433,16 @@ RuntimeBackedCommand {
         if self.noScreenshot, self.annotate || self.analyze != nil {
             throw ValidationError("--no-screenshot cannot be combined with --annotate or --analyze")
         }
+        let jevRequests = [self.jevPick, self.jevCheck, self.jevLocate].compactMap(\.self)
+        if jevRequests.count > 1 {
+            throw ValidationError("Use one of --jev-pick, --jev-check or --jev-locate per observation")
+        }
+        if self.noScreenshot, self.jevLocate != nil {
+            throw ValidationError("--jev-locate needs the screenshot; drop --no-screenshot")
+        }
+        if self.noElements, self.jevPick != nil {
+            throw ValidationError("--jev-pick needs the element tree; drop --no-elements")
+        }
         if self.noScreenshot,
            resolvedMode == .screen || forcesPixelOnlyMode || self.screenIndex != nil || self.menubar
            || self.app?.lowercased() == "menubar" {
@@ -464,11 +483,10 @@ RuntimeBackedCommand {
                 throw ValidationError("--app \(appAlias) cannot be combined with another capture target")
             }
         }
-        if self.menubar {
-            if self.mode != nil || self.pid != nil || self.region != nil || self.screenIndex != nil
-                || windowSelectorCount > 0 {
-                throw ValidationError("--menubar cannot be combined with another capture target")
-            }
+        if self.menubar,
+           self.mode != nil || self.pid != nil || self.region != nil || self.screenIndex != nil
+           || windowSelectorCount > 0 {
+            throw ValidationError("--menubar cannot be combined with another capture target")
         }
     }
 
@@ -846,6 +864,9 @@ extension SeeCommand: CommanderBindableCommand {
         self.captureEngine = values.singleOption("captureEngine")
         self.annotate = values.flag("annotate")
         self.analyze = values.singleOption("analyze")
+        self.jevPick = values.singleOption("jevPick")
+        self.jevCheck = values.singleOption("jevCheck")
+        self.jevLocate = values.singleOption("jevLocate")
         self.timeout = try values.decodeOption("timeout", as: CLIDuration.self)
         self.depth = try values.decodeOption("depth", as: Int.self)
         self.maxElements = try values.decodeOption("maxElements", as: Int.self)

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add `see --jev-pick`, `--jev-check` and `--jev-locate`: TypeSafe's Jev decision model answers which element a description means, whether a statement about the window is true, or where something visible is, and `see` prints only that verdict instead of the element map, so agents read one line instead of the tree or the screenshot. The key comes from `PEEKABOO_JEV_API_KEY`, `TYPESAFE_API_KEY`, or the `TYPESAFE_API_KEY` credential.
 - Clarify exact-window target-changed errors with unavailable identity versus changed components and whether validation failed before the operation, after capture, or after the operation. #1151.
 - Wait 250ms instead of 150ms before restoring the previous clipboard after a temporary paste, and document that restoration is time-based: an app that reads the clipboard later than the restore delay can paste the previous contents, so raise `--restore-delay` (MCP `restore_delay_ms`) for slow receivers. #1140, refs #1111.
 
