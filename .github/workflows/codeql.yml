@@ -1,8 +1,6 @@
 name: CodeQL
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
   schedule:
@@ -15,8 +13,8 @@ permissions:
 
 concurrency:
   group: >-
-    codeql:${{ github.workflow }}:${{ github.event.pull_request.head.repo.id || github.repository_id }}:${{ github.head_ref || github.ref_name }}:${{ github.base_ref || github.event.repository.default_branch }}
-  cancel-in-progress: true
+    codeql:${{ github.workflow }}:${{ github.event_name }}:${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.head.repo.id || github.repository_id }}:${{ github.head_ref || github.ref_name }}:${{ github.base_ref || github.event.repository.default_branch }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   analyze-source:
