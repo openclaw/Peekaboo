@@ -217,6 +217,70 @@ enum FocusAcceptedActivationSettlement {
 }
 
 @MainActor
+struct FocusApplicationActivation {
+    let nativeRequest: @MainActor () -> Bool
+    let accessibilityRequest: @MainActor () -> Bool
+    let isSettled: @MainActor () -> Bool
+    var sleep: FocusAcceptedActivationSettlement.Sleep = { try await Task.sleep(for: $0) }
+
+    func run(
+        dispatchGuard: FocusDispatchGuard?,
+        onDispatch: ((FocusDispatchRecord) -> Void)?,
+        requireExpectedIdentity: @MainActor () throws -> Void) async throws
+    {
+        if self.isSettled() {
+            return
+        }
+
+        var activationAccepted = false
+        func request(
+            mechanism: DesktopActionOutcome.Delivery.Mechanism,
+            operation: @MainActor () -> Bool) throws -> Bool
+        {
+            try requireExpectedIdentity()
+            try dispatchGuard?.validate(.applicationActivation)
+            let accepted = try FocusDispatchAccounting.acceptingBool(
+                delivery: .init(mechanism: mechanism, mode: .foreground),
+                onDispatch: onDispatch,
+                operation: operation)
+            if accepted, !activationAccepted {
+                activationAccepted = true
+                // Ownership hooks describe the activation sequence; accounting records each accepted request.
+                try dispatchGuard?.didAcceptDispatch(.applicationActivation)
+            }
+            return accepted
+        }
+
+        var remainingPolls = 30
+        var settled = false
+        if try request(mechanism: .nativeFramework, operation: self.nativeRequest) {
+            remainingPolls -= 10
+            settled = try await FocusAcceptedActivationSettlement.wait(
+                dispatchGuard: dispatchGuard,
+                pollCount: 10,
+                interval: .milliseconds(100),
+                isSettled: self.isSettled,
+                sleep: self.sleep)
+        }
+        if !settled, !self.isSettled() {
+            _ = try request(mechanism: .accessibilityAction, operation: self.accessibilityRequest)
+        }
+        if !settled {
+            settled = try await FocusAcceptedActivationSettlement.wait(
+                dispatchGuard: dispatchGuard,
+                pollCount: remainingPolls,
+                interval: .milliseconds(100),
+                isSettled: self.isSettled,
+                sleep: self.sleep)
+        }
+        guard settled else { throw FocusError.timeoutWaitingForCondition }
+        if activationAccepted {
+            try dispatchGuard?.didCompleteDispatch(.applicationActivation)
+        }
+    }
+}
+
+@MainActor
 enum FocusRaiseSettlement {
     enum AttemptResult {
         case settled
@@ -974,48 +1038,24 @@ public final class FocusManagementService {
 
         let runningApp = initialHandle.app.application
 
-        var activationAccepted = false
-        if !runningApp.isActive {
-            try self.requireExpectedFocusIdentity(
-                expectedIdentity,
-                windowID: windowID,
-                element: initialHandle.element)
-            try dispatchGuard?.validate(.applicationActivation)
-            activationAccepted = try FocusDispatchAccounting.acceptingBool(
-                delivery: .init(mechanism: .nativeFramework, mode: .foreground),
-                onDispatch: onDispatch,
-                operation: { runningApp.activate() })
-            if activationAccepted {
-                try dispatchGuard?.didAcceptDispatch(.applicationActivation)
-            }
-        }
-
-        let activationSettled: Bool
-        if activationAccepted {
-            activationSettled = try await FocusAcceptedActivationSettlement.wait(
-                dispatchGuard: dispatchGuard,
-                pollCount: 30,
-                interval: .milliseconds(100),
-                isSettled: {
-                    runningApp.isActive ||
-                        NSWorkspace.shared.frontmostApplication?.processIdentifier == runningApp.processIdentifier
-                })
-        } else {
-            try await self.waitForCondition(
-                timeout: 3.0,
-                interval: 0.1,
-                condition: {
-                    runningApp.isActive ||
-                        NSWorkspace.shared.frontmostApplication?.processIdentifier == runningApp.processIdentifier
-                })
-            activationSettled = true
-        }
-        guard activationSettled else {
-            throw FocusError.timeoutWaitingForCondition
-        }
-        if activationAccepted {
-            try dispatchGuard?.didCompleteDispatch(.applicationActivation)
-        }
+        let activation = FocusApplicationActivation(
+            nativeRequest: { runningApp.activate() },
+            accessibilityRequest: {
+                ApplicationService.requestAccessibilityActivation(processIdentifier: runningApp.processIdentifier)
+            },
+            isSettled: {
+                runningApp.isActive ||
+                    NSWorkspace.shared.frontmostApplication?.processIdentifier == runningApp.processIdentifier
+            })
+        try await activation.run(
+            dispatchGuard: dispatchGuard,
+            onDispatch: onDispatch,
+            requireExpectedIdentity: {
+                try self.requireExpectedFocusIdentity(
+                    expectedIdentity,
+                    windowID: windowID,
+                    element: initialHandle.element)
+            })
 
         guard let refreshedHandle = self.windowIdentityService.findWindow(byID: windowID, in: runningApp) ??
             self.windowIdentityService.findWindow(byID: windowID)
