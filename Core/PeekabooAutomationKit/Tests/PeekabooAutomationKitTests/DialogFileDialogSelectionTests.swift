@@ -204,7 +204,7 @@ struct DialogFileDialogSelectionTests {
     func `A missing file is refused before any Go to Folder input`() async throws {
         let driver = SelectionInputDriver()
         let panel = Self.panel(children: [Self.field(identifier: "Search"), Self.button()])
-        let missing = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).txt").path
         do {
             _ = try await DialogService(syntheticInputDriver: driver).navigateFileDialog(
                 path: missing, filename: nil, in: panel, ensureExpanded: false, appName: nil)
