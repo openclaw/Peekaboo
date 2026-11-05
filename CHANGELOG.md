@@ -4,10 +4,10 @@
 
 - Update Swift Log to 1.16.2 for in-place metadata writes and Swift Configuration to 1.4.0, preserving the Swift 6.2 and macOS baselines.
 - Run main CodeQL analysis on the existing weekly schedule instead of every push, preserving PR scans and independent manual runs.
-- Make `window focus` fall back to an Accessibility activation request when macOS declines the native one, as it can for apps launched from a shell, instead of timing out. Exact focus is still verified afterward. Refs #1161.
 - Clarify exact-window target-changed errors with unavailable identity versus changed components and whether validation failed before the operation, after capture, or after the operation. #1151.
 - Wait 250ms instead of 150ms before restoring the previous clipboard after a temporary paste, and document that restoration is time-based: an app that reads the clipboard later than the restore delay can paste the previous contents, so raise `--restore-delay` (MCP `restore_delay_ms`) for slow receivers. #1140, refs #1111.
 - Start MCP and Agent runtimes when another live Peekaboo process owns the ScreenCaptureKit lane without a reachable Bridge socket, instead of exiting 1 before the JSON-RPC handshake. Capture-capable tools keep the `CAPTURE_FAILED` refusal for the session while noncapture tools remain usable. Thanks @chenyuhao0628! #1146, fixes #1145.
+- Make `window focus` fall back to an Accessibility activation request when macOS declines the native one, as it can for apps launched from a shell, instead of timing out. Exact focus is still verified afterward. Refs #1161.
 - Keep duration labels inside the unit they claim: 59.95s now reads `1m 0s` instead of `60.0s`, 0.9995s reads `1.0s` instead of `1000ms`, and non-finite or out-of-range durations read "an unknown duration" instead of trapping. Thanks @rudycelekli! #1149.
 - Say that no windows are available when a window index is requested from an app without windows, instead of `Available windows: 0--1`. Thanks @rudycelekli! #1150.
 - Docs site: render Markdown images and task-list checkboxes, restore the missing smart-select metadata table cells, keep URL schemes inside highlighted code strings, point source links at the repository, and show read-when hints without YAML quotes. Thanks @rudycelekli! #1141, #1142, #1143, #1144, #1147, #1148.
