@@ -51,9 +51,9 @@ peekaboo see --app Finder --json
 
 That is the core loop: observe the current screen, choose an element from the result, and act on it.
 
-## What's new in 4.9.7
+## What's new in 4.9.8
 
-Peekaboo 4.9.7 is a fix release. `window close` through the daemon now reports success when an app keeps its closed window alive, `see` works on Chrome windows whose titles carry the app name or are elided, `window close --foreground` handles apps that re-exec themselves, and `dock list` hides separators. In the Mac app, the chat keeps a streaming answer together when you queue a follow-up, failed tools show as failed, the saved Vision model is used even when its provider doesn't advertise vision, and the Inspector highlights the control you are actually pointing at on every display.
+Peekaboo 4.9.8 is a fix release. `dialog file` can now select a file in an Open panel, going through Go to Folder and checking the selection before it confirms, and it no longer types filenames into Search. Exact-window clicks and `window focus` keep working when another running app shares the target's name, `see` and `window list` find windows that an app exposes only through its focused or main window, `window focus` falls back to Accessibility when macOS declines activation, and MCP starts when another Peekaboo process owns the capture lane without a Bridge.
 
 ## Automate an app
 
