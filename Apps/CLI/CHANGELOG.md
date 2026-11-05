@@ -5,6 +5,19 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 4.9.8 - 2026-11-05
+
+- Select files in Open panels with `dialog file`, using `--path <file>` or `--path <dir> --name <file>`: the full path goes through Go to Folder and the selection is verified before confirming, and a missing file is refused before any input. Open panels have no filename field, so this could not work before. Thanks @realchrisbarnes for the report! #1158.
+- Refuse filename entry into Search, Filter, Tags, or Comments controls in file dialogs, with an actionable error when no safe filename field is available. Thanks @goutamadwant! #1159, refs #1158.
+- Keep exact-window clicks and `window focus` working when another running app shares the target's name, instead of refusing with an unknown focused window or "Multiple apps match". Focused-window lookups now use the exact process and report only the window Accessibility says is focused, so a click refuses instead of trusting a ranked guess, and its refusal keeps the lookup error. Thanks @Amogusto! #1161.
+- Make `window focus` fall back to an Accessibility activation request when macOS declines the native one, as it can for apps launched from a shell, instead of timing out. Exact focus is still verified afterward. Refs #1161.
+- Find exact windows that an app exposes only through its focused or main window, such as Figma when `AXWindows` comes back empty, while retaining exact window-ID and owner checks. Thanks @YarikMix! #1154.
+- Start MCP and Agent runtimes when another live Peekaboo process owns the ScreenCaptureKit lane without a reachable Bridge socket, instead of exiting 1 before the JSON-RPC handshake. Capture-capable tools keep the `CAPTURE_FAILED` refusal for the session while noncapture tools remain usable. Thanks @chenyuhao0628! #1146, fixes #1145.
+- Clarify exact-window target-changed errors with unavailable identity versus changed components and whether validation failed before the operation, after capture, or after the operation. #1151.
+- Wait 250ms instead of 150ms before restoring the previous clipboard after a temporary paste, and document that restoration is time-based: an app that reads the clipboard later than the restore delay can paste the previous contents, so raise `--restore-delay` (MCP `restore_delay_ms`) for slow receivers. #1140, refs #1111.
+- Keep duration labels inside the unit they claim: 59.95s now reads `1m 0s` instead of `60.0s`, 0.9995s reads `1.0s` instead of `1000ms`, and non-finite or out-of-range durations read "an unknown duration" instead of trapping. Thanks @rudycelekli! #1149.
+- Say that no windows are available when a window index is requested from an app without windows, instead of `Available windows: 0--1`. Thanks @rudycelekli! #1150.
+
 ## 4.9.7 - 2026-10-23
 
 - Report `window close` through the daemon or Bridge as closed when the app keeps the closed `NSWindow` alive, instead of exiting 1 with an indeterminate postcondition: the Bridge readback now applies the same exact-window Accessibility presence check as the in-process path. Thanks @goutamadwant! #1131, fixes #1129.
