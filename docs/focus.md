@@ -58,6 +58,8 @@ When you execute a foreground interaction command (`type`, `click --foreground`,
 6. **Verifies exact focus succeeded** before proceeding
 7. **Executes your command** on the correctly focused window
 
+Activation falls back to the Accessibility frontmost request when macOS declines the native request or it does not settle promptly, and exact focus is still verified afterward.
+
 For receipt-bound native window focus, the focus owner captures fresh, bounded `AXFocusedWindow` identity and
 foreground application ownership before releasing its global mutation lane. It checks the original PID, process
 generation, exact window ID, and captured bounds around that readback. Bridge validates and signs this evidence;
