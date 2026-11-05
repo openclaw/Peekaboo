@@ -180,6 +180,7 @@ extension DialogCommand {
                 foundVia: result.details["found_via"],
                 path: result.details["path"],
                 pathNavigationMethod: result.details["path_navigation_method"],
+                selectedFile: result.details["selected_file"],
                 name: result.details["filename"],
                 buttonClicked: result.details["button_clicked"] ?? self.select ?? "default",
                 buttonIdentifier: result.details["button_identifier"],
@@ -205,6 +206,7 @@ private struct FileDialogResult: Codable {
     let foundVia: String?
     let path: String?
     let pathNavigationMethod: String?
+    let selectedFile: String?
     let name: String?
     let buttonClicked: String
     let buttonIdentifier: String?
@@ -225,6 +227,7 @@ private struct FileDialogResult: Codable {
         case foundVia = "found_via"
         case path
         case pathNavigationMethod = "path_navigation_method"
+        case selectedFile = "selected_file"
         case name
         case buttonClicked
         case buttonIdentifier = "button_identifier"
