@@ -4,6 +4,7 @@
 
 - Update Swift Log to 1.16.2 for in-place metadata writes and Swift Configuration to 1.4.0, preserving the Swift 6.2 and macOS baselines.
 - Run main CodeQL analysis on the existing weekly schedule instead of every push, preserving PR scans and independent manual runs.
+- Keep exact-window clicks and `window focus` working when another running app shares the target's name, instead of refusing with an unknown focused window or "Multiple apps match". Focused-window lookups now use the exact process and report only the window Accessibility says is focused, so a click refuses instead of trusting a ranked guess, and its refusal keeps the lookup error. Thanks @Amogusto! #1161.
 - Clarify exact-window target-changed errors with unavailable identity versus changed components and whether validation failed before the operation, after capture, or after the operation. #1151.
 - Wait 250ms instead of 150ms before restoring the previous clipboard after a temporary paste, and document that restoration is time-based: an app that reads the clipboard later than the restore delay can paste the previous contents, so raise `--restore-delay` (MCP `restore_delay_ms`) for slow receivers. #1140, refs #1111.
 - Start MCP and Agent runtimes when another live Peekaboo process owns the ScreenCaptureKit lane without a reachable Bridge socket, instead of exiting 1 before the JSON-RPC handshake. Capture-capable tools keep the `CAPTURE_FAILED` refusal for the session while noncapture tools remain usable. Thanks @chenyuhao0628! #1146, fixes #1145.
