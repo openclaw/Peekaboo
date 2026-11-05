@@ -68,6 +68,12 @@ established, not that the native window is definitively not main. Normalization 
 target resolution does not propagate missing inventory/AX main-state evidence into capture. This adds no Accessibility
 polling or public metadata fields.
 
+Exact `--window-id` resolution checks `AXWindows` first. If the requested window is missing, it reads the same
+application's current `AXFocusedWindow` and `AXMainWindow`, accepting only a reference whose native window ID and
+owning PID match. This also lets window inventory recognize windows exposed only through those attributes, as
+can happen in Figma. Process-generation, bounds, and snapshot checks still apply; an unrelated focused window
+cannot substitute for the requested window.
+
 Every reusable snapshot is identified by a producer-generated reference with the exact form `ps1_` followed by 32
 lowercase ASCII hexadecimal digits, for example `ps1_0123456789abcdef0123456789abcdef`. The 32-digit suffix contains
 128 random bits. The selected local or Bridge producer reserves that reference before storing detection results or

@@ -1428,19 +1428,14 @@ private enum BoundedBackgroundWindowAX {
             return nil
         }
 
-        for window in windows {
-            let matches: Bool = {
-                guard self.applyMessagingTimeout(to: window, admission: admission) else { return false }
-                defer { AXUIElementSetMessagingTimeout(window, 0) }
-                var candidateID: CGWindowID = 0
-                return AXWindowIDResolver.copyWindowID(window, into: &candidateID) == .success &&
-                    candidateID == windowID
-            }()
-            if matches {
-                return window
-            }
-        }
-        return nil
+        return AXWindowLookup(
+            application: application,
+            processIdentifier: ownerPID,
+            messagingTimeout: {
+                guard let admission else { return self.messagingTimeout }
+                guard let remaining = admission.remainingSeconds else { return nil }
+                return min(self.messagingTimeout, Float(remaining))
+            }).findWindow(byID: windowID, among: windows)
     }
 
     private static func windowServerAllowsExactMinimizedRestore(
@@ -1489,6 +1484,18 @@ private enum BoundedBackgroundWindowAX {
             guard candidateID == windowID else { continue }
             matchingWindowBounds.append(observation.bounds)
             isComplete = isComplete && observation.bounds != nil
+        }
+        if matchingWindowBounds.isEmpty,
+           let window = AXWindowLookup(
+               application: application,
+               processIdentifier: ownerPID,
+               messagingTimeout: { self.messagingTimeout }).findWindow(byID: windowID)
+        {
+            let bounds = AXChildWindowMessagingTimeout.perform(on: window, timeout: self.messagingTimeout) {
+                self.bounds(of: $0)
+            }
+            matchingWindowBounds.append(bounds)
+            isComplete = isComplete && bounds != nil
         }
         return PinnedMinimizedWindowAXScan(
             matchingWindowBounds: matchingWindowBounds,

@@ -306,16 +306,11 @@ extension WindowManagementService {
             guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier),
                   RunningApplicationProcessIdentity.resolve(runningApp) == app.processIdentifier
             else { continue }
-            let appElement = Element(AXUIElementCreateApplication(app.processIdentifier))
-
-            guard let windows = appElement.windows() else { continue }
-            for window in windows {
-                if let windowID = self.windowIdentityService.getWindowID(from: window),
-                   Int(windowID) == id
-                {
-                    self.logger.debug("Matched window id \(id) in app \(app.name)")
-                    return window
-                }
+            if let windowID = CGWindowID(exactly: id),
+               let handle = self.windowIdentityService.findWindow(byID: windowID, in: runningApp)
+            {
+                self.logger.debug("Matched window id \(id) in app \(app.name)")
+                return handle.element
             }
         }
 
@@ -425,7 +420,7 @@ enum BoundedAXWindowIdentityScanner {
         }
         guard let windows else { return nil }
 
-        guard let snapshot = self.scanWindows(
+        let enumeratedSnapshot = self.scanWindows(
             windows,
             remainingTimeout: { self.remainingCallTimeout(until: deadline) },
             applyTimeout: { AXUIElementSetMessagingTimeout($0, $1) },
@@ -436,7 +431,25 @@ enum BoundedAXWindowIdentityScanner {
                     ownerProcessIdentifier: processIdentifier,
                     ownerProcessStartIdentity: processStartIdentity)
             })
-        else { return nil }
+        let snapshot: BoundedAXWindowIdentitySnapshot? = if let enumeratedSnapshot {
+            enumeratedSnapshot
+        } else if let window = AXWindowLookup(
+            application: application,
+            processIdentifier: processIdentifier,
+            messagingTimeout: { self.remainingCallTimeout(until: deadline) }).findWindow(byID: requestedID),
+            let timeout = self.remainingCallTimeout(until: deadline)
+        {
+            AXChildWindowMessagingTimeout.perform(on: window, timeout: timeout) {
+                self.snapshot(
+                    from: $0,
+                    requestedID: requestedID,
+                    ownerProcessIdentifier: processIdentifier,
+                    ownerProcessStartIdentity: processStartIdentity)
+            }
+        } else {
+            nil
+        }
+        guard let snapshot else { return nil }
         return self.validatedSnapshot(
             snapshot,
             expectedReceipt: BoundedAXWindowScanReceipt(
@@ -472,7 +485,10 @@ enum BoundedAXWindowIdentityScanner {
         ownerProcessStartIdentity: UInt64) -> BoundedAXWindowIdentitySnapshot?
     {
         var candidateID: CGWindowID = 0
-        guard AXWindowIDResolver.copyWindowID(window, into: &candidateID) == .success,
+        var ownerPID: pid_t = 0
+        guard AXUIElementGetPid(window, &ownerPID) == .success,
+              ownerPID == ownerProcessIdentifier,
+              AXWindowIDResolver.copyWindowID(window, into: &candidateID) == .success,
               candidateID == requestedID
         else {
             return nil
