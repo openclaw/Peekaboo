@@ -57,7 +57,10 @@ struct ListSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeB
             for app in appListResult.data.applications
                 where app.isUsableForBroadAutomationDiscovery && app.windowCount > 0 {
                 do {
-                    let windowsResult = try await appService.listWindows(for: app.name, timeout: nil)
+                    let windowsResult = try await appService.listWindows(
+                        for: "PID:\(app.processIdentifier)",
+                        timeout: nil
+                    )
                     for window in windowsResult.data.windows {
                         let windowSpaces = await spaceService.getSpacesForWindow(windowID: CGWindowID(window.windowID))
                         for space in windowSpaces {

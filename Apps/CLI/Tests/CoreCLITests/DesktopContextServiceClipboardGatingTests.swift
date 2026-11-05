@@ -46,6 +46,31 @@ struct DesktopContextServiceClipboardGatingTests {
         #expect(context.clipboardPreview == "hello from clipboard")
     }
 
+    @Test(arguments: [false, true])
+    @MainActor
+    func `Missing or failed native focus keeps the frontmost window hint`(lookupFails: Bool) async {
+        let app = ServiceApplicationInfo(processIdentifier: 42, bundleIdentifier: nil, name: "Editor")
+        let hint = ServiceWindowInfo(
+            windowID: 7, title: "Document hint", bounds: CGRect(x: 10, y: 20, width: 300, height: 200)
+        )
+        let windows = DesktopContextWindowServiceStub(focusedWindow: nil)
+        windows.focusedWindowError = lookupFails ? DesktopContextStubError.notImplemented : nil
+        windows.frontmostWindow = hint
+        let services = ServicesWithStubClipboard(
+            clipboard: RecordingClipboardService(textPreview: "ignored"),
+            applications: DesktopContextApplicationServiceStub(frontmost: app, applications: [app]),
+            windows: windows
+        )
+
+        let context = await DesktopContextService(services: services).gatherContext(includeClipboardPreview: false)
+
+        #expect(context.focusedWindow?.title == hint.title)
+        #expect(context.focusedWindow?.bounds == hint.bounds)
+        #expect(context.focusedWindow?.appName == "Editor")
+        #expect(context.focusedWindow?.processId == 42)
+        #expect(windows.listRequests == [.frontmost])
+    }
+
     @Test
     @MainActor
     func `Gathers focused window and recent apps through services`() async {
@@ -247,8 +272,12 @@ private final class DesktopContextApplicationServiceStub: ApplicationServiceProt
     }
 }
 
+@MainActor
 private final class DesktopContextWindowServiceStub: WindowManagementServiceProtocol {
     private let focusedWindow: ServiceWindowInfo?
+    var focusedWindowError: (any Error)?
+    var frontmostWindow: ServiceWindowInfo?
+    var listRequests: [WindowTarget] = []
 
     init(focusedWindow: ServiceWindowInfo?) {
         self.focusedWindow = focusedWindow
@@ -282,12 +311,18 @@ private final class DesktopContextWindowServiceStub: WindowManagementServiceProt
         throw DesktopContextStubError.notImplemented
     }
 
+    @MainActor
     func listWindows(target: WindowTarget) async throws -> [ServiceWindowInfo] {
-        throw DesktopContextStubError.notImplemented
+        self.listRequests.append(target)
+        return self.frontmostWindow.map { [$0] } ?? []
     }
 
+    @MainActor
     func getFocusedWindow() async throws -> ServiceWindowInfo? {
-        self.focusedWindow
+        if let error = self.focusedWindowError {
+            throw error
+        }
+        return self.focusedWindow
     }
 }
 

@@ -29,6 +29,7 @@ final class ObservationExactWindowResolverTests: XCTestCase {
         XCTAssertEqual(service.listApplicationsCalls, 0)
         XCTAssertEqual(service.findApplicationCalls, 0)
         XCTAssertEqual(service.listWindowsCalls, 2)
+        XCTAssertEqual(service.listWindowIdentifiers, ["PID:123", "PID:123"])
         XCTAssertEqual(resolved, resolvedWithInventory)
         XCTAssertEqual(resolved.kind, .windowID(42))
         XCTAssertEqual(resolved.app?.processIdentifier, 123)
@@ -447,6 +448,7 @@ private final class ExactWindowApplicationService: ApplicationServiceProtocol {
     var listApplicationsCalls = 0
     var findApplicationCalls = 0
     var listWindowsCalls = 0
+    var listWindowIdentifiers: [String] = []
     var getFrontmostApplicationCalls = 0
 
     init(app: ServiceApplicationInfo, windows: [ServiceWindowInfo]) {
@@ -467,8 +469,12 @@ private final class ExactWindowApplicationService: ApplicationServiceProtocol {
         return self.app
     }
 
-    func listWindows(for _: String, timeout _: Float?) async throws -> UnifiedToolOutput<ServiceWindowListData> {
+    func listWindows(
+        for identifier: String,
+        timeout _: Float?) async throws -> UnifiedToolOutput<ServiceWindowListData>
+    {
         self.listWindowsCalls += 1
+        self.listWindowIdentifiers.append(identifier)
         return UnifiedToolOutput(
             data: ServiceWindowListData(windows: self.windows, targetApplication: self.app),
             summary: .init(brief: "windows", status: .success),

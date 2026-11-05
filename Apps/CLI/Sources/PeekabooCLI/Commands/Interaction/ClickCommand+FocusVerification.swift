@@ -84,14 +84,15 @@ enum CoordinateClickFocusVerifier {
         frontmost: FrontmostApplicationIdentity,
         targetWindowID: Int? = nil,
         targetWindowTitle: String? = nil,
-        focusedWindow: FocusedWindowIdentity? = nil
+        focusedWindow: FocusedWindowIdentity? = nil,
+        lookupFailure: String? = nil
     ) -> String? {
         guard targetApp != nil || targetPID != nil || targetWindowID != nil else {
             return nil
         }
 
         if let targetWindowID {
-            if focusedWindow?.windowID == targetWindowID {
+            if lookupFailure == nil, focusedWindow?.windowID == targetWindowID {
                 return nil
             }
 
@@ -101,7 +102,8 @@ enum CoordinateClickFocusVerifier {
                 targetWindowID: targetWindowID,
                 targetWindowTitle: targetWindowTitle
             )
-            let focusedWindowDescription = focusedWindow?.displayDescription ?? "unknown window"
+            let focusedWindowDescription = lookupFailure.map { "lookup failed: \($0)" }
+                ?? focusedWindow?.displayDescription ?? "unknown window"
             let frontmostDescription = frontmost.displayDescription
 
             return """
@@ -204,10 +206,14 @@ extension ClickCommand {
         let frontmostInfo = try? await self.services.applications.getFrontmostApplication()
         let frontmost = FrontmostApplicationIdentity(application: frontmostInfo)
         let targetWindowID = coordinateResolution?.targetWindowID
-        let focusedWindow = if targetWindowID != nil {
-            await FocusedWindowIdentity(window: try? self.services.windows.getFocusedWindow())
-        } else {
-            nil as FocusedWindowIdentity?
+        var focusedWindow: FocusedWindowIdentity?
+        var lookupFailure: String?
+        if targetWindowID != nil {
+            do {
+                focusedWindow = try await FocusedWindowIdentity(window: self.services.windows.getFocusedWindow())
+            } catch {
+                lookupFailure = error.localizedDescription
+            }
         }
         let targetApp = coordinateResolution?.targetApplicationName ?? self.target.app
         let targetPID = coordinateResolution?.targetProcessIdentifier ?? self.target.pid
@@ -217,7 +223,8 @@ extension ClickCommand {
             frontmost: frontmost,
             targetWindowID: targetWindowID,
             targetWindowTitle: coordinateResolution?.targetWindowTitle,
-            focusedWindow: focusedWindow
+            focusedWindow: focusedWindow,
+            lookupFailure: lookupFailure
         ) {
             let targetDescription = CoordinateClickFocusVerifier.targetDescription(
                 targetApp: targetApp,
