@@ -46,18 +46,7 @@ extension DialogService {
         request: DialogFileExecutionRequest?) async throws -> DialogActionResult
     {
         try await self.runDialogOperation(scope: .global, access: .write) {
-            self.logger.info("Handling file dialog")
-            if let path = options.path {
-                self.logger.debug("Path: \(path)")
-            }
-            if let filename = options.filename {
-                self.logger.debug("Filename: \(filename)")
-            }
-            if let actionButton = options.actionButton {
-                self.logger.debug("Action button: \(actionButton)")
-            } else {
-                self.logger.debug("Action button: (default/OKButton)")
-            }
+            self.logFileDialogOptions(options)
 
             var actionSequence = DesktopActionSequenceAccumulator()
             var failureTarget: UIAutomationTarget.ExactWindow?
@@ -105,13 +94,18 @@ extension DialogService {
                     details["ensure_expanded"] = "true"
                 }
 
+                var selectedFile: String?
                 if let filePath = options.path {
-                    let navigation = try await self.navigateToPath(
-                        filePath,
+                    let route = try await self.navigateFileDialog(
+                        path: filePath,
+                        filename: options.filename,
                         in: dialog,
                         ensureExpanded: options.ensureExpanded,
                         appName: appName,
                         execution: execution)
+                    let navigation = route.navigation
+                    selectedFile = route.selectedFile
+                    details["selected_file"] = selectedFile
                     details["path"] = filePath
                     details["path_navigation_method"] = navigation.method
                     if let outcome = navigation.outcome {
@@ -136,7 +130,7 @@ extension DialogService {
                     details["found_via"] = resolution.foundVia
                 }
 
-                if let fileName = options.filename {
+                if let fileName = options.filename, selectedFile == nil {
                     if let outcome = try await self.updateFilename(fileName, in: dialog, execution: execution) {
                         actionSequence.record(.outcome(outcome))
                     }
@@ -162,11 +156,10 @@ extension DialogService {
                 details["found_via"] = resolution.foundVia
 
                 let resolvedActionButton = self.fileDialogActionButton(options.actionButton)
-                let clickResult = try await self.clickButton(
+                let clickResult = try await self.confirmFileDialog(
                     in: dialog,
                     buttonText: resolvedActionButton,
-                    allowFallbackToDefaultAction: true,
-                    allowGlobalFallback: true,
+                    selectedFile: selectedFile,
                     execution: execution)
                 if let outcome = clickResult.outcome {
                     actionSequence.record(.outcome(outcome))
@@ -212,6 +205,21 @@ extension DialogService {
                     after: actionSequence,
                     target: failureTarget)
             }
+        }
+    }
+
+    private func logFileDialogOptions(_ options: FileDialogOptions) {
+        self.logger.info("Handling file dialog")
+        if let path = options.path {
+            self.logger.debug("Path: \(path)")
+        }
+        if let filename = options.filename {
+            self.logger.debug("Filename: \(filename)")
+        }
+        if let actionButton = options.actionButton {
+            self.logger.debug("Action button: \(actionButton)")
+        } else {
+            self.logger.debug("Action button: (default/OKButton)")
         }
     }
 

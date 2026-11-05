@@ -29,7 +29,9 @@ struct DialogFileDialogFilenameTests {
                 return
             }
             #expect(error.errorDescription ==
-                "No safe filename field found in the file dialog. Complete the file selection manually, or retry with a dialog that exposes a filename field.")
+                "No safe filename field found. On an Open panel, use the file's full path " +
+                "or --path <dir> --name <file>. " +
+                "Otherwise, complete the selection manually.")
         } catch {
             Issue.record("Expected DialogError.noFilenameField, got \(error)")
         }

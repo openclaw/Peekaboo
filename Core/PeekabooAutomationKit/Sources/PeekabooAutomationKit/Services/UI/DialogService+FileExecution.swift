@@ -154,24 +154,12 @@ extension DialogService {
             return role == "AXButton" ? self.collectButtons(from: dialog) : self.collectTextFields(from: dialog)
         }
         let budget = try DialogOperationDeadline.resolve(operationName: "file dialog controls")
-        var visited: Set<Element> = []
-        var stack = [dialog]
         var controls: [Element] = []
-        while let element = stack.popLast() {
-            try budget.check()
-            guard visited.insert(element).inserted else { continue }
-            let node = try await self.discoveryReaders.hierarchyNode(
-                element, execution.target.identity.processIdentity, budget)
-            if element != dialog,
-               ["AXApplication", "AXWindow"].contains(node.evidence.role) ||
-               DialogElementClassifier.isStructuralDialog(node.evidence)
-            {
-                continue
-            }
+        _ = try await self.visitFileDialogTree(from: dialog, execution: execution, budget: budget) { element, node in
             if node.evidence.role == role || (role == "AXTextField" && node.evidence.role == "AXTextArea") {
                 controls.append(element)
             }
-            stack.append(contentsOf: node.children.reversed())
+            return .descend
         }
         return controls
     }
