@@ -16,17 +16,21 @@ extension DialogService {
         return DialogFileSelectionMetadata.readDirect(element)
     }
 
+    /// A bare stem counts only when the panel would display it, so a parent folder named like the file is not evidence.
+    nonisolated static func fileDialogSelectionNames(
+        path: String,
+        displayName: (String) -> String = { FileManager.default.displayName(atPath: $0) }) -> Set<String>
+    {
+        [URL(fileURLWithPath: path).lastPathComponent.lowercased(), displayName(path).lowercased()]
+    }
+
     func fileDialogHasSelectedFile(
         _ path: String,
         in dialog: Element,
         execution: FileExecution? = nil,
         budget: DialogOperationDeadline) async throws -> Bool
     {
-        let url = URL(fileURLWithPath: path)
-        let names = Set([
-            url.lastPathComponent.lowercased(),
-            url.deletingPathExtension().lastPathComponent.lowercased(),
-        ])
+        let names = Self.fileDialogSelectionNames(path: path)
         return try await self.visitFileDialogTree(from: dialog, execution: execution, budget: budget) { element, _ in
             let metadata = try await self.fileSelectionMetadata(element, execution: execution, budget: budget)
             let selectedItems = metadata.selectedItems + (metadata.isSelected ? [element] : [])
@@ -40,13 +44,14 @@ extension DialogService {
                     visit: { descendant, _ in
                         let metadata = try await self.fileSelectionMetadata(
                             descendant, execution: execution, budget: budget)
-                        return metadata.names.contains { names.contains($0.lowercased()) }
+                        return metadata.names.contains { names.contains($0.lowercased()) } ? .matched : .descend
                     })
                 if matches {
-                    return true
+                    return .matched
                 }
             }
-            return false
+            // A container that reports its selection needs no row-by-row walk; large folders must fit the budget.
+            return metadata.selectedItems.isEmpty ? .descend : .skipChildren
         }
     }
 
@@ -56,7 +61,7 @@ extension DialogService {
         execution: FileExecution? = nil) async throws
     {
         let budget = try DialogOperationDeadline.bounded(
-            timeoutSeconds: 2,
+            timeoutSeconds: 3,
             operationName: "file selection verification")
         do {
             repeat {

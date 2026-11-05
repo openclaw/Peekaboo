@@ -77,10 +77,25 @@ struct DialogFileDialogSelectionTests {
     }
 
     @Test
-    func `Hidden extension is accepted`() async throws {
-        #expect(try await Self.hasSelection(Self.panel(children: [
-            Self.item(view: "icon", name: "Alpha", selected: true),
+    func `A bare stem counts only when the panel displays the file that way`() async throws {
+        #expect(DialogService.fileDialogSelectionNames(path: "/files/alpha.txt") { _ in "Alpha" } ==
+            ["alpha.txt", "alpha"])
+        #expect(DialogService.fileDialogSelectionNames(path: "/files/alpha.txt") { _ in "alpha.txt" } == ["alpha.txt"])
+        #expect(try await !Self.hasSelection(Self.panel(children: [
+            Self.item(view: "column", name: "alpha", selected: true),
         ])))
+    }
+
+    @Test
+    func `A container reporting another selection is not walked row by row`() async throws {
+        let target = Self.item(view: "column", name: "alpha.txt", selected: true)
+        let container = Self.element(role: "AXList", children: [target])
+        let other = Self.element(role: "AXGroup", children: [Self.element(role: "AXStaticText", name: "beta.txt")])
+        let panel = Self.panel(children: [container])
+        let fixture = try SelectionFixture(panel: panel)
+        fixture.selectedItems[container] = try Self.readSelectedItems(attribute: "AXSelectedChildren", item: other)
+        #expect(try await !fixture.service().fileDialogHasSelectedFile(
+            "/files/alpha.txt", in: panel, execution: fixture.execution, budget: Self.budget()))
     }
 
     @Test

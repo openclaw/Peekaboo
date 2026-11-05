@@ -2,6 +2,12 @@ import AXorcist
 import Foundation
 import PeekabooFoundation
 
+enum FileDialogTreeVisit {
+    case descend
+    case skipChildren
+    case matched
+}
+
 @MainActor
 extension DialogService {
     func visitFileDialogTree(
@@ -10,7 +16,7 @@ extension DialogService {
         budget: DialogOperationDeadline,
         maximumDepth: Int? = nil,
         allowRootDialog: Bool = true,
-        visit: (Element, DialogHierarchyNode) async throws -> Bool) async throws -> Bool
+        visit: (Element, DialogHierarchyNode) async throws -> FileDialogTreeVisit) async throws -> Bool
     {
         var visited: Set<Element> = []
         var stack = [(root, 0)]
@@ -36,12 +42,12 @@ extension DialogService {
                     continue
                 }
             }
-            let matched = try await visit(element, node)
+            let visitResult = try await visit(element, node)
             try budget.check()
-            if matched {
+            if visitResult == .matched {
                 return true
             }
-            if maximumDepth.map({ depth < $0 }) ?? true {
+            if visitResult == .descend, maximumDepth.map({ depth < $0 }) ?? true {
                 stack.append(contentsOf: node.children.reversed().map { ($0, depth + 1) })
             }
         }

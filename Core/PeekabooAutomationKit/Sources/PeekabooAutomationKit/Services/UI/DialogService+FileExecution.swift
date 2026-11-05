@@ -159,7 +159,7 @@ extension DialogService {
             if node.evidence.role == role || (role == "AXTextField" && node.evidence.role == "AXTextArea") {
                 controls.append(element)
             }
-            return false
+            return .descend
         }
         return controls
     }
