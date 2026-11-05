@@ -4,6 +4,7 @@
 
 - Update Swift Log to 1.16.2 for in-place metadata writes and Swift Configuration to 1.4.0, preserving the Swift 6.2 and macOS baselines.
 - Run main CodeQL analysis on the existing weekly schedule instead of every push, preserving PR scans and independent manual runs.
+- Refuse filename entry into Search, Filter, Tags, or Comments controls in file dialogs, with an actionable error when no safe filename field is available. Thanks @goutamadwant! #1159, refs #1158.
 - Clarify exact-window target-changed errors with unavailable identity versus changed components and whether validation failed before the operation, after capture, or after the operation. #1151.
 - Wait 250ms instead of 150ms before restoring the previous clipboard after a temporary paste, and document that restoration is time-based: an app that reads the clipboard later than the restore delay can paste the previous contents, so raise `--restore-delay` (MCP `restore_delay_ms`) for slow receivers. #1140, refs #1111.
 

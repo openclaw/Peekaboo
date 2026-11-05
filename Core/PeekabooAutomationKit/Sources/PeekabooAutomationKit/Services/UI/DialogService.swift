@@ -12,6 +12,7 @@ public enum DialogError: Error {
     case fieldNotFound
     case invalidFieldIndex
     case noTextFields
+    case noFilenameField
     case noDismissButton
     case fileVerificationFailed(expectedPath: String)
     case fileSavedToUnexpectedDirectory(expectedDirectory: String, actualDirectory: String, actualPath: String)
@@ -34,6 +35,8 @@ extension DialogError: LocalizedError {
             "Invalid field index."
         case .noTextFields:
             "No text fields found in dialog."
+        case .noFilenameField:
+            "No safe filename field found in the file dialog. Complete the file selection manually, or retry with a dialog that exposes a filename field."
         case .noDismissButton:
             "No dismiss button found in dialog."
         case let .fileVerificationFailed(expectedPath):

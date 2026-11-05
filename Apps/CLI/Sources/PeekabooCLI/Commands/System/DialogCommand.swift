@@ -500,6 +500,8 @@ func handleDialogServiceError(_ error: DialogError, jsonOutput: Bool, logger: Lo
         .INVALID_INPUT
     case .noTextFields:
         .ELEMENT_NOT_FOUND
+    case .noFilenameField:
+        .ELEMENT_NOT_FOUND
     case .noDismissButton:
         .ELEMENT_NOT_FOUND
     case .fileVerificationFailed:
