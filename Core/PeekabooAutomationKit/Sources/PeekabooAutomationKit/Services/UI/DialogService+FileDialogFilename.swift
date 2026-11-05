@@ -4,6 +4,35 @@ import PeekabooFoundation
 
 @MainActor
 extension DialogService {
+    static func isUnsafeFileDialogFilenameField(_ field: Element) -> Bool {
+        let metadata = [
+            field.attribute(Attribute<String>("AXIdentifier")) ?? "",
+            field.attribute(Attribute<String>("AXRoleDescription")) ?? "",
+            field.title() ?? "",
+            field.attribute(Attribute<String>("AXPlaceholderValue")) ?? "",
+            field.attribute(Attribute<String>("AXDescription")) ?? "",
+        ]
+        let normalizedMetadata = metadata.map { $0.lowercased() }
+        if field.isSearchField() || normalizedMetadata.contains(where: {
+            $0.contains("search") || $0.contains("filter") || $0.contains("comment") ||
+                $0.contains("tagfield") || $0.contains("tagsfield")
+        }) {
+            return true
+        }
+        let unsafeWords = Set(["tag", "tags"])
+        let words = metadata.flatMap { value in
+            value
+                .replacingOccurrences(
+                    of: "([a-z0-9])([A-Z])",
+                    with: "$1 $2",
+                    options: .regularExpression)
+                .lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }
+        }
+        return words.contains(where: unsafeWords.contains)
+    }
+
     func updateFilename(
         _ fileName: String,
         in dialog: Element,
@@ -19,54 +48,22 @@ extension DialogService {
             }
 
             let expectedBaseName = URL(fileURLWithPath: fileName).deletingPathExtension().lastPathComponent.lowercased()
-            let identifierAttribute = Attribute<String>("AXIdentifier")
-
-            func fieldScore(_ field: Element) -> Int {
-                let title = (field.title() ?? "").lowercased()
-                let placeholder = (field.attribute(Attribute<String>("AXPlaceholderValue")) ?? "").lowercased()
-                let description = (field.attribute(Attribute<String>("AXDescription")) ?? "").lowercased()
-                let identifier = (field.attribute(identifierAttribute) ?? "").lowercased()
-                let combined = "\(title) \(placeholder) \(description) \(identifier)"
-
-                if combined.contains("tags") {
-                    return 100
-                }
-                if combined.contains("save") ||
-                    combined.contains("file name") ||
-                    combined.contains("filename") ||
-                    combined.contains("name")
-                {
-                    return 0
-                }
-
-                let value = (field.value() as? String) ?? ""
-                if !value.isEmpty {
-                    return 10
-                }
-                return 50
+            let enabledFields = textFields.filter { $0.isEnabled() ?? true }
+            let nativeFields = enabledFields.filter {
+                $0.attribute(Attribute<String>("AXIdentifier")) == "saveAsNameTextField"
             }
-
-            let fieldsToTry: [Element] = if let saveAsField = textFields.first(where: { field in
-                field.attribute(identifierAttribute) == "saveAsNameTextField"
-            }) {
-                [saveAsField]
+            let fieldsToTry: [Element] = if nativeFields.count == 1 {
+                nativeFields
+            } else if nativeFields.isEmpty, enabledFields.count == 1,
+                      let field = enabledFields.first, !Self.isUnsafeFileDialogFilenameField(field)
+            {
+                [field]
             } else {
-                textFields
-                    .filter { $0.isEnabled() ?? true }
-                    .compactMap { field -> (field: Element, score: Int, position: CGPoint)? in
-                        guard let position = field.position() else { return nil }
-                        return (field: field, score: fieldScore(field), position: position)
-                    }
-                    .sorted(by: { lhs, rhs in
-                        if lhs.score != rhs.score {
-                            return lhs.score < rhs.score
-                        }
-                        if lhs.position.y != rhs.position.y {
-                            return lhs.position.y < rhs.position.y
-                        }
-                        return lhs.position.x < rhs.position.x
-                    })
-                    .map(\.field)
+                []
+            }
+            guard !fieldsToTry.isEmpty else {
+                self.logger.error("No safe filename field found in file dialog")
+                throw DialogError.noFilenameField
             }
 
             for (index, field) in fieldsToTry.indexed() {
