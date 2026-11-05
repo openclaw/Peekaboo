@@ -15,6 +15,7 @@ public enum DialogError: Error {
     case noFilenameField
     case noDismissButton
     case fileSelectionNotVerified(path: String)
+    case fileSelectionTargetMissing(path: String)
     case fileVerificationFailed(expectedPath: String)
     case fileSavedToUnexpectedDirectory(expectedDirectory: String, actualDirectory: String, actualPath: String)
 }
@@ -42,8 +43,10 @@ extension DialogError: LocalizedError {
                 "Otherwise, complete the selection manually."
         case .noDismissButton:
             "No dismiss button found in dialog."
+        case let .fileSelectionTargetMissing(path):
+            "No file exists at '\(path)', so the panel cannot select it."
         case let .fileSelectionNotVerified(path):
-            "The panel did not select '\(path)'. Check that the file exists and that the panel allows that type."
+            "The panel did not select '\(path)'. Check that the panel allows that file type."
         case let .fileVerificationFailed(expectedPath):
             "Dialog reported success, but the saved file did not appear at: \(expectedPath)"
         case let .fileSavedToUnexpectedDirectory(expectedDirectory, actualDirectory, actualPath):

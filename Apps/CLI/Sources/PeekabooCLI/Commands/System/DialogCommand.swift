@@ -504,7 +504,7 @@ func handleDialogServiceError(_ error: DialogError, jsonOutput: Bool, logger: Lo
         .ELEMENT_NOT_FOUND
     case .noDismissButton:
         .ELEMENT_NOT_FOUND
-    case .fileVerificationFailed, .fileSelectionNotVerified:
+    case .fileVerificationFailed, .fileSelectionNotVerified, .fileSelectionTargetMissing:
         .FILE_IO_ERROR
     case .fileSavedToUnexpectedDirectory:
         .FILE_IO_ERROR
@@ -512,7 +512,7 @@ func handleDialogServiceError(_ error: DialogError, jsonOutput: Bool, logger: Lo
 
     if jsonOutput {
         let details: String? = switch error {
-        case let .fileSelectionNotVerified(path):
+        case let .fileSelectionNotVerified(path), let .fileSelectionTargetMissing(path):
             "expected_path=\(path)"
         case let .fileVerificationFailed(expectedPath):
             "expected_path=\(expectedPath)"

@@ -45,19 +45,30 @@ extension DialogService {
         return resolved.isFile ? resolved.expandedPath : nil
     }
 
+    /// Only ENOENT counts: a path this process may not read can still be selectable in the panel's own process.
+    nonisolated static func fileDialogFileIsMissing(_ path: String) -> Bool {
+        var info = stat()
+        return stat(path, &info) != 0 && errno == ENOENT
+    }
+
     func navigateFileDialog(
         path: String,
         filename: String?,
         in dialog: Element,
         ensureExpanded: Bool,
         appName: String?,
-        execution: FileExecution? = nil) async throws
+        execution: FileExecution? = nil,
+        fileIsMissing: (String) -> Bool = DialogService.fileDialogFileIsMissing) async throws
         -> (navigation: FileDialogNavigationResult, selectedFile: String?)
     {
         if let selectedFile = Self.fileToSelect(path: path, filename: filename),
            try await Self.fileDialogFilenameField(in: self.fileDialogControls(
                in: dialog, execution: execution, role: "AXTextField")) == nil
         {
+            // Go to Folder stays open on a path that does not exist, so refuse before any input.
+            guard !fileIsMissing(selectedFile) else {
+                throw DialogError.fileSelectionTargetMissing(path: selectedFile)
+            }
             let outcome = try await self.navigateViaGoToFolder(
                 path: selectedFile, dialog: dialog, appName: appName, execution: execution)
             return (FileDialogNavigationResult(

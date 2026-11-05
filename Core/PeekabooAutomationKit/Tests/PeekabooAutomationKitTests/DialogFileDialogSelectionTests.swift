@@ -153,7 +153,12 @@ struct DialogFileDialogSelectionTests {
         let panel = Self.panel(children: [search, path, Self.button()])
         let service = DialogService(syntheticInputDriver: driver)
         let route = try await service.navigateFileDialog(
-            path: "/files", filename: "alpha.txt", in: panel, ensureExpanded: false, appName: nil)
+            path: "/files",
+            filename: "alpha.txt",
+            in: panel,
+            ensureExpanded: false,
+            appName: nil,
+            fileIsMissing: { _ in false })
         #expect(route.selectedFile == "/files/alpha.txt")
         #expect(route.navigation.method == "go_to_folder_file_selection")
         #expect(driver.typed == ["/files/alpha.txt"])
@@ -193,6 +198,28 @@ struct DialogFileDialogSelectionTests {
         #expect(driver.typed == ["/files"])
         _ = try await service.updateFilename("alpha.txt", in: panel)
         #expect(driver.typed == ["/files", "alpha.txt"])
+    }
+
+    @Test
+    func `A missing file is refused before any Go to Folder input`() async throws {
+        let driver = SelectionInputDriver()
+        let panel = Self.panel(children: [Self.field(identifier: "Search"), Self.button()])
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        do {
+            _ = try await DialogService(syntheticInputDriver: driver).navigateFileDialog(
+                path: missing, filename: nil, in: panel, ensureExpanded: false, appName: nil)
+            Issue.record("Expected a missing-file refusal")
+        } catch let DialogError.fileSelectionTargetMissing(path) {
+            #expect(path == missing)
+        }
+        #expect(driver.typed.isEmpty)
+        #expect(driver.hotkeys.isEmpty)
+    }
+
+    @Test
+    func `Only a confirmed absence counts as missing`() {
+        #expect(DialogService.fileDialogFileIsMissing("/nonexistent-\(UUID().uuidString)"))
+        #expect(!DialogService.fileDialogFileIsMissing(FileManager.default.temporaryDirectory.path))
     }
 
     @Test
