@@ -118,6 +118,21 @@ struct ClickCommandFocusVerificationTests {
         #expect(message == nil)
     }
 
+    @Test(arguments: [false, true])
+    func `Focused window lookup failure refuses even a matching window`(hasMatchingWindow: Bool) {
+        let message = CoordinateClickFocusVerifier.mismatchMessage(
+            targetApp: "Arc",
+            targetPID: 41,
+            frontmost: FrontmostApplicationIdentity(name: "Arc", processIdentifier: 41),
+            targetWindowID: 201,
+            focusedWindow: hasMatchingWindow ? FocusedWindowIdentity(windowID: 201) : nil,
+            lookupFailure: "Multiple apps match 'Arc'"
+        )
+
+        #expect(message?.contains("Target window 201") == true)
+        #expect(message?.contains("Focused window: lookup failed: Multiple apps match 'Arc'") == true)
+    }
+
     @Test
     func `Resolved focused window mismatch fails`() {
         let frontmost = FrontmostApplicationIdentity(

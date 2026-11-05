@@ -114,6 +114,18 @@ public final class DesktopContextService {
             self.logger.debug("Failed to read focused window: \(error.localizedDescription)")
         }
 
+        do {
+            if let frontmostWindow = try await self.services.windows.listWindows(target: .frontmost).first {
+                return FocusedWindowInfo(
+                    appName: frontApp.name,
+                    title: frontmostWindow.title,
+                    bounds: frontmostWindow.bounds,
+                    processId: Int(frontApp.processIdentifier))
+            }
+        } catch {
+            self.logger.debug("Failed to read frontmost window hint: \(error.localizedDescription)")
+        }
+
         return FocusedWindowInfo(
             appName: frontApp.name,
             title: "",

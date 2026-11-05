@@ -22,7 +22,9 @@ extension DialogService {
                     continue
                 }
 
-                let windowsOutput = try await self.applicationService.listWindows(for: app.name, timeout: nil)
+                let windowsOutput = try await self.applicationService.listWindows(
+                    for: "PID:\(app.processIdentifier)",
+                    timeout: nil)
                 if let window = windowsOutput.data.windows.first(where: {
                     self.matchesDialogWindowTitle($0.title, expectedTitle: windowTitle)
                 }) {
@@ -77,7 +79,10 @@ extension DialogService {
                 continue
             }
 
-            guard let windowsOutput = try? await self.applicationService.listWindows(for: app.name, timeout: nil) else {
+            guard let windowsOutput = try? await self.applicationService.listWindows(
+                for: "PID:\(app.processIdentifier)",
+                timeout: nil)
+            else {
                 continue
             }
 

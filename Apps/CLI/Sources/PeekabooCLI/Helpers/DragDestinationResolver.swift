@@ -13,10 +13,11 @@ struct DragDestinationResolver {
         }
 
         let appInfo = try await self.resolveApplication(appName)
-        if let point = try? await self.centerOfBestWindow(for: appInfo.name) {
+        let appIdentifier = "PID:\(appInfo.processIdentifier)"
+        if let point = try? await self.centerOfBestWindow(for: appIdentifier) {
             return point
         }
-        if let point = try await self.centerOfBestWindow(target: .application(appInfo.name)) {
+        if let point = try await self.centerOfBestWindow(target: .application(appIdentifier)) {
             return point
         }
 
@@ -43,8 +44,8 @@ struct DragDestinationResolver {
         return CGPoint(x: position.x + size.width / 2, y: position.y + size.height / 2)
     }
 
-    private func centerOfBestWindow(for appName: String) async throws -> CGPoint? {
-        let windowList = try await self.services.applications.listWindows(for: appName, timeout: nil)
+    private func centerOfBestWindow(for appIdentifier: String) async throws -> CGPoint? {
+        let windowList = try await self.services.applications.listWindows(for: appIdentifier, timeout: nil)
         return self.centerOfBestWindow(in: windowList.data.windows)
     }
 

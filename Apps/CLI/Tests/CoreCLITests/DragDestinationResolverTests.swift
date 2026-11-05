@@ -30,6 +30,28 @@ struct DragDestinationResolverTests {
 
     @Test
     @MainActor
+    func `Resolved app destination lists windows by PID when names are shared`() async throws {
+        let apps = [
+            ServiceApplicationInfo(processIdentifier: 101, bundleIdentifier: "com.example.first", name: "Arc"),
+            ServiceApplicationInfo(processIdentifier: 102, bundleIdentifier: "com.example.second", name: "Arc"),
+        ]
+        let window = ServiceWindowInfo(
+            windowID: 7, title: "Document", bounds: CGRect(x: 20, y: 40, width: 300, height: 200)
+        )
+        let applications = DestinationApplicationService(
+            applications: apps, windowsByApp: ["PID:101": [window]]
+        )
+        let services = ServicesWithDestinationStubs(applications: applications)
+
+        let point = try await DragDestinationResolver(services: services)
+            .destinationPoint(forApplicationNamed: "com.example.first")
+
+        #expect(point == CGPoint(x: 170, y: 140))
+        #expect(applications.listWindowIdentifiers == ["PID:101"])
+    }
+
+    @Test
+    @MainActor
     func `App destination falls back to window management service`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 101,
@@ -45,7 +67,7 @@ struct DragDestinationResolverTests {
         )
         let services = ServicesWithDestinationStubs(
             applications: DestinationApplicationService(applications: [app], windowsByApp: [:]),
-            windows: DestinationWindowService(windowsByApp: ["Finder": [window]])
+            windows: DestinationWindowService(windowsByApp: ["PID:101": [window]])
         )
 
         let point = try await DragDestinationResolver(services: services)
@@ -149,6 +171,7 @@ private final class ServicesWithDestinationStubs: PeekabooServiceProviding {
 private final class DestinationApplicationService: ApplicationServiceProtocol {
     private let applications: [ServiceApplicationInfo]
     private let windowsByApp: [String: [ServiceWindowInfo]]
+    private(set) var listWindowIdentifiers: [String] = []
 
     init(applications: [ServiceApplicationInfo], windowsByApp: [String: [ServiceWindowInfo]] = [:]) {
         self.applications = applications
@@ -174,6 +197,7 @@ private final class DestinationApplicationService: ApplicationServiceProtocol {
         for appIdentifier: String,
         timeout _: Float?
     ) async throws -> UnifiedToolOutput<ServiceWindowListData> {
+        self.listWindowIdentifiers.append(appIdentifier)
         let targetApp = self.applications.first { $0.name == appIdentifier || $0.bundleIdentifier == appIdentifier }
         let windows = self.windowsByApp[appIdentifier] ?? targetApp.flatMap { self.windowsByApp[$0.name] } ?? []
         return UnifiedToolOutput(

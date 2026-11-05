@@ -45,7 +45,7 @@ extension SeeCommand {
             return false
         }
 
-        let lookupIdentifier = app.bundleIdentifier ?? app.name
+        let lookupIdentifier = "PID:\(app.processIdentifier)"
         guard let response = try await FocusFailurePolicy.optional({
             try await services.applications.listWindows(for: lookupIdentifier, timeout: 1)
         }) else {

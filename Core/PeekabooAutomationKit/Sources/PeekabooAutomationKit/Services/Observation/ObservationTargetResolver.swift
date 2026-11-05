@@ -195,7 +195,7 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
             }
         }
 
-        let lookupIdentifier = app.bundleIdentifier ?? app.name
+        let lookupIdentifier = "PID:\(app.processIdentifier)"
         let windows = try await self.applications.listWindows(for: lookupIdentifier, timeout: 2).data.windows
         return try self.resolveApplication(app, selection: selection, windows: windows)
     }
@@ -204,7 +204,7 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
         _ app: ServiceApplicationInfo,
         selection: WindowSelection) async throws -> ResolvedObservationTarget
     {
-        let lookupIdentifier = app.bundleIdentifier ?? app.name
+        let lookupIdentifier = "PID:\(app.processIdentifier)"
         let windows = try await self.applications.listWindows(for: lookupIdentifier, timeout: 2).data.windows
             .map(Self.readOnlyWindowInfo)
         return try self.resolveApplication(app, selection: selection, windows: windows)

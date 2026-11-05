@@ -48,7 +48,7 @@ extension WindowManagementService {
 
         case .frontmost:
             let frontmostApp = try await self.applicationService.getFrontmostApplication()
-            let windows = try await self.windows(for: frontmostApp.name)
+            let windows = try await self.windows(for: "PID:\(frontmostApp.processIdentifier)")
             return ObservationTargetResolver.bestWindow(from: windows).map { [$0] } ?? []
 
         case let .windowId(id):
@@ -64,21 +64,14 @@ extension WindowManagementService {
     }
 
     public func getFocusedWindow() async throws -> ServiceWindowInfo? {
-        let frontmostApp = try await self.applicationService.getFrontmostApplication()
-        let windows = try await self.windows(for: frontmostApp.name)
-        guard let runningApp = NSRunningApplication(processIdentifier: frontmostApp.processIdentifier) else {
-            return ObservationTargetResolver.bestWindow(from: windows)
-        }
-
-        let focusedWindowID = self.windowIdentityService.focusedWindowID(for: runningApp, timeout: 1)
-            .map(Int.init)
-        if let focusedWindowID,
-           let focusedWindow = windows.first(where: { $0.windowID == focusedWindowID })
-        {
-            return focusedWindow
-        }
-
-        return ObservationTargetResolver.bestWindow(from: windows)
+        try await FocusedWindowLookup(
+            frontmostApplication: { try await self.applicationService.getFrontmostApplication() },
+            listWindows: { try await self.windows(for: $0) },
+            windowByID: { try await self.windowById($0) },
+            focusedWindowID: { pid in
+                guard let app = NSRunningApplication(processIdentifier: pid) else { return nil }
+                return self.windowIdentityService.focusedWindowID(for: app, timeout: 1).map(Int.init)
+            }).capture()
     }
 }
 

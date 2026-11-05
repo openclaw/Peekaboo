@@ -97,7 +97,7 @@ extension WindowManagementService {
         for app in appsOutput.data.applications
             where app.isUsableForBroadAutomationDiscovery
         {
-            let windows = try await self.windows(for: app.name)
+            let windows = try await self.windows(for: "PID:\(app.processIdentifier)")
             matches.append(contentsOf: windows.filter {
                 $0.title.localizedCaseInsensitiveContains(substring)
             })
@@ -179,7 +179,6 @@ extension WindowManagementService {
 
             if let windowFromID = try await self.findWindowByTitleUsingWindowID(
                 titleSubstring: titleSubstring,
-                appIdentifier: appIdentifier,
                 app: app)
             {
                 return windowFromID
@@ -278,7 +277,6 @@ extension WindowManagementService {
 
     func findWindowByTitleUsingWindowID(
         titleSubstring: String,
-        appIdentifier: String,
         app: ServiceApplicationInfo) async throws -> Element?
     {
         guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier),
@@ -287,7 +285,7 @@ extension WindowManagementService {
             throw NotFoundError.application(app.name)
         }
 
-        let windows = try await self.windows(for: appIdentifier)
+        let windows = try await self.windows(for: "PID:\(app.processIdentifier)")
         guard let match = windows.first(where: { $0.title.localizedCaseInsensitiveContains(titleSubstring) }) else {
             return nil
         }
