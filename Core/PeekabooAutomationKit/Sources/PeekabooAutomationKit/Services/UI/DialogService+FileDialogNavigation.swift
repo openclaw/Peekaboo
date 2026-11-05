@@ -16,6 +16,57 @@ extension DialogService {
         let targetDisposition: TargetDisposition
     }
 
+    struct FileDialogPath {
+        let expandedPath: String
+        let directoryPath: String
+        let isFile: Bool
+    }
+
+    static func fileDialogPath(_ path: String) -> FileDialogPath {
+        let expandedPath = (path as NSString).expandingTildeInPath
+        let url = URL(fileURLWithPath: expandedPath)
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: expandedPath, isDirectory: &isDirectory)
+        let hasExtension = !url.pathExtension.isEmpty
+        return FileDialogPath(
+            expandedPath: expandedPath,
+            directoryPath: (exists && !isDirectory.boolValue) || hasExtension
+                ? url.deletingLastPathComponent().path : expandedPath,
+            isFile: exists ? !isDirectory.boolValue : hasExtension)
+    }
+
+    static func fileToSelect(path: String?, filename: String?) -> String? {
+        guard let path else { return nil }
+        let resolved = self.fileDialogPath(path)
+        if let filename {
+            let directory = resolved.isFile ? resolved.directoryPath : resolved.expandedPath
+            return URL(fileURLWithPath: directory).appendingPathComponent(filename).path
+        }
+        return resolved.isFile ? resolved.expandedPath : nil
+    }
+
+    func navigateFileDialog(
+        path: String,
+        filename: String?,
+        in dialog: Element,
+        ensureExpanded: Bool,
+        appName: String?,
+        execution: FileExecution? = nil) async throws
+        -> (navigation: FileDialogNavigationResult, selectedFile: String?)
+    {
+        if let selectedFile = Self.fileToSelect(path: path, filename: filename),
+           try await Self.fileDialogFilenameField(in: self.fileDialogControls(
+               in: dialog, execution: execution, role: "AXTextField")) == nil
+        {
+            let outcome = try await self.navigateViaGoToFolder(
+                path: selectedFile, dialog: dialog, appName: appName, execution: execution)
+            return (FileDialogNavigationResult(
+                method: "go_to_folder_file_selection", outcome: outcome, targetDisposition: .unchanged), selectedFile)
+        }
+        return try await (self.navigateToPath(
+            path, in: dialog, ensureExpanded: ensureExpanded, appName: appName, execution: execution), nil)
+    }
+
     func navigateToPath(
         _ filePath: String,
         in dialog: Element,
@@ -23,19 +74,7 @@ extension DialogService {
         appName: String?,
         execution: FileExecution? = nil) async throws -> FileDialogNavigationResult
     {
-        let expandedPath = (filePath as NSString).expandingTildeInPath
-        let targetURL = URL(fileURLWithPath: expandedPath)
-
-        var isDirectory: ObjCBool = false
-        let exists = FileManager.default.fileExists(atPath: expandedPath, isDirectory: &isDirectory)
-
-        let directoryPath: String = if exists, !isDirectory.boolValue {
-            targetURL.deletingLastPathComponent().path
-        } else if !targetURL.pathExtension.isEmpty {
-            targetURL.deletingLastPathComponent().path
-        } else {
-            expandedPath
-        }
+        let directoryPath = Self.fileDialogPath(filePath).directoryPath
 
         return try await self.navigateToDirectory(
             directoryPath: directoryPath,
@@ -181,7 +220,7 @@ extension DialogService {
 
             guard let pathField else {
                 if let outcome = try await self.navigateViaGoToFolder(
-                    directoryPath: requestedDirectory,
+                    path: requestedDirectory,
                     dialog: dialog,
                     appName: appName,
                     execution: execution)
@@ -228,7 +267,7 @@ extension DialogService {
                     self.logger.debug("PathTextField mismatch; Go to Folder.")
                     self.logger.debug("requested: \(requestedDirectory), actual: \(actualDirectory)")
                     if let outcome = try await self.navigateViaGoToFolder(
-                        directoryPath: requestedDirectory,
+                        path: requestedDirectory,
                         dialog: dialog,
                         appName: appName,
                         execution: execution)
@@ -240,7 +279,7 @@ extension DialogService {
             } else {
                 self.logger.debug("PathTextField did not expose an AXValue; falling back to Go to Folder")
                 if let outcome = try await self.navigateViaGoToFolder(
-                    directoryPath: requestedDirectory,
+                    path: requestedDirectory,
                     dialog: dialog,
                     appName: appName,
                     execution: execution)
@@ -273,7 +312,7 @@ extension DialogService {
     }
 
     private func navigateViaGoToFolder(
-        directoryPath: String,
+        path: String,
         dialog: Element,
         appName: String?,
         execution: FileExecution?) async throws -> DesktopActionOutcome?
@@ -285,11 +324,11 @@ extension DialogService {
             {
                 sequence.record(.outcome(outcome))
             }
-            self.logger.debug("Navigating via Go to Folder (Cmd+Shift+G): \(directoryPath)")
+            self.logger.debug("Navigating via Go to Folder (Cmd+Shift+G): \(path)")
 
             var navigationSheet: FileNavigationSheet?
             let keyboardOutcome = try await self.performGoToFolderKeyboardNavigation(
-                directoryPath: directoryPath,
+                path: path,
                 beforeOpen: { try self.requireFileExecutionFocus(execution) },
                 beforeInput: {
                     if let execution {
@@ -322,7 +361,7 @@ extension DialogService {
     }
 
     func performGoToFolderKeyboardNavigation(
-        directoryPath: String,
+        path: String,
         beforeOpen: () throws -> Void = {},
         beforeInput: () throws -> Void = {},
         reassertFocus: () async throws -> DesktopActionOutcome?) async throws -> DesktopActionOutcome
@@ -345,9 +384,9 @@ extension DialogService {
             try beforeInput()
             try sequence.record(.outcome(self.fileDialogGlobalInput(
                 operation: "type the Go to Folder path",
-                unitCount: directoryPath.count)
+                unitCount: path.count)
             {
-                try self.syntheticInputDriver.type(directoryPath, delayPerCharacter: 0.005)
+                try self.syntheticInputDriver.type(path, delayPerCharacter: 0.005)
             }))
             try beforeInput()
             try sequence.record(.outcome(self.fileDialogGlobalInput(operation: "commit Go to Folder") {

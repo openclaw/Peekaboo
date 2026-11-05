@@ -49,6 +49,13 @@ struct DialogDiscoveryReaders {
         try await DialogHierarchyReader.read($0, owner: $1, budget: $2)
     }
 
+    var fileSelection: @MainActor (
+        Element,
+        ApplicationProcessIdentity,
+        DialogOperationDeadline) async throws -> DialogFileSelectionMetadata = {
+        try await DialogFileSelectionReader.read($0, owner: $1, budget: $2)
+    }
+
     var metadata: @MainActor (
         Element,
         ApplicationProcessIdentity,

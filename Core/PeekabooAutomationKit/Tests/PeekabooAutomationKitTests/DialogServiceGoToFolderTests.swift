@@ -16,7 +16,7 @@ struct DialogServiceGoToFolderTests {
         let service = DialogService(syntheticInputDriver: driver)
         do {
             _ = try await service.performGoToFolderKeyboardNavigation(
-                directoryPath: "/tmp/target",
+                path: "/tmp/target",
                 beforeOpen: { throw Self.focusLost },
                 reassertFocus: { nil })
             Issue.record("Expected focus refusal")
@@ -34,7 +34,7 @@ struct DialogServiceGoToFolderTests {
         var checks = 0
         do {
             _ = try await service.performGoToFolderKeyboardNavigation(
-                directoryPath: "/tmp/target",
+                path: "/tmp/target",
                 beforeInput: {
                     checks += 1
                     if checks == failedCheck {
@@ -65,7 +65,7 @@ struct DialogServiceGoToFolderTests {
         let service = DialogService(syntheticInputDriver: driver)
 
         do {
-            _ = try await service.performGoToFolderKeyboardNavigation(directoryPath: "/tmp/target") { nil }
+            _ = try await service.performGoToFolderKeyboardNavigation(path: "/tmp/target") { nil }
             Issue.record("Expected canonical input failure")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .indeterminate)
@@ -86,7 +86,7 @@ struct DialogServiceGoToFolderTests {
         let service = DialogService(syntheticInputDriver: driver)
 
         do {
-            _ = try await service.performGoToFolderKeyboardNavigation(directoryPath: "/tmp/target") { nil }
+            _ = try await service.performGoToFolderKeyboardNavigation(path: "/tmp/target") { nil }
             Issue.record("Expected canonical input failure")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .indeterminate)
@@ -111,7 +111,7 @@ struct DialogServiceGoToFolderTests {
             evidence: .deliveryAccepted,
             unitCount: .one)
 
-        let outcome = try await service.performGoToFolderKeyboardNavigation(directoryPath: "/tmp/target") {
+        let outcome = try await service.performGoToFolderKeyboardNavigation(path: "/tmp/target") {
             focusOutcome
         }
 

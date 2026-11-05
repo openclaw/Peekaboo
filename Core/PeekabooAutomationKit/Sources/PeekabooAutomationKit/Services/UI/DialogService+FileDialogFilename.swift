@@ -33,6 +33,22 @@ extension DialogService {
         return words.contains(where: unsafeWords.contains)
     }
 
+    static func fileDialogFilenameField(in textFields: [Element]) -> Element? {
+        let enabledFields = textFields.filter { $0.isEnabled() ?? true }
+        let nativeFields = enabledFields.filter {
+            $0.attribute(Attribute<String>("AXIdentifier")) == "saveAsNameTextField"
+        }
+        if nativeFields.count == 1 {
+            return nativeFields.first
+        }
+        if nativeFields.isEmpty, enabledFields.count == 1,
+           let field = enabledFields.first, !self.isUnsafeFileDialogFilenameField(field)
+        {
+            return field
+        }
+        return nil
+    }
+
     func updateFilename(
         _ fileName: String,
         in dialog: Element,
@@ -48,19 +64,7 @@ extension DialogService {
             }
 
             let expectedBaseName = URL(fileURLWithPath: fileName).deletingPathExtension().lastPathComponent.lowercased()
-            let enabledFields = textFields.filter { $0.isEnabled() ?? true }
-            let nativeFields = enabledFields.filter {
-                $0.attribute(Attribute<String>("AXIdentifier")) == "saveAsNameTextField"
-            }
-            let fieldsToTry: [Element] = if nativeFields.count == 1 {
-                nativeFields
-            } else if nativeFields.isEmpty, enabledFields.count == 1,
-                      let field = enabledFields.first, !Self.isUnsafeFileDialogFilenameField(field)
-            {
-                [field]
-            } else {
-                []
-            }
+            let fieldsToTry = Self.fileDialogFilenameField(in: textFields).map { [$0] } ?? []
             guard !fieldsToTry.isEmpty else {
                 self.logger.error("No safe filename field found in file dialog")
                 throw DialogError.noFilenameField
