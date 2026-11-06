@@ -691,6 +691,35 @@ struct AgentSettingsView: View {
         ("llama3.2-vision:latest", "Llama 3.2 Vision"),
     ]
 
+    struct OllamaListedModel: Equatable, Sendable {
+        let id: String
+        let name: String
+    }
+
+    /// GET `{baseURL}/api/tags`. An empty list means the probe failed, was
+    /// cancelled, or the settings URL changed before the body arrived.
+    static func probeOllamaModels(
+        baseURL: String,
+        session: URLSession = .shared,
+        isCurrent: @escaping @Sendable () async -> Bool) async -> [OllamaListedModel]
+    {
+        guard let url = URL(string: "\(baseURL)/api/tags") else { return [] }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard await isCurrent() else { return [] }
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                return []
+            }
+            let decoded = try JSONDecoder().decode(OllamaTagsResponse.self, from: data)
+            guard await isCurrent() else { return [] }
+            return decoded.models.map { OllamaListedModel(id: $0.name, name: $0.displayName) }
+        } catch {
+            return []
+        }
+    }
+
     @MainActor
     private func refreshOllamaModels() async {
         let baseURL = self.settings.ollamaBaseURL
@@ -704,28 +733,13 @@ struct AgentSettingsView: View {
         // Drop the previous host's list before the new probe returns.
         self.detectedOllamaModelOptions = []
 
-        guard let url = URL(string: "\(baseURL)/api/tags") else { return }
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard !Task.isCancelled, self.settings.ollamaBaseURL == baseURL else { return }
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                return
+        let models = await Self.probeOllamaModels(baseURL: baseURL) {
+            await MainActor.run {
+                !Task.isCancelled && self.settings.ollamaBaseURL == baseURL
             }
-
-            let decoded = try JSONDecoder().decode(OllamaTagsResponse.self, from: data)
-            guard !Task.isCancelled, self.settings.ollamaBaseURL == baseURL else { return }
-            let models = decoded.models.map { model in
-                (id: model.name, name: model.displayName)
-            }
-
-            if !models.isEmpty {
-                self.detectedOllamaModelOptions = models
-            }
-        } catch {
-            // A cancelled probe belongs to an older URL. Leave the new attempt alone.
+        }
+        if !models.isEmpty {
+            self.detectedOllamaModelOptions = models.map { (id: $0.id, name: $0.name) }
         }
     }
 }

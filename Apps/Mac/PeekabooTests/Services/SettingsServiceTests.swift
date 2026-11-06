@@ -872,6 +872,40 @@ struct PeekabooSettingsConfigHydrationTests {
     }
 
     @Test
+    func `Ollama tags probe switches hosts and drops a stale response`() async throws {
+        let alpha = try TagsServer(modelName: "alpha:latest", delay: 0)
+        let beta = try TagsServer(modelName: "beta:latest", delay: 0)
+        let failed = try TagsServer(modelName: "nope:latest", delay: 0, status: 500)
+        let slow = try TagsServer(modelName: "stale:latest", delay: 0.8)
+        defer {
+            alpha.stop()
+            beta.stop()
+            failed.stop()
+            slow.stop()
+        }
+
+        let first = await AgentSettingsView.probeOllamaModels(baseURL: alpha.baseURL) { true }
+        #expect(first.map(\.id) == ["alpha:latest"])
+
+        let broken = await AgentSettingsView.probeOllamaModels(baseURL: failed.baseURL) { true }
+        #expect(broken.isEmpty)
+
+        let second = await AgentSettingsView.probeOllamaModels(baseURL: beta.baseURL) { true }
+        #expect(second.map(\.id) == ["beta:latest"])
+
+        let stillCurrent = ProbeCurrent()
+        let staleTask = Task {
+            await AgentSettingsView.probeOllamaModels(baseURL: slow.baseURL) {
+                stillCurrent.value
+            }
+        }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        stillCurrent.value = false
+        let stale = await staleTask.value
+        #expect(stale.isEmpty)
+    }
+
+    @Test
     func `Built-in model picker includes current frontier models in tier order`() throws {
         #expect(AgentSettingsView.builtinName(forModelId: "gpt-5.6-sol") == "GPT-5.6 Sol")
         #expect(AgentSettingsView.builtinName(forModelId: "gpt-5.6-terra") == "GPT-5.6 Terra")
@@ -1675,4 +1709,82 @@ private func clearPeekabooDefaults(_ defaults: UserDefaults) {
     for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("peekaboo.") {
         defaults.removeObject(forKey: key)
     }
+}
+
+private final class ProbeCurrent: @unchecked Sendable {
+    nonisolated(unsafe) var value = true
+}
+
+private final class TagsServer {
+    let baseURL: String
+    private let process: Process
+
+    init(modelName: String, delay: Double, status: Int = 200) throws {
+        let script = """
+        import json, sys, time
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        model_name, delay, status = sys.argv[1], float(sys.argv[2]), int(sys.argv[3])
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if delay:
+                    time.sleep(delay)
+                body = json.dumps({"models":[{"name": model_name, "details": {"parameter_size": "7B"}}]}).encode()
+                code = status if self.path.split("?", 1)[0] == "/api/tags" else 404
+                payload = body if code == 200 else b""
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                print(f"GET {self.path} {code} {model_name}", flush=True)
+            def log_message(self, fmt, *args):
+                return
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        print(server.server_address[1], flush=True)
+        server.serve_forever()
+        """
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.arguments = ["-c", script, modelName, String(delay), String(status)]
+        let output = Pipe()
+        process.standardOutput = output
+        try process.run()
+        let portLine = output.fileHandleForReading.readLine()
+        let port = try Int(portLine.trimmingCharacters(in: .whitespacesAndNewlines)).requirePort()
+        self.process = process
+        self.baseURL = "http://127.0.0.1:\(port)"
+    }
+
+    func stop() {
+        if process.isRunning {
+            process.terminate()
+        }
+    }
+}
+
+private extension FileHandle {
+    func readLine() -> String {
+        var data = Data()
+        while true {
+            let byte = self.readData(ofLength: 1)
+            if byte.isEmpty || byte == Data("\n".utf8) {
+                break
+            }
+            data.append(byte)
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+}
+
+private extension Int? {
+    func requirePort() throws -> Int {
+        guard let self else {
+            throw TagsServerError.missingPort
+        }
+        return self
+    }
+}
+
+private enum TagsServerError: Error {
+    case missingPort
 }
