@@ -129,6 +129,15 @@ public final class VisualizerEventReceiver {
                 elements: elements,
                 windowBounds: windowBounds,
                 duration: duration)
+        case let .arrow(target, label, duration, sticky):
+            await self.coordinator.showArrow(
+                id: event.id,
+                target: target,
+                label: label,
+                duration: duration,
+                sticky: sticky)
+        case let .arrowDismiss(id):
+            await self.coordinator.dismissArrow(id: id)
         }
 
         if !success {
