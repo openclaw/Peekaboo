@@ -69,30 +69,26 @@ enum SettingsOpener {
         }
     }
 
+    /// A window is Settings when SwiftUI marked it, or when its content
+    /// controller is a Settings type. A title that merely contains
+    /// "settings" is not enough.
+    static func matchesSettingsWindow(identifier: String?, contentControllerTypeName: String?) -> Bool {
+        if identifier == self.settingsWindowIdentifier {
+            return true
+        }
+        if let contentControllerTypeName, contentControllerTypeName.contains("Settings") {
+            return true
+        }
+        return false
+    }
+
     /// Finds the settings window using multiple detection methods
     static func findSettingsWindow() -> NSWindow? {
         NSApp.windows.first { window in
-            // Check by identifier
-            if window.identifier?.rawValue == self.settingsWindowIdentifier {
-                return true
-            }
-
-            // Check by title
-            if window.isVisible, window.styleMask.contains(.titled),
-               window.title.localizedCaseInsensitiveContains("settings") ||
-               window.title.localizedCaseInsensitiveContains("preferences")
-            {
-                return true
-            }
-
-            // Check by content view controller type
-            if let contentVC = window.contentViewController,
-               String(describing: type(of: contentVC)).contains("Settings")
-            {
-                return true
-            }
-
-            return false
+            let typeName = window.contentViewController.map { String(describing: type(of: $0)) }
+            return self.matchesSettingsWindow(
+                identifier: window.identifier?.rawValue,
+                contentControllerTypeName: typeName)
         }
     }
 }

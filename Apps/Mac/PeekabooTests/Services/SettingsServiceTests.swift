@@ -983,6 +983,19 @@ struct PeekabooSettingsConfigHydrationTests {
     }
 
     @Test
+    func `Settings window match ignores a title that only contains settings`() {
+        #expect(SettingsOpener.matchesSettingsWindow(
+            identifier: "com_apple_SwiftUI_Settings_window",
+            contentControllerTypeName: "EditorController"))
+        #expect(SettingsOpener.matchesSettingsWindow(
+            identifier: "document",
+            contentControllerTypeName: "SettingsHostingController"))
+        #expect(!SettingsOpener.matchesSettingsWindow(
+            identifier: "document",
+            contentControllerTypeName: "EditorController"))
+    }
+
+    @Test
     func `Disabled custom provider does not shadow built-in settings entry`() throws {
         try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
