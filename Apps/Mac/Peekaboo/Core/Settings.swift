@@ -5,6 +5,16 @@ import PeekabooCore
 import ServiceManagement
 import Tachikoma
 
+enum LaunchAtLoginRegistration {
+    static func accepted(_ status: SMAppService.Status) -> Bool {
+        status == .enabled
+    }
+
+    static func needsLoginItemsApproval(_ status: SMAppService.Status) -> Bool {
+        status == .requiresApproval
+    }
+}
+
 /// Application settings and preferences manager.
 ///
 /// Settings are automatically persisted to UserDefaults and synchronized across app launches.
@@ -162,6 +172,16 @@ final class PeekabooSettings {
                 do {
                     if self.launchAtLogin {
                         try SMAppService.mainApp.register()
+                        let status = SMAppService.mainApp.status
+                        if !LaunchAtLoginRegistration.accepted(status) {
+                            self.isLoading = true
+                            self.launchAtLogin = false
+                            self.isLoading = false
+                            self.save()
+                            if LaunchAtLoginRegistration.needsLoginItemsApproval(status) {
+                                SMAppService.openSystemSettingsLoginItems()
+                            }
+                        }
                     } else {
                         try SMAppService.mainApp.unregister()
                     }

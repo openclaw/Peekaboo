@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import PeekabooCore
+import ServiceManagement
 import Testing
 @testable import Peekaboo
 
@@ -980,6 +981,15 @@ struct PeekabooSettingsConfigHydrationTests {
             let agent = try #require(persistedJSON["agent"] as? [String: Any])
             #expect(agent["defaultModel"] as? String == "grok/mini")
         }
+    }
+
+    @Test
+    func `Launch at login stays off until Login Items approval is granted`() {
+        #expect(LaunchAtLoginRegistration.accepted(.enabled))
+        #expect(!LaunchAtLoginRegistration.accepted(.requiresApproval))
+        #expect(LaunchAtLoginRegistration.needsLoginItemsApproval(.requiresApproval))
+        #expect(!LaunchAtLoginRegistration.needsLoginItemsApproval(.enabled))
+        #expect(!LaunchAtLoginRegistration.needsLoginItemsApproval(.notRegistered))
     }
 
     @Test
