@@ -2,6 +2,7 @@ import AppKit
 import KeyboardShortcuts
 import Observation
 import PeekabooCore
+import ServiceManagement
 import SwiftUI
 
 struct SettingsWindow: View {
@@ -174,8 +175,29 @@ struct GeneralSettingsView: View {
                 self.settings.refreshLaunchAtLoginFromService()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            self.settings.refreshLaunchAtLoginFromService()
+        }
+        .task { await self.watchLoginItemsApproval() }
         .onChange(of: self.autoUpdateEnabled) { _, newValue in
             self.updater.automaticallyChecksForUpdates = newValue
+        }
+    }
+
+    /// scenePhase stays active when System Settings opens, so poll until approval lands.
+    private func watchLoginItemsApproval() async {
+        var wasWaiting = false
+        while !Task.isCancelled {
+            let status = SMAppService.mainApp.status
+            if LaunchAtLoginApprovalWatch.shouldReadServiceStatus(wasWaiting: wasWaiting, status: status) {
+                self.settings.refreshLaunchAtLoginFromService()
+            }
+            wasWaiting = LaunchAtLoginRegistration.needsLoginItemsApproval(SMAppService.mainApp.status)
+            do {
+                try await Task.sleep(for: .milliseconds(400))
+            } catch {
+                return
+            }
         }
     }
 }

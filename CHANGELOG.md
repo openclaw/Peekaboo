@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Settings: turn Launch at Login on after Login Items approval while General stays open. The scene can remain active across System Settings, so the switch also refreshes when the app becomes active and while approval is pending.
+
 ## 4.9.8 - 2026-11-05
 
 **Highlights:** Select files in Open panels with `dialog file` and stop typing filenames into Search; keep exact-window clicks and `window focus` working when another running app shares the target's name; find exact windows that an app exposes only through its focused or main window; make `window focus` fall back to Accessibility when macOS declines activation; and start MCP and Agent runtimes when another process owns the capture lane without a Bridge.

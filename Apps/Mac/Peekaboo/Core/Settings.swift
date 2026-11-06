@@ -43,6 +43,14 @@ enum LaunchAtLoginRegistration {
     }
 }
 
+enum LaunchAtLoginApprovalWatch {
+    /// General can stay in the active scene while the user approves Login Items.
+    /// Keep reading Service Management until that pending status clears.
+    static func shouldReadServiceStatus(wasWaiting: Bool, status: SMAppService.Status) -> Bool {
+        wasWaiting || LaunchAtLoginRegistration.needsLoginItemsApproval(status)
+    }
+}
+
 /// Application settings and preferences manager.
 ///
 /// Settings are automatically persisted to UserDefaults and synchronized across app launches.
@@ -236,7 +244,11 @@ final class PeekabooSettings {
     /// Read Service Management again when Settings becomes active, so an
     /// approval in Login Items turns the switch on without another register().
     func refreshLaunchAtLoginFromService() {
-        let enabled = LaunchAtLoginRegistration.accepted(SMAppService.mainApp.status)
+        self.applyLaunchAtLoginServiceStatus(SMAppService.mainApp.status)
+    }
+
+    func applyLaunchAtLoginServiceStatus(_ status: SMAppService.Status) {
+        let enabled = LaunchAtLoginRegistration.accepted(status)
         guard self.launchAtLogin != enabled else { return }
         self.isLoading = true
         self.launchAtLogin = enabled

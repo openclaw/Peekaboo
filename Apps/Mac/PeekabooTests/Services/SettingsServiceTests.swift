@@ -996,6 +996,23 @@ struct PeekabooSettingsConfigHydrationTests {
     }
 
     @Test
+    func `Login Items approval updates the switch while Settings stays active`() throws {
+        #expect(!LaunchAtLoginApprovalWatch.shouldReadServiceStatus(wasWaiting: false, status: .notRegistered))
+        #expect(LaunchAtLoginApprovalWatch.shouldReadServiceStatus(wasWaiting: false, status: .requiresApproval))
+        #expect(LaunchAtLoginApprovalWatch.shouldReadServiceStatus(wasWaiting: true, status: .requiresApproval))
+        #expect(LaunchAtLoginApprovalWatch.shouldReadServiceStatus(wasWaiting: true, status: .enabled))
+        #expect(!LaunchAtLoginApprovalWatch.shouldReadServiceStatus(wasWaiting: false, status: .enabled))
+
+        try withIsolatedSettingsEnvironment { _, credentialCoordinator in
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            settings.applyLaunchAtLoginServiceStatus(.requiresApproval)
+            #expect(settings.launchAtLogin == false)
+            settings.applyLaunchAtLoginServiceStatus(.enabled)
+            #expect(settings.launchAtLogin == true)
+        }
+    }
+
+    @Test
     func `Disabled custom provider does not shadow built-in settings entry`() throws {
         try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
