@@ -32,7 +32,7 @@ final class AnimationOverlayManager {
     /// - Parameters:
     ///   - rect: Window rect in AppKit screen coordinates.
     ///   - content: The animation view; fixed-size content is centered.
-    ///   - duration: How long the window stays before removal/fade.
+    ///   - duration: How long the window stays before removal/fade; `nil` keeps it until explicitly retired.
     ///   - fadeOut: Whether to fade the window out at the end.
     ///   - chromeMargin: Extra margin added on all sides for shadows/glows.
     ///     Pass 0 for views that fill the window and position content in
@@ -44,7 +44,7 @@ final class AnimationOverlayManager {
     func showAnimation(
         at rect: CGRect,
         content: some View,
-        duration: TimeInterval,
+        duration: TimeInterval?,
         fadeOut: Bool,
         chromeMargin: CGFloat = AnimationOverlayManager.defaultChromeMargin,
         replaceKey: String? = nil) -> NSWindow
@@ -80,24 +80,25 @@ final class AnimationOverlayManager {
         // Show window
         window.orderFront(nil)
 
-        // Schedule removal
-        Task { @MainActor in
-            // Keep the overlay visible for the requested duration first.
-            try? await Task.sleep(for: .seconds(duration))
+        if let duration {
+            Task { @MainActor in
+                // Keep the overlay visible for the requested duration first.
+                try? await Task.sleep(for: .seconds(duration))
 
-            // A replacement may have already faded this window out.
-            guard self.overlayWindows.contains(window) else { return }
+                // A replacement may have already faded this window out.
+                guard self.overlayWindows.contains(window) else { return }
 
-            if let replaceKey, self.replaceableWindows[replaceKey] == window {
-                self.replaceableWindows.removeValue(forKey: replaceKey)
+                if let replaceKey, self.replaceableWindows[replaceKey] == window {
+                    self.replaceableWindows.removeValue(forKey: replaceKey)
+                }
+
+                guard fadeOut else {
+                    self.removeWindow(window)
+                    return
+                }
+
+                self.fadeOutAndRemove(window, duration: 0.3)
             }
-
-            guard fadeOut else {
-                self.removeWindow(window)
-                return
-            }
-
-            self.fadeOutAndRemove(window, duration: 0.3)
         }
 
         return window
@@ -140,6 +141,13 @@ final class AnimationOverlayManager {
             self.replaceableWindows.removeValue(forKey: key)
             self.fadeOutAndRemove(window, duration: duration)
         }
+    }
+
+    @discardableResult
+    func fadeOutAnimation(replaceKey: String, duration: TimeInterval = 0.12) -> Bool {
+        guard let window = self.replaceableWindows.removeValue(forKey: replaceKey) else { return false }
+        self.fadeOutAndRemove(window, duration: duration)
+        return true
     }
 
     /// Removes a specific overlay window
