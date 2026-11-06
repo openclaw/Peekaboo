@@ -859,6 +859,19 @@ struct PeekabooSettingsConfigHydrationTests {
     }
 
     @Test
+    func `Ollama model probe runs again when the base URL changes`() {
+        #expect(AgentSettingsView.shouldProbeOllamaModels(
+            attemptedBaseURL: nil,
+            baseURL: "http://localhost:11434"))
+        #expect(!AgentSettingsView.shouldProbeOllamaModels(
+            attemptedBaseURL: "http://localhost:11434",
+            baseURL: "http://localhost:11434"))
+        #expect(AgentSettingsView.shouldProbeOllamaModels(
+            attemptedBaseURL: "http://localhost:11434",
+            baseURL: "http://127.0.0.1:11435"))
+    }
+
+    @Test
     func `Built-in model picker includes current frontier models in tier order`() throws {
         #expect(AgentSettingsView.builtinName(forModelId: "gpt-5.6-sol") == "GPT-5.6 Sol")
         #expect(AgentSettingsView.builtinName(forModelId: "gpt-5.6-terra") == "GPT-5.6 Terra")

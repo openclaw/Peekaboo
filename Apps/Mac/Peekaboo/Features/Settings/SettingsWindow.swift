@@ -266,7 +266,7 @@ struct SettingsToggleRow: View {
 struct AgentSettingsView: View {
     @Environment(PeekabooSettings.self) private var settings
     @State private var detectedOllamaModelOptions: [(id: String, name: String)] = []
-    @State private var hasAttemptedOllamaDetection = false
+    @State private var attemptedOllamaBaseURL: String?
 
     static let builtinProviderCatalog: [(provider: String, models: [(id: String, name: String)])] = [
         ("openai", [
@@ -314,6 +314,12 @@ struct AgentSettingsView: View {
             ("openai/gpt-oss-20b", "GPT-OSS 20B"),
         ]),
     ]
+
+    /// Probe a base URL that has not been attempted yet. The settings task
+    /// restarts when that URL changes, so a failed probe runs again for the new URL.
+    static func shouldProbeOllamaModels(attemptedBaseURL: String?, baseURL: String) -> Bool {
+        attemptedBaseURL != baseURL
+    }
 
     /// Pretty name for a model id from the builtin catalog, regardless of how the
     /// provider is currently classified (builtin vs custom-provider passthrough).
@@ -687,22 +693,30 @@ struct AgentSettingsView: View {
 
     @MainActor
     private func refreshOllamaModels() async {
-        if self.hasAttemptedOllamaDetection {
+        let baseURL = self.settings.ollamaBaseURL
+        guard Self.shouldProbeOllamaModels(
+            attemptedBaseURL: self.attemptedOllamaBaseURL,
+            baseURL: baseURL)
+        else {
             return
         }
-        self.hasAttemptedOllamaDetection = true
+        self.attemptedOllamaBaseURL = baseURL
+        // Drop the previous host's list before the new probe returns.
+        self.detectedOllamaModelOptions = []
 
-        guard let url = URL(string: "\(self.settings.ollamaBaseURL)/api/tags") else { return }
+        guard let url = URL(string: "\(baseURL)/api/tags") else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
+            guard !Task.isCancelled, self.settings.ollamaBaseURL == baseURL else { return }
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                 return
             }
 
             let decoded = try JSONDecoder().decode(OllamaTagsResponse.self, from: data)
+            guard !Task.isCancelled, self.settings.ollamaBaseURL == baseURL else { return }
             let models = decoded.models.map { model in
                 (id: model.name, name: model.displayName)
             }
@@ -711,7 +725,7 @@ struct AgentSettingsView: View {
                 self.detectedOllamaModelOptions = models
             }
         } catch {
-            // Silently ignore detection failures; defaults remain.
+            // A cancelled probe belongs to an older URL. Leave the new attempt alone.
         }
     }
 }
