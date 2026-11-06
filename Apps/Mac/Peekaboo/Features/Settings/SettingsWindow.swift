@@ -266,7 +266,7 @@ struct SettingsToggleRow: View {
 struct AgentSettingsView: View {
     @Environment(PeekabooSettings.self) private var settings
     @State private var detectedOllamaModelOptions: [(id: String, name: String)] = []
-    @State private var hasAttemptedOllamaDetection = false
+    @State private var attemptedOllamaBaseURL: String?
 
     static let builtinProviderCatalog: [(provider: String, models: [(id: String, name: String)])] = [
         ("openai", [
@@ -314,6 +314,12 @@ struct AgentSettingsView: View {
             ("openai/gpt-oss-20b", "GPT-OSS 20B"),
         ]),
     ]
+
+    /// Probe a base URL that has not been attempted yet. The settings task
+    /// restarts when that URL changes, so a failed probe runs again for the new URL.
+    static func shouldProbeOllamaModels(attemptedBaseURL: String?, baseURL: String) -> Bool {
+        attemptedBaseURL != baseURL
+    }
 
     /// Pretty name for a model id from the builtin catalog, regardless of how the
     /// provider is currently classified (builtin vs custom-provider passthrough).
@@ -685,33 +691,56 @@ struct AgentSettingsView: View {
         ("llama3.2-vision:latest", "Llama 3.2 Vision"),
     ]
 
-    @MainActor
-    private func refreshOllamaModels() async {
-        if self.hasAttemptedOllamaDetection {
-            return
-        }
-        self.hasAttemptedOllamaDetection = true
+    struct OllamaListedModel: Equatable, Sendable {
+        let id: String
+        let name: String
+    }
 
-        guard let url = URL(string: "\(self.settings.ollamaBaseURL)/api/tags") else { return }
+    /// GET `{baseURL}/api/tags`. An empty list means the probe failed, was
+    /// cancelled, or the settings URL changed before the body arrived.
+    static func probeOllamaModels(
+        baseURL: String,
+        session: URLSession = .shared,
+        isCurrent: @escaping @Sendable () async -> Bool) async -> [OllamaListedModel]
+    {
+        guard let url = URL(string: "\(baseURL)/api/tags") else { return [] }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                return
+            let (data, response) = try await session.data(for: request)
+            guard await isCurrent(), let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200
+            else {
+                return []
             }
-
             let decoded = try JSONDecoder().decode(OllamaTagsResponse.self, from: data)
-            let models = decoded.models.map { model in
-                (id: model.name, name: model.displayName)
-            }
-
-            if !models.isEmpty {
-                self.detectedOllamaModelOptions = models
-            }
+            guard await isCurrent() else { return [] }
+            return decoded.models.map { OllamaListedModel(id: $0.name, name: $0.displayName) }
         } catch {
-            // Silently ignore detection failures; defaults remain.
+            return []
+        }
+    }
+
+    @MainActor
+    private func refreshOllamaModels() async {
+        let baseURL = self.settings.ollamaBaseURL
+        guard Self.shouldProbeOllamaModels(
+            attemptedBaseURL: self.attemptedOllamaBaseURL,
+            baseURL: baseURL)
+        else {
+            return
+        }
+        self.attemptedOllamaBaseURL = baseURL
+        // Drop the previous host's list before the new probe returns.
+        self.detectedOllamaModelOptions = []
+
+        let models = await Self.probeOllamaModels(baseURL: baseURL) {
+            await MainActor.run {
+                !Task.isCancelled && self.settings.ollamaBaseURL == baseURL
+            }
+        }
+        if !models.isEmpty {
+            self.detectedOllamaModelOptions = models.map { (id: $0.id, name: $0.name) }
         }
     }
 }
