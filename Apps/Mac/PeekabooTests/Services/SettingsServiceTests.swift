@@ -984,12 +984,15 @@ struct PeekabooSettingsConfigHydrationTests {
     }
 
     @Test
-    func `Launch at login stays off until Login Items approval is granted`() {
+    func `Launch at login opens Login Items for a pending registration`() {
+        #expect(LaunchAtLoginRegistration.action(requestedOn: true, status: .notRegistered) == .register)
+        #expect(LaunchAtLoginRegistration.action(requestedOn: true, status: .requiresApproval) == .openLoginItems)
+        #expect(LaunchAtLoginRegistration.action(requestedOn: true, status: .enabled) == .none)
+        #expect(LaunchAtLoginRegistration.action(requestedOn: false, status: .enabled) == .unregister)
+        #expect(LaunchAtLoginRegistration.action(requestedOn: false, status: .requiresApproval) == .unregister)
+        #expect(LaunchAtLoginRegistration.action(requestedOn: false, status: .notRegistered) == .none)
         #expect(LaunchAtLoginRegistration.accepted(.enabled))
         #expect(!LaunchAtLoginRegistration.accepted(.requiresApproval))
-        #expect(LaunchAtLoginRegistration.needsLoginItemsApproval(.requiresApproval))
-        #expect(!LaunchAtLoginRegistration.needsLoginItemsApproval(.enabled))
-        #expect(!LaunchAtLoginRegistration.needsLoginItemsApproval(.notRegistered))
     }
 
     @Test

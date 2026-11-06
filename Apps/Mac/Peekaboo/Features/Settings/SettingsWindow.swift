@@ -99,6 +99,7 @@ struct GeneralSettingsView: View {
     let updater: any UpdaterProviding
 
     @Environment(PeekabooSettings.self) private var settings
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("autoUpdateEnabled") private var autoUpdateEnabled: Bool = true
     @State private var didLoadUpdaterState = false
 
@@ -163,9 +164,15 @@ struct GeneralSettingsView: View {
         }
         .formStyle(.grouped)
         .onAppear {
+            self.settings.refreshLaunchAtLoginFromService()
             guard !self.didLoadUpdaterState else { return }
             self.updater.automaticallyChecksForUpdates = self.autoUpdateEnabled
             self.didLoadUpdaterState = true
+        }
+        .onChange(of: self.scenePhase) { _, phase in
+            if phase == .active {
+                self.settings.refreshLaunchAtLoginFromService()
+            }
         }
         .onChange(of: self.autoUpdateEnabled) { _, newValue in
             self.updater.automaticallyChecksForUpdates = newValue

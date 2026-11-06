@@ -6,12 +6,40 @@ import ServiceManagement
 import Tachikoma
 
 enum LaunchAtLoginRegistration {
+    enum Action: Equatable {
+        case register
+        case unregister
+        case openLoginItems
+        case none
+    }
+
     static func accepted(_ status: SMAppService.Status) -> Bool {
         status == .enabled
     }
 
     static func needsLoginItemsApproval(_ status: SMAppService.Status) -> Bool {
         status == .requiresApproval
+    }
+
+    /// What the switch should do for the status macOS already has.
+    /// A pending registration must open Login Items again, not call register().
+    static func action(requestedOn: Bool, status: SMAppService.Status) -> Action {
+        if requestedOn {
+            switch status {
+            case .enabled:
+                return .none
+            case .requiresApproval:
+                return .openLoginItems
+            default:
+                return .register
+            }
+        }
+        switch status {
+        case .notRegistered:
+            return .none
+        default:
+            return .unregister
+        }
     }
 }
 
@@ -170,20 +198,24 @@ final class PeekabooSettings {
 
                 // Update launch at login status
                 do {
-                    if self.launchAtLogin {
+                    let current = SMAppService.mainApp.status
+                    switch LaunchAtLoginRegistration.action(requestedOn: self.launchAtLogin, status: current) {
+                    case .openLoginItems:
+                        self.setLaunchAtLogin(false)
+                        SMAppService.openSystemSettingsLoginItems()
+                    case .register:
                         try SMAppService.mainApp.register()
-                        let status = SMAppService.mainApp.status
-                        if !LaunchAtLoginRegistration.accepted(status) {
-                            self.isLoading = true
-                            self.launchAtLogin = false
-                            self.isLoading = false
-                            self.save()
-                            if LaunchAtLoginRegistration.needsLoginItemsApproval(status) {
+                        let after = SMAppService.mainApp.status
+                        if !LaunchAtLoginRegistration.accepted(after) {
+                            self.setLaunchAtLogin(false)
+                            if LaunchAtLoginRegistration.needsLoginItemsApproval(after) {
                                 SMAppService.openSystemSettingsLoginItems()
                             }
                         }
-                    } else {
+                    case .unregister:
                         try SMAppService.mainApp.unregister()
+                    case .none:
+                        break
                     }
                 } catch {
                     print("Failed to update launch at login: \(error)")
@@ -200,6 +232,24 @@ final class PeekabooSettings {
 
     // Keyboard shortcuts are now managed by sindresorhus/KeyboardShortcuts library
     // See KeyboardShortcutNames.swift for the defined shortcuts
+
+    /// Read Service Management again when Settings becomes active, so an
+    /// approval in Login Items turns the switch on without another register().
+    func refreshLaunchAtLoginFromService() {
+        let enabled = LaunchAtLoginRegistration.accepted(SMAppService.mainApp.status)
+        guard self.launchAtLogin != enabled else { return }
+        self.isLoading = true
+        self.launchAtLogin = enabled
+        self.isLoading = false
+        self.save()
+    }
+
+    private func setLaunchAtLogin(_ value: Bool) {
+        self.isLoading = true
+        self.launchAtLogin = value
+        self.isLoading = false
+        self.save()
+    }
 
     /// Mac-specific UI Features
     var agentModeEnabled: Bool = false {
