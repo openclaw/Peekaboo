@@ -1756,14 +1756,14 @@ private final class TagsServer {
     }
 
     func stop() {
-        if process.isRunning {
-            process.terminate()
+        if self.process.isRunning {
+            self.process.terminate()
         }
     }
 }
 
-private extension FileHandle {
-    func readLine() -> String {
+extension FileHandle {
+    fileprivate func readLine() -> String {
         var data = Data()
         while true {
             let byte = self.readData(ofLength: 1)
@@ -1776,8 +1776,8 @@ private extension FileHandle {
     }
 }
 
-private extension Int? {
-    func requirePort() throws -> Int {
+extension Int? {
+    fileprivate func requirePort() throws -> Int {
         guard let self else {
             throw TagsServerError.missingPort
         }

@@ -708,8 +708,9 @@ struct AgentSettingsView: View {
         request.httpMethod = "GET"
         do {
             let (data, response) = try await session.data(for: request)
-            guard await isCurrent() else { return [] }
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            guard await isCurrent(), let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200
+            else {
                 return []
             }
             let decoded = try JSONDecoder().decode(OllamaTagsResponse.self, from: data)
