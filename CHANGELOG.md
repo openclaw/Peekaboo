@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Report exact-window target changes as typed JSON in `desktop_observation_target_change_diagnostic`, with the classification, validation phase, changed components and passive recovery status but no identity values, alongside the unchanged message and error code. Bridge hosts send it only to clients offering the new `desktopObservationTargetChangeDiagnostics` capability, so older clients keep their exact signed responses. SwiftPM code that binds the `DesktopObservationError.targetChanged` payload needs to handle its new optional `diagnostic`. Thanks @tonyliu009-cell! #1151.
+
 ## 4.9.8 - 2026-11-05
 
 **Highlights:** Select files in Open panels with `dialog file` and stop typing filenames into Search; keep exact-window clicks and `window focus` working when another running app shares the target's name; find exact windows that an app exposes only through its focused or main window; make `window focus` fall back to Accessibility when macOS declines activation; and start MCP and Agent runtimes when another process owns the capture lane without a Bridge.
