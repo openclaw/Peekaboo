@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooAutomationKit
 import PeekabooBridge
 import PeekabooCore
 import PeekabooFoundation
@@ -10,6 +11,7 @@ private func emitError(
     code: ErrorCode,
     jsonOutput: Bool,
     logger: Logger,
+    desktopObservationTargetChangeDiagnostic: DesktopObservationTargetChangeDiagnostic? = nil,
     screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic? = nil,
     prefix: String = "❌"
 ) {
@@ -17,6 +19,7 @@ private func emitError(
         outputError(
             message: message,
             code: code,
+            desktopObservationTargetChangeDiagnostic: desktopObservationTargetChangeDiagnostic,
             screenCaptureKitOwnershipDiagnostic: screenCaptureKitOwnershipDiagnostic,
             logger: logger
         )
@@ -54,6 +57,7 @@ func handleGenericError(_ error: any Error, jsonOutput: Bool, logger: Logger) {
                 actionOutcome: metadata.outcome,
                 targetReceipt: metadata.targetReceipt,
                 targetIdentity: metadata.targetIdentity,
+                desktopObservationTargetChangeDiagnostic: desktopObservationTargetChangeDiagnostic(for: error),
                 screenCaptureKitOwnershipDiagnostic: screenCaptureKitOwnershipDiagnostic(for: error),
                 logger: logger
             )
@@ -74,6 +78,7 @@ func handleGenericError(_ error: any Error, jsonOutput: Bool, logger: Logger) {
         code: genericErrorCode(for: error),
         jsonOutput: jsonOutput,
         logger: logger,
+        desktopObservationTargetChangeDiagnostic: desktopObservationTargetChangeDiagnostic(for: error),
         screenCaptureKitOwnershipDiagnostic: screenCaptureKitOwnershipDiagnostic(for: error)
     )
 }
@@ -161,4 +166,21 @@ nonisolated func captureOwnershipErrorCode(for error: any Error) -> ErrorCode? {
         (error as? any ResultEnvelopeError)?.envelopeActionFailure
     return screenCaptureKitOwnershipDiagnostic(for: error) != nil || failure?.standardErrorCode == .captureFailed
         ? .CAPTURE_FAILED : nil
+}
+
+nonisolated func desktopObservationTargetChangeDiagnostic(
+    for error: any Error
+) -> DesktopObservationTargetChangeDiagnostic? {
+    switch error {
+    case let observation as DesktopObservationError:
+        observation.targetChangeDiagnostic
+    case let failure as DesktopActionFailure:
+        failure.desktopObservationTargetChangeDiagnostic
+    case let envelope as any ResultEnvelopeError:
+        envelope.envelopeActionFailure?.desktopObservationTargetChangeDiagnostic
+    case let envelope as PeekabooBridgeErrorEnvelope:
+        envelope.desktopObservationTargetChangeDiagnostic
+    default:
+        nil
+    }
 }

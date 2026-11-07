@@ -350,6 +350,14 @@ any earlier mutation outcome. The offer works at existing signed-session protoco
 (including older protocols and unknown offers) retain their legacy error shape. Handshake readiness is not part of a
 terminal operation response digest and remains additive.
 
+Exact-window target-change errors independently require the raw client offer
+`desktopObservationTargetChangeDiagnostics`, at the same signed-session protocol versions as
+`screenCaptureKitOwnershipDiagnostics`. The optional `desktopObservationTargetChangeDiagnostic` envelope field
+(and `desktop_observation_target_change_diagnostic` in an action failure) follows the same rule: remove it before
+computing the digest and signing for unoffered sessions, including receiptless requests. Either offer authorizes
+only its own diagnostic. The protocol version is unchanged; older hosts omit the target-change diagnostic.
+
+
 Protocol `1.22` adds process-generation receipts to process-targeted typing and clicks. Current CLI, Agent, and MCP background input retain the application discovery receipt through Bridge admission and native dispatch. Typing revalidates it before every emitted unit; clicks validate before dispatch and report a retry-unsafe indeterminate outcome if the generation changes after dispatch. Process-targeted Cmd+V uses the generation-pinned hotkey contract introduced in 1.19. New clients refuse older hosts before sending these inputs because an older decoder could otherwise ignore the optional receipt and route input using only a reusable PID. Legacy raw-PID payloads remain decodable for old clients, but current user-facing paths never select them.
 
 Protocol `1.29` adds listener-signed operation receipts without imposing a lifetime request limit on a long-running

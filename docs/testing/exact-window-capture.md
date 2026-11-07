@@ -17,8 +17,9 @@ and bounds receipts; it does not replace them.
 Exact-window observation lane failures distinguish an identity that could not be re-read (the window or owner
 process was gone, or the bounds moved between the resolver's two reads) from a changed window ID, owner PID, owner
 process generation, or bounds. Messages name only the affected components, without their values, and say whether the
-check failed before the operation, after capture, or after the operation. The `targetChanged` error case and error
-code remain unchanged, as do the identity checks and recovery policy.
+check failed before the operation, after capture, or after the operation. The optional typed target-change diagnostic
+now carries the classification, phase, changed components, and passive-recovery result across capability-negotiated
+Bridge sessions and in CLI JSON. Messages, error codes, identity checks, and recovery policy remain unchanged.
 
 ## Verified local reproduction (2026-09-05)
 

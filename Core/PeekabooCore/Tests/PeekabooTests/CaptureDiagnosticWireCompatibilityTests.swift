@@ -136,6 +136,135 @@ struct CaptureDiagnosticWireCompatibilityTests {
             effectiveOps: [.inspectAccessibilityTree])
     }
 
+    @Test(
+        arguments: ["absent", "unknown", "capture", "target", "both"],
+        [29, PeekabooBridgeConstants.protocolVersion.minor])
+    func `target diagnostics are independently negotiated before signing`(offer: String, minor: Int) async throws {
+        let captureCapability = PeekabooBridgeClientCapability.screenCaptureKitOwnershipDiagnostics
+        let targetCapability = PeekabooBridgeClientCapability.desktopObservationTargetChangeDiagnostics
+        let offers: [String] = switch offer {
+        case "capture": [PeekabooBridgeClientCapability.screenCaptureKitOwnershipDiagnostics]
+        case "target": [PeekabooBridgeClientCapability.desktopObservationTargetChangeDiagnostics]
+        case "both": [captureCapability, targetCapability]
+        case "unknown": ["futureTargetDiagnostics"]
+        default: []
+        }
+        let offered = offer == "target" || offer == "both"
+        let fixture = try await Self.fixture(
+            offers: offers, version: .init(major: 1, minor: minor), targetChange: true)
+        let response = try await Self.signedResponse(fixture)
+        let envelope = try #require(Self.error(in: response.response))
+        #expect(envelope.desktopObservationTargetChangeDiagnostic == (offered ? Self.targetDiagnostic : nil))
+        #expect(envelope.code == .notFound)
+        #expect(envelope.kind == .windowNotFound)
+        #expect(envelope.details == #"targetChanged("fixture")"#)
+        #expect(envelope.message == "Desktop observation target changed during capture: fixture")
+        if !offered {
+            let bytes = try PeekabooBridgeOperationReceiptCoding.canonicalData(response.response)
+            let old = try JSONDecoder.peekabooBridgeDecoder().decode(OldResponse.self, from: bytes)
+            #expect(try PeekabooBridgeOperationReceiptCoding.canonicalData(old) == bytes)
+            #expect(try PeekabooBridgeOperationReceiptCoding.sha256(old) == response.receipt.payload.responseSHA256)
+        }
+        let rawData = await fixture.server.handleDecoded(
+            Self.request(priorMutation: false, projected: false), peer: fixture.session.peer)
+        let raw = try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeResponse.self, from: rawData)
+        #expect(Self.error(in: raw)?.desktopObservationTargetChangeDiagnostic == nil)
+    }
+
+    @Test(arguments: [false, true])
+    func `signed target diagnostics retain wrapped mutation failures`(offered: Bool) async throws {
+        let fixture = try await Self.fixture(
+            offers: offered ? [PeekabooBridgeClientCapability.desktopObservationTargetChangeDiagnostics] : [],
+            priorMutation: true,
+            targetChange: true)
+        let response = try await Self.signedResponse(fixture, priorMutation: true, projected: true)
+        let envelope = try #require(Self.error(in: response.response))
+        #expect(envelope.desktopObservationTargetChangeDiagnostic == (offered ? Self.targetDiagnostic : nil))
+        #expect(envelope.desktopActionFailure?.desktopObservationTargetChangeDiagnostic ==
+            (offered ? Self.targetDiagnostic : nil))
+        #expect(envelope.code == .internalError)
+        #expect(envelope.operationMayHaveCompleted)
+        #expect(envelope.message == "fixture mutation failure")
+        #expect(envelope.details?.contains("desktopObservationTargetChangeDiagnostic") == false)
+        if !offered {
+            let old = try JSONDecoder.peekabooBridgeDecoder().decode(
+                OldResponse.self, from: PeekabooBridgeOperationReceiptCoding.canonicalData(response.response))
+            #expect(try PeekabooBridgeOperationReceiptCoding.sha256(old) == response.receipt.payload.responseSHA256)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func `target diagnostic projection covers nested browser action failures`(offered: Bool) {
+        let failure = DesktopActionFailure.preDispatchRefusal(reason: .targetUnavailable, message: "fixture")
+            .preservingDesktopObservationTargetChangeDiagnostic(Self.targetDiagnostic)
+        let envelope = PeekabooBridgeErrorEnvelope(code: .notFound, actionFailure: failure)
+        #expect(envelope.desktopActionFailure?.desktopObservationTargetChangeDiagnostic == Self.targetDiagnostic)
+        let response = PeekabooBridgeResponse.error(envelope)
+            .projectingDesktopObservationTargetChangeDiagnostics(offered: offered)
+        #expect(Self.error(in: response)?.desktopActionFailure?.desktopObservationTargetChangeDiagnostic ==
+            (offered ? Self.targetDiagnostic : nil))
+        let browser = PeekabooBridgeResponse.projectedAction(.init(
+            response: .browserToolResponse(.init(content: [], isError: true, meta: nil, actionFailure: failure)),
+            outcome: failure.outcome.projection))
+            .projectingDesktopObservationTargetChangeDiagnostics(offered: offered)
+        guard case let .projectedAction(projected) = browser,
+              case let .browserToolResponse(result) = projected.response
+        else {
+            Issue.record("Expected nested browser response")
+            return
+        }
+        #expect(result.actionFailure?
+            .desktopObservationTargetChangeDiagnostic == (offered ? Self.targetDiagnostic : nil))
+        #expect(envelope.removingScreenCaptureKitDiagnostic().desktopObservationTargetChangeDiagnostic ==
+            Self.targetDiagnostic)
+        #expect(failure.removingScreenCaptureKitDiagnostic().desktopObservationTargetChangeDiagnostic ==
+            Self.targetDiagnostic)
+    }
+
+    @Test
+    func `target capability versions and missing or future diagnostic fields`() throws {
+        for minor in [28, 29, PeekabooBridgeConstants.protocolVersion.minor] {
+            #expect(PeekabooBridgeClient.offeredCapabilities(for: .init(major: 1, minor: minor))
+                .contains(PeekabooBridgeClientCapability.desktopObservationTargetChangeDiagnostics) == (minor >= 29))
+        }
+        let old = Data(#"{"code":"notFound","message":"fixture"}"#.utf8)
+        #expect(try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeErrorEnvelope.self, from: old)
+            .desktopObservationTargetChangeDiagnostic == nil)
+        let future = Data(#"""
+        {"code":"notFound","message":"fixture",
+         "desktopObservationTargetChangeDiagnostic":{"classification":"future","phase":"future",
+          "passive_recovery":{"attempted":false,"attempt_count":0,"final_status":"future"}}}
+        """#.utf8)
+        let diagnostic = try #require(JSONDecoder.peekabooBridgeDecoder()
+            .decode(PeekabooBridgeErrorEnvelope.self, from: future).desktopObservationTargetChangeDiagnostic)
+        #expect(diagnostic.classification == .unknown)
+        #expect(diagnostic.phase == .unknown)
+        #expect(diagnostic.passiveRecovery.finalStatus == .unknown)
+    }
+
+    @Test
+    func `receiptless target offers retain exact legacy bytes`() async throws {
+        let server = CaptureReadinessPublicationTests.server(
+            observation: TargetChangeObservation(diagnostic: Self.targetDiagnostic))
+        let peer = try OperationReceiptSessionFixture.currentPeer(codeSignatureHash: "synthetic-client")
+        _ = try await server.handleHandshake(
+            .init(
+                protocolVersion: .init(major: 1, minor: 28),
+                client: .init(bundleIdentifier: nil, teamIdentifier: nil, processIdentifier: getpid()),
+                clientCapabilities: [PeekabooBridgeClientCapability.desktopObservationTargetChangeDiagnostics]),
+            peer: peer,
+            permissions: Self.permissions)
+        let data = await server.handleDecoded(Self.request(priorMutation: false, projected: false), peer: peer)
+        let response = try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeResponse.self, from: data)
+        #expect(Self.error(in: response)?.desktopObservationTargetChangeDiagnostic == nil)
+        let old = try JSONDecoder.peekabooBridgeDecoder().decode(OldResponse.self, from: data)
+        #expect(try PeekabooBridgeOperationReceiptCoding.canonicalData(old) ==
+            PeekabooBridgeOperationReceiptCoding.canonicalData(response))
+    }
+
+    private static let targetDiagnostic = DesktopObservationTargetChangeDiagnostic(
+        classification: .captureReceiptMismatch, phase: .afterCapture, passiveRecovery: .exhausted)
+
     private static func offers(_ offer: String) -> [String]? {
         switch offer {
         case "typed": [PeekabooBridgeClientCapability.screenCaptureKitOwnershipDiagnostics]
@@ -162,14 +291,17 @@ struct CaptureDiagnosticWireCompatibilityTests {
     private static func fixture(
         offers: [String]?,
         version: PeekabooBridgeProtocolVersion = PeekabooBridgeConstants.protocolVersion,
-        priorMutation: Bool = false) async throws -> Fixture
+        priorMutation: Bool = false,
+        targetChange: Bool = false) async throws -> Fixture
     {
         let socket = FileManager.default.temporaryDirectory.appendingPathComponent("wire-\(UUID().uuidString).sock")
         let authority = try PeekabooBridgeOperationReceiptAuthority(socketPath: socket.path)
         let peer = try OperationReceiptSessionFixture.currentPeer(
             codeSignatureHash: "synthetic-client")
-        let server = CaptureReadinessPublicationTests.server(
-            observation: LateBlockerObservation(diagnostic: Self.diagnostic, priorMutation: priorMutation))
+        let observation: any DesktopObservationServiceProtocol = targetChange
+            ? TargetChangeObservation(diagnostic: Self.targetDiagnostic, priorMutation: priorMutation)
+            : LateBlockerObservation(diagnostic: Self.diagnostic, priorMutation: priorMutation)
+        let server = CaptureReadinessPublicationTests.server(observation: observation)
         try await server.prepareScreenCaptureKitOwnershipForServing()
         #expect(server.hostCapabilities.contains(PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership))
         let session = try await Self.session(
@@ -285,4 +417,21 @@ private struct OldErrorEnvelope: Codable {
     let actionFailureCauseDescription: String?
     let actionTargetReceipt: DesktopActionTargetReceipt?
     let actionSelectedLeafEvidence: [DesktopSelectedLeafEvidence]?
+}
+
+@MainActor
+private struct TargetChangeObservation: DesktopObservationServiceProtocol {
+    let diagnostic: DesktopObservationTargetChangeDiagnostic
+    var priorMutation = false
+
+    func observe(_: DesktopObservationRequest) async throws -> DesktopObservationResult {
+        if self.priorMutation {
+            throw DesktopActionFailure.indeterminate(
+                delivery: .init(mechanism: .capturePipeline, mode: .foreground),
+                evidence: .completionUnknown,
+                message: "fixture mutation failure")
+                .preservingDesktopObservationTargetChangeDiagnostic(self.diagnostic)
+        }
+        throw DesktopObservationError.targetChanged("fixture", diagnostic: self.diagnostic)
+    }
 }

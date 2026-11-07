@@ -42,6 +42,8 @@ extension DesktopObservationServiceProtocol {
                 hint: "Observe the target before retrying this observation.",
                 causeDescription: error.localizedDescription)
                 .preservingScreenCaptureKitDiagnostic(error as? ScreenCaptureKitOwnershipDiagnostic)
+                .preservingDesktopObservationTargetChangeDiagnostic(
+                    (error as? DesktopObservationError)?.targetChangeDiagnostic)
         }
     }
 
@@ -185,6 +187,7 @@ public enum ObservationActionResultSemantics {
                 hint: failure.hint ?? "Observe the target before retrying \(operation).",
                 causeDescription: failure.causeDescription)
                 .preservingScreenCaptureKitDiagnostic(failure.screenCaptureKitOwnershipDiagnostic)
+                .preservingDesktopObservationTargetChangeDiagnostic(failure.desktopObservationTargetChangeDiagnostic)
         }
 
         var validation = UIAutomationActionResultSequenceAccumulator()
@@ -200,6 +203,7 @@ public enum ObservationActionResultSemantics {
 
         let message = error.localizedDescription
         let diagnostic = error as? ScreenCaptureKitOwnershipDiagnostic
+        let targetChangeDiagnostic = (error as? DesktopObservationError)?.targetChangeDiagnostic
         let hint = "Observe the target before retrying \(operation)."
         let causeDescription = String(describing: error)
         if let failure = DesktopActionFailure(
@@ -211,6 +215,7 @@ public enum ObservationActionResultSemantics {
         {
             return failure.selectingLeaves(validatedSelectedLeafEvidence)
                 .preservingScreenCaptureKitDiagnostic(diagnostic)
+                .preservingDesktopObservationTargetChangeDiagnostic(targetChangeDiagnostic)
         }
         switch outcome.state {
         case .confirmedChange:
@@ -225,6 +230,7 @@ public enum ObservationActionResultSemantics {
                 .attributed(to: targetReceipt)
                 .selectingLeaves(validatedSelectedLeafEvidence)
                 .preservingScreenCaptureKitDiagnostic(diagnostic)
+                .preservingDesktopObservationTargetChangeDiagnostic(targetChangeDiagnostic)
         case .confirmedNoChange:
             return DesktopActionFailure.preDispatchRefusal(
                 route: outcome.route,
@@ -234,6 +240,7 @@ public enum ObservationActionResultSemantics {
                 causeDescription: causeDescription)
                 .attributed(to: targetReceipt)
                 .preservingScreenCaptureKitDiagnostic(diagnostic)
+                .preservingDesktopObservationTargetChangeDiagnostic(targetChangeDiagnostic)
         case .partial, .dispatchedUnverified, .suspectedNoop, .refused, .indeterminate:
             preconditionFailure("A non-confirmed outcome must construct a desktop action failure")
         }
@@ -981,7 +988,8 @@ public final class DesktopObservationService: DesktopObservationActionResultProv
               target.window?.bounds == identity.capturedBounds
         else {
             throw DesktopObservationError.targetChanged(
-                "the window-backed menu-bar popover had no exact pre-capture owner-generation receipt")
+                "the window-backed menu-bar popover had no exact pre-capture owner-generation receipt",
+                diagnostic: .init(classification: .resolvedTargetMismatch, phase: .targetResolution))
         }
     }
 
@@ -1018,10 +1026,14 @@ public final class DesktopObservationService: DesktopObservationActionResultProv
             return try await operation()
         } catch let error as DesktopObservationError {
             guard Self.allowsPassiveCaptureReceiptRecovery(request), case .targetChanged = error else {
-                throw error
+                throw error.withPassiveRecovery(.notAttempted)
             }
             try Task.checkCancellation()
-            return try await operation()
+            do {
+                return try await operation()
+            } catch let retryError as DesktopObservationError {
+                throw retryError.withPassiveRecovery(.exhausted)
+            }
         }
     }
 

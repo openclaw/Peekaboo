@@ -26,6 +26,15 @@ means the evidence is unknown or not applicable. Freshness does not mean complet
 retain their existing warnings and targeting restrictions. Text-selection range readback remains limited to the
 focused field; `--fresh` does not make unfocused ranges available.
 
+Exact-window target-change failures may include `error.desktop_observation_target_change_diagnostic` in JSON.
+Its value-free `classification` is `identity_unavailable`, `identity_mismatch`, `resolved_target_mismatch`,
+`capture_receipt_mismatch`, or `unknown`; `phase` is `target_resolution`, `before_operation`, `after_capture`,
+`after_operation`, or `unknown`. Only identity mismatches may include `changed_components`: a unique, ordered list
+of `window_id`, `owner_pid`, `owner_process_generation`, `bounds`, or `unknown`. An omitted list means the components
+were not determined. `passive_recovery` reports `attempted`, `attempt_count` (currently 0 or 1), and `final_status`
+(`not_attempted`, `exhausted`, or `unknown`). Older hosts omit the field. These diagnostics do not change validation,
+retry policy, error codes, or human-readable messages, and successful observations do not include them.
+
 Disk-backed snapshot readback preserves the dialog and truncation information recorded by detection.
 Replacing a raw screenshot clears this classification together with the old element map; storing another detection
 replaces those values. Older stored records without these fields keep their existing defaults.

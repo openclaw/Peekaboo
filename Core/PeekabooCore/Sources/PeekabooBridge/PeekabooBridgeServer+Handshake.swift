@@ -417,7 +417,9 @@ extension PeekabooBridgeServer {
                         setValueVerification: PeekabooBridgeNegotiatedSessionCapabilities.offersSetValueVerification(
                             clientCapabilities, negotiatedVersion: negotiated),
                         screenCaptureKitOwnershipDiagnostics: clientCapabilities.contains(
-                            PeekabooBridgeClientCapability.screenCaptureKitOwnershipDiagnostics)),
+                            PeekabooBridgeClientCapability.screenCaptureKitOwnershipDiagnostics),
+                        desktopObservationTargetChangeDiagnostics: clientCapabilities.contains(
+                            PeekabooBridgeClientCapability.desktopObservationTargetChangeDiagnostics)),
                     replacing: payload.replacingOperationSessionID)
                 self.clearReceiptlessNegotiation(peer: peer)
             } catch let error as PeekabooBridgeOperationReceiptError {

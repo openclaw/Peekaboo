@@ -1,5 +1,6 @@
 import Commander
 import Foundation
+import PeekabooAutomationKit
 import PeekabooBridge
 import PeekabooFoundation
 import Testing
@@ -204,6 +205,73 @@ struct CaptureOwnershipErrorOutputTests {
         #expect(String(data: output.data, encoding: .utf8)?
             .contains("screen_capture_kit_ownership_diagnostic") == false)
         #expect(output.response.outcome == failure.outcome.projection)
+    }
+
+    @Test(arguments: ["plain", "failure", "bridge", "wrapped"], ["command", "generic", "entrypoint"])
+    func `target change diagnostic survives every error emitter`(shape: String, emitter: String) async throws {
+        let diagnostic = DesktopObservationTargetChangeDiagnostic(
+            classification: .identityMismatch,
+            phase: .afterCapture,
+            changedComponents: [.bounds],
+            passiveRecovery: .exhausted
+        )
+        func error(diagnostic: DesktopObservationTargetChangeDiagnostic?) -> any Error {
+            let failure = DesktopActionFailure.dispatchedUnverified(
+                delivery: .init(mechanism: .capturePipeline, mode: .foreground),
+                evidence: .deliveryAccepted,
+                message: "Desktop observation target changed during capture: fixture"
+            )
+            .preservingDesktopObservationTargetChangeDiagnostic(diagnostic)
+            switch shape {
+            case "plain": return DesktopObservationError.targetChanged("fixture", diagnostic: diagnostic)
+            case "failure": return failure
+            case "wrapped": return WrappedFailure(failure: failure)
+            default: return PeekabooBridgeErrorEnvelope(
+                    code: .notFound,
+                    message: failure.message,
+                    kind: .windowNotFound,
+                    desktopObservationTargetChangeDiagnostic: diagnostic
+                )
+            }
+        }
+        func emit(_ error: any Error) async throws -> CapturedOutput {
+            try await Self.captureJSON {
+                switch emitter {
+                case "command": OutputCommand(defaultEffect: nil).handleError(error)
+                case "generic": handleGenericError(error, jsonOutput: true, logger: .shared)
+                default: printGenericError(error, jsonOutput: true)
+                }
+            }
+        }
+        let output = try await emit(error(diagnostic: diagnostic))
+        let legacy = try await emit(error(diagnostic: nil))
+        #expect(output.response.error?.desktop_observation_target_change_diagnostic == diagnostic)
+        let json = try #require(JSONSerialization.jsonObject(with: output.data) as? [String: Any])
+        let oldJSON = try #require(JSONSerialization.jsonObject(with: legacy.data) as? [String: Any])
+        var errorJSON = try #require(json["error"] as? [String: Any])
+        let oldErrorJSON = try #require(oldJSON["error"] as? [String: Any])
+        #expect(Set(errorJSON.keys) == Set(oldErrorJSON.keys).union(["desktop_observation_target_change_diagnostic"]))
+        let typed = try #require(errorJSON.removeValue(forKey: "desktop_observation_target_change_diagnostic")
+            as? [String: Any])
+        #expect(Set(typed.keys) == ["classification", "phase", "changed_components", "passive_recovery"])
+        let recovery = try #require(typed["passive_recovery"] as? [String: Any])
+        #expect(Set(recovery.keys) == ["attempted", "attempt_count", "final_status"])
+        #expect(NSDictionary(dictionary: errorJSON) == NSDictionary(dictionary: oldErrorJSON))
+    }
+
+    @Test
+    func `target change ErrorInfo has exact additive keys and decodes legacy JSON`() throws {
+        let diagnostic = DesktopObservationTargetChangeDiagnostic(classification: .unknown, phase: .unknown)
+        let info = ErrorInfo(
+            message: "fixture",
+            code: .INTERACTION_FAILED,
+            desktopObservationTargetChangeDiagnostic: diagnostic
+        )
+        let data = try JSONEncoder().encode(info)
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(Set(json.keys) == ["code", "message", "desktop_observation_target_change_diagnostic"])
+        let old = Data(#"{"code":"INTERACTION_FAILED","message":"fixture"}"#.utf8)
+        #expect(try JSONDecoder().decode(ErrorInfo.self, from: old).desktop_observation_target_change_diagnostic == nil)
     }
 
     private struct WrappedFailure: LocalizedError, ResultEnvelopeError {

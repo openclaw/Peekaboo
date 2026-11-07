@@ -6,6 +6,40 @@ import Testing
 @testable import PeekabooAutomationKit
 
 struct ObservationActionResultSemanticsTests {
+    @Test(arguments: ["unverified", "change", "noChange"])
+    func `plain target change survives wrapping and sequence composition`(state: String) throws {
+        let diagnostic = DesktopObservationTargetChangeDiagnostic(
+            classification: .identityMismatch, phase: .afterCapture, changedComponents: [.bounds])
+        let outcome: DesktopActionOutcome = switch state {
+        case "change": .confirmedChange(delivery: .init(mechanism: .capturePipeline, mode: .foreground))
+        case "noChange": .confirmedNoChange()
+        default: .dispatchedUnverified(
+                delivery: .init(mechanism: .capturePipeline, mode: .foreground), evidence: .deliveryAccepted)
+        }
+        let preserved = ObservationActionResultSemantics.preservingFailure(
+            DesktopObservationError.targetChanged("fixture", diagnostic: diagnostic),
+            after: outcome,
+            targetReceipt: nil,
+            operation: "fixture")
+        let failure = try #require(preserved as? DesktopActionFailure)
+        #expect(failure.desktopObservationTargetChangeDiagnostic == diagnostic)
+        #expect(failure.message == "Desktop observation target changed during capture: fixture")
+        #expect(failure.standardErrorCode == nil)
+        var sequence = UIAutomationActionResultSequenceAccumulator()
+        sequence.record(outcome: outcome, attribution: .operationTarget)
+        let combined = sequence.failure(combining: failure, operation: "fixture")
+        #expect(combined.desktopObservationTargetChangeDiagnostic == diagnostic)
+        #expect(sequence.reconcilingTarget(of: combined).desktopObservationTargetChangeDiagnostic == diagnostic)
+        sequence.record(
+            outcome: outcome,
+            targetReceipt: .init(processIdentifier: 111, processStartIdentity: 222),
+            attribution: .operationTarget)
+        let mismatched = combined.attributed(to: .init(processIdentifier: 333, processStartIdentity: 444))
+        let reconciled = sequence.reconcilingTarget(of: mismatched)
+        #expect(reconciled.targetReceipt == nil)
+        #expect(reconciled.desktopObservationTargetChangeDiagnostic == diagnostic)
+    }
+
     @Test(arguments: Self.nonPublishableOutcomes)
     func `nonpublishable provider outcomes retain exact canonical failure`(
         outcome: DesktopActionOutcome) throws

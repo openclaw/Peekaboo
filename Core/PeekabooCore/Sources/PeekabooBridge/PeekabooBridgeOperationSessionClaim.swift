@@ -2,6 +2,7 @@ import Foundation
 
 struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
     let protocolVersion: PeekabooBridgeProtocolVersion
+    let desktopObservationTargetChangeDiagnostics: Bool
     let screenCaptureKitOwnershipDiagnostics: Bool
     let statelessClickVariants: Bool
     let exactWindowHeldPointerLifecycle: Bool
@@ -46,7 +47,8 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         preparedClipboardGuardedExactWindowHotkeys: true,
         processGenerationBoundElementMutations: true,
         setValueVerification: true,
-        screenCaptureKitOwnershipDiagnostics: true)
+        screenCaptureKitOwnershipDiagnostics: true,
+        desktopObservationTargetChangeDiagnostics: true)
 
     init(
         protocolVersion: PeekabooBridgeProtocolVersion,
@@ -66,10 +68,12 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         preparedClipboardGuardedExactWindowHotkeys: Bool = false,
         processGenerationBoundElementMutations: Bool = false,
         setValueVerification: Bool = false,
-        screenCaptureKitOwnershipDiagnostics: Bool = false)
+        screenCaptureKitOwnershipDiagnostics: Bool = false,
+        desktopObservationTargetChangeDiagnostics: Bool = false)
     {
         self.protocolVersion = protocolVersion
         self.screenCaptureKitOwnershipDiagnostics = screenCaptureKitOwnershipDiagnostics
+        self.desktopObservationTargetChangeDiagnostics = desktopObservationTargetChangeDiagnostics
         self.statelessClickVariants = statelessClickVariants
         self.exactWindowHeldPointerLifecycle = exactWindowHeldPointerLifecycle
         self.exactWindowDrag = exactWindowDrag

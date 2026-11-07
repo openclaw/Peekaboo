@@ -1453,7 +1453,9 @@ extension PeekabooBridgeOperationResultSemantics {
         return .init(
             code: compatibleEnvelope.code,
             actionFailure: failure.preservingScreenCaptureKitDiagnostic(
-                compatibleEnvelope.screenCaptureKitOwnershipDiagnostic),
+                compatibleEnvelope.screenCaptureKitOwnershipDiagnostic)
+                .preservingDesktopObservationTargetChangeDiagnostic(
+                    compatibleEnvelope.desktopObservationTargetChangeDiagnostic),
             details: compatibleEnvelope.details,
             permission: compatibleEnvelope.permission,
             kind: compatibleEnvelope.kind,

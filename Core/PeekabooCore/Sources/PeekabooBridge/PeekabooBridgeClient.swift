@@ -801,6 +801,7 @@ public actor PeekabooBridgeClient {
         var capabilities: [String] = []
         if protocolVersion >= PeekabooBridgeConstants.attestedOperationReceiptVersion {
             capabilities.append(PeekabooBridgeClientCapability.screenCaptureKitOwnershipDiagnostics)
+            capabilities.append(PeekabooBridgeClientCapability.desktopObservationTargetChangeDiagnostics)
         }
         if protocolVersion >= PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion {
             capabilities.append(PeekabooBridgeClientCapability.producerBoundSnapshotReferences)

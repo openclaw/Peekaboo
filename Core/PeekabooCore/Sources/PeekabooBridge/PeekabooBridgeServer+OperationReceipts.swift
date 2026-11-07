@@ -312,6 +312,8 @@ extension PeekabooBridgeServer {
         // Shipped clients reconstruct the digest after decoding. Project unknown fields before hashing or signing.
         let response = try response.projectingScreenCaptureKitDiagnostics(
             offered: context.claim.negotiatedCapabilities.screenCaptureKitOwnershipDiagnostics)
+            .projectingDesktopObservationTargetChangeDiagnostics(
+                offered: context.claim.negotiatedCapabilities.desktopObservationTargetChangeDiagnostics)
             .projectingSetValueVerification(
                 offered: context.claim.negotiatedCapabilities.setValueVerification, request: context.request)
         let receiptPayload = try PeekabooBridgeOperationReceiptPayload(
@@ -566,7 +568,8 @@ extension PeekabooBridgeServer {
             causeDescription: envelope.details)
         return PeekabooBridgeErrorEnvelope(
             code: envelope.code,
-            actionFailure: failure.preservingScreenCaptureKitDiagnostic(envelope.screenCaptureKitOwnershipDiagnostic),
+            actionFailure: failure.preservingScreenCaptureKitDiagnostic(envelope.screenCaptureKitOwnershipDiagnostic)
+                .preservingDesktopObservationTargetChangeDiagnostic(envelope.desktopObservationTargetChangeDiagnostic),
             details: envelope.details,
             permission: envelope.permission,
             kind: envelope.kind,
@@ -629,7 +632,8 @@ extension PeekabooBridgeServer {
             causeDescription: envelope.details)
         return PeekabooBridgeErrorEnvelope(
             code: envelope.code,
-            actionFailure: failure.preservingScreenCaptureKitDiagnostic(envelope.screenCaptureKitOwnershipDiagnostic),
+            actionFailure: failure.preservingScreenCaptureKitDiagnostic(envelope.screenCaptureKitOwnershipDiagnostic)
+                .preservingDesktopObservationTargetChangeDiagnostic(envelope.desktopObservationTargetChangeDiagnostic),
             details: envelope.details,
             permission: envelope.permission,
             kind: envelope.kind,

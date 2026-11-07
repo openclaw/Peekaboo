@@ -160,7 +160,8 @@ extension DesktopObservationService {
            target.detectionContext?.windowMutationIdentity == nil
         {
             throw DesktopObservationError.targetChanged(
-                "the window-backed menu-bar popover had no pre-capture owner-generation receipt")
+                "the window-backed menu-bar popover had no pre-capture owner-generation receipt",
+                diagnostic: .init(classification: .captureReceiptMismatch, phase: .afterCapture))
         }
         guard let expected = target.detectionContext?.windowMutationIdentity else {
             return
@@ -186,7 +187,8 @@ extension DesktopObservationService {
         else {
             throw DesktopObservationError.targetChanged(
                 "the captured application generation, exact window ID, owner receipt, or bounds no longer " +
-                    "matched the resolved target")
+                    "matched the resolved target",
+                diagnostic: .init(classification: .captureReceiptMismatch, phase: .afterCapture))
         }
     }
 

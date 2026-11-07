@@ -34,6 +34,7 @@ extension PeekabooBridgeServer {
             }
             let handled = try await self.route(request, peer: peer)
             return try self.encoder.encode(handled.response.projectingScreenCaptureKitDiagnostics(offered: false)
+                .projectingDesktopObservationTargetChangeDiagnostics(offered: false)
                 .projectingSetValueVerification(offered: false, request: request))
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             self.logger.error("bridge request failed code=\(envelope.code.rawValue, privacy: .public)")

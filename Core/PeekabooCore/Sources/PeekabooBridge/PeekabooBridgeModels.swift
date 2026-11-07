@@ -437,6 +437,7 @@ public enum PeekabooBridgeHostCapability {
 /// from being advertised to already-shipped clients at the same protocol version.
 public enum PeekabooBridgeClientCapability {
     public static let scopedMenuBarActions = "scopedMenuBarActions"
+    public static let desktopObservationTargetChangeDiagnostics = "desktopObservationTargetChangeDiagnostics"
     public static let screenCaptureKitOwnershipDiagnostics = "screenCaptureKitOwnershipDiagnostics"
     public static let setValueVerification = "setValueVerification"
     public static let producerBoundSnapshotReferences = "producerBoundSnapshotReferences"
@@ -665,7 +666,14 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
     public let actionFailureCauseDescription: String?
     public let actionTargetReceipt: DesktopActionTargetReceipt?
     public let actionSelectedLeafEvidence: [DesktopSelectedLeafEvidence]?
+    public private(set) var desktopObservationTargetChangeDiagnostic: DesktopObservationTargetChangeDiagnostic?
     public private(set) var screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic?
+
+    func removingDesktopObservationTargetChangeDiagnostic() -> Self {
+        var compatible = self
+        compatible.desktopObservationTargetChangeDiagnostic = nil
+        return compatible
+    }
 
     func removingScreenCaptureKitDiagnostic() -> Self {
         var compatible = self
@@ -687,6 +695,7 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         case actionTargetReceipt
         case actionSelectedLeafEvidence
         case screenCaptureKitOwnershipDiagnostic
+        case desktopObservationTargetChangeDiagnostic
     }
 
     public init(
@@ -697,7 +706,8 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         kind: PeekabooBridgeErrorKind? = nil,
         context: String? = nil,
         operationMayHaveCompleted: Bool = false,
-        screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic? = nil)
+        screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic? = nil,
+        desktopObservationTargetChangeDiagnostic: DesktopObservationTargetChangeDiagnostic? = nil)
     {
         self.code = code
         self.message = message
@@ -712,6 +722,7 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         self.actionTargetReceipt = nil
         self.actionSelectedLeafEvidence = nil
         self.screenCaptureKitOwnershipDiagnostic = screenCaptureKitOwnershipDiagnostic
+        self.desktopObservationTargetChangeDiagnostic = desktopObservationTargetChangeDiagnostic
     }
 
     public init(
@@ -737,6 +748,7 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         self.actionTargetReceipt = actionFailure.targetReceipt
         self.actionSelectedLeafEvidence = actionFailure.selectedLeafEvidence
         self.screenCaptureKitOwnershipDiagnostic = actionFailure.screenCaptureKitOwnershipDiagnostic
+        self.desktopObservationTargetChangeDiagnostic = actionFailure.desktopObservationTargetChangeDiagnostic
     }
 
     public init(from decoder: any Decoder) throws {
@@ -753,6 +765,8 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
             forKey: .operationMayHaveCompleted)
         self.screenCaptureKitOwnershipDiagnostic = try container.decodeIfPresent(
             ScreenCaptureKitOwnershipDiagnostic.self, forKey: .screenCaptureKitOwnershipDiagnostic)
+        self.desktopObservationTargetChangeDiagnostic = try container.decodeIfPresent(
+            DesktopObservationTargetChangeDiagnostic.self, forKey: .desktopObservationTargetChangeDiagnostic)
         self.actionOutcome = try container.decodeIfPresent(
             DesktopActionOutcome.Projection.self,
             forKey: .actionOutcome)
@@ -816,6 +830,8 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         try container.encodeIfPresent(
             self.screenCaptureKitOwnershipDiagnostic,
             forKey: .screenCaptureKitOwnershipDiagnostic)
+        try container.encodeIfPresent(
+            self.desktopObservationTargetChangeDiagnostic, forKey: .desktopObservationTargetChangeDiagnostic)
         try container.encodeIfPresent(self.actionOutcome, forKey: .actionOutcome)
         try container.encodeIfPresent(self.actionFailureHint, forKey: .actionFailureHint)
         try container.encodeIfPresent(
@@ -848,7 +864,8 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
             standardErrorCode: self.standardizedErrorCode,
             targetReceipt: self.actionTargetReceipt,
             selectedLeafEvidence: self.actionSelectedLeafEvidence,
-            screenCaptureKitOwnershipDiagnostic: self.screenCaptureKitOwnershipDiagnostic)
+            screenCaptureKitOwnershipDiagnostic: self.screenCaptureKitOwnershipDiagnostic,
+            desktopObservationTargetChangeDiagnostic: self.desktopObservationTargetChangeDiagnostic)
     }
 }
 

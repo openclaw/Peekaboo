@@ -208,10 +208,12 @@ struct PreDispatchActionError: LocalizedError, ResultEnvelopeError {
         code: ErrorCode,
         hint: String?,
         reason: DesktopActionOutcome.RefusalReason,
+        desktopObservationTargetChangeDiagnostic: DesktopObservationTargetChangeDiagnostic? = nil,
         screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic? = nil
     ) {
         self.failure = DesktopActionFailure.preDispatchRefusal(reason: reason, message: message, hint: hint)
             .preservingScreenCaptureKitDiagnostic(screenCaptureKitOwnershipDiagnostic)
+            .preservingDesktopObservationTargetChangeDiagnostic(desktopObservationTargetChangeDiagnostic)
         self.code = code
         self.hint = hint
     }
@@ -279,6 +281,7 @@ struct ErrorInfo: Codable {
     let details: String?
     let retry_safe: Bool?
     let mutation_dispatched: Bool?
+    let desktop_observation_target_change_diagnostic: DesktopObservationTargetChangeDiagnostic?
     let screen_capture_kit_ownership_diagnostic: ScreenCaptureKitOwnershipDiagnostic?
     let clipboard_cleanup_status: String?
 
@@ -289,6 +292,7 @@ struct ErrorInfo: Codable {
         details: String? = nil,
         retrySafe: Bool? = nil,
         mutationDispatched: Bool? = nil,
+        desktopObservationTargetChangeDiagnostic: DesktopObservationTargetChangeDiagnostic? = nil,
         screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic? = nil,
         clipboardCleanupStatus: String? = nil
     ) {
@@ -299,6 +303,7 @@ struct ErrorInfo: Codable {
             details: details,
             retrySafe: retrySafe,
             mutationDispatched: mutationDispatched,
+            desktopObservationTargetChangeDiagnostic: desktopObservationTargetChangeDiagnostic,
             screenCaptureKitOwnershipDiagnostic: screenCaptureKitOwnershipDiagnostic,
             clipboardCleanupStatus: clipboardCleanupStatus
         )
@@ -311,6 +316,7 @@ struct ErrorInfo: Codable {
         details: String? = nil,
         retrySafe: Bool? = nil,
         mutationDispatched: Bool? = nil,
+        desktopObservationTargetChangeDiagnostic: DesktopObservationTargetChangeDiagnostic? = nil,
         screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic? = nil,
         clipboardCleanupStatus: String? = nil
     ) {
@@ -322,6 +328,7 @@ struct ErrorInfo: Codable {
         self.retry_safe = retrySafe
         self.mutation_dispatched = mutationDispatched
         self.screen_capture_kit_ownership_diagnostic = screenCaptureKitOwnershipDiagnostic
+        self.desktop_observation_target_change_diagnostic = desktopObservationTargetChangeDiagnostic
         self.clipboard_cleanup_status = clipboardCleanupStatus
     }
 }
@@ -582,6 +589,7 @@ func outputError(
     actionFailure: DesktopActionFailure? = nil,
     targetReceipt: DesktopActionTargetReceipt? = nil,
     targetIdentity: DesktopTargetIdentity? = nil,
+    desktopObservationTargetChangeDiagnostic: DesktopObservationTargetChangeDiagnostic? = nil,
     screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic? = nil,
     clipboardCleanupStatus: String? = nil,
     logger: Logger
@@ -598,6 +606,7 @@ func outputError(
         actionFailure: actionFailure,
         targetReceipt: targetReceipt,
         targetIdentity: targetIdentity,
+        desktopObservationTargetChangeDiagnostic: desktopObservationTargetChangeDiagnostic,
         screenCaptureKitOwnershipDiagnostic: screenCaptureKitOwnershipDiagnostic,
         clipboardCleanupStatus: clipboardCleanupStatus,
         debugLogs: logger.getDebugLogs()
@@ -617,6 +626,7 @@ func makeErrorEnvelope(
     actionFailure: DesktopActionFailure? = nil,
     targetReceipt: DesktopActionTargetReceipt? = nil,
     targetIdentity: DesktopTargetIdentity? = nil,
+    desktopObservationTargetChangeDiagnostic: DesktopObservationTargetChangeDiagnostic? = nil,
     screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic? = nil,
     clipboardCleanupStatus: String? = nil,
     debugLogs: [String] = []
@@ -652,6 +662,8 @@ func makeErrorEnvelope(
             details: details,
             retrySafe: resolvedRetrySafe,
             mutationDispatched: resolvedMutationDispatched,
+            desktopObservationTargetChangeDiagnostic: desktopObservationTargetChangeDiagnostic ??
+                actionFailure?.desktopObservationTargetChangeDiagnostic,
             screenCaptureKitOwnershipDiagnostic: screenCaptureKitOwnershipDiagnostic ??
                 actionFailure?.screenCaptureKitOwnershipDiagnostic,
             clipboardCleanupStatus: clipboardCleanupStatus
