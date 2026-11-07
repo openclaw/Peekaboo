@@ -522,6 +522,7 @@ public final class PeekabooBridgeServer {
                 response: handled.response,
                 outcome: handled.outcome?.routed(to: .bridge).projection)
                 .projectingScreenCaptureKitDiagnostics(offered: false)
+                .projectingDesktopObservationTargetChangeDiagnostics(offered: false)
                 .projectingSetValueVerification(offered: false, request: request))
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             self.logger.error(
@@ -546,9 +547,11 @@ public final class PeekabooBridgeServer {
             response: .error(envelope),
             outcome: envelope.actionOutcome)
             .projectingScreenCaptureKitDiagnostics(offered: false)
+            .projectingDesktopObservationTargetChangeDiagnostics(offered: false)
         guard let data = try? self.encoder.encode(response), !data.isEmpty else {
             return PeekabooBridgeResponse.encodeError(
-                envelope.removingScreenCaptureKitDiagnostic(), using: self.encoder)
+                envelope.removingScreenCaptureKitDiagnostic().removingDesktopObservationTargetChangeDiagnostic(),
+                using: self.encoder)
         }
         return data
     }
@@ -600,7 +603,8 @@ public final class PeekabooBridgeServer {
                     code: .notFound,
                     message: error.localizedDescription,
                     details: "\(error)",
-                    kind: .windowNotFound)
+                    kind: .windowNotFound,
+                    desktopObservationTargetChangeDiagnostic: error.targetChangeDiagnostic)
             case .ambiguousWindowTitle:
                 return .init(
                     code: .invalidRequest,

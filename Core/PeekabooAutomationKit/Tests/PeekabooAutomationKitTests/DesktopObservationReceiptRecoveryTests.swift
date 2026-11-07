@@ -54,14 +54,50 @@ final class DesktopObservationReceiptRecoveryTests: XCTestCase {
                 detection: DesktopDetectionOptions(mode: .none)))
             XCTFail("Expected the second changed capture receipt to fail")
         } catch let error as DesktopObservationError {
-            guard case .targetChanged = error else {
-                XCTFail("Expected targetChanged, got \(error)")
-                return
-            }
+            XCTAssertEqual(error.targetChangeDiagnostic, .init(
+                classification: .captureReceiptMismatch, phase: .afterCapture, passiveRecovery: .exhausted))
         }
 
         XCTAssertEqual(resolver.resolveCalls, 2)
         XCTAssertEqual(capture.captureCalls, 2)
+    }
+
+    func testRetryPreservesItsOwnDiagnosticAndPassesOtherErrorsThrough() async throws {
+        for targetChanged in [false, true] {
+            let bounds = CGRect(x: 100, y: 100, width: 500, height: 400)
+            let resolver = RecordingReceiptTargetResolver(target: Self.receiptedTarget(bounds: bounds))
+            var calls = 0
+            let retryDiagnostic = DesktopObservationTargetChangeDiagnostic(
+                classification: .identityUnavailable, phase: .beforeOperation)
+            let capture = ReceiptRecoveryCaptureService(resultProvider: {
+                calls += 1
+                if calls == 1 {
+                    throw DesktopObservationError.targetChanged("first", diagnostic: .init(
+                        classification: .captureReceiptMismatch, phase: .afterCapture))
+                }
+                if targetChanged {
+                    throw DesktopObservationError.targetChanged("retry", diagnostic: retryDiagnostic)
+                }
+                throw DesktopObservationError.targetNotFound("retry fixture")
+            })
+            let service = DesktopObservationService(
+                screenCapture: capture,
+                automation: ReceiptRecoveryAutomationService(),
+                targetResolver: resolver)
+            do {
+                _ = try await service.observe(DesktopObservationRequest(
+                    target: .app(identifier: "Fixture", window: .automatic),
+                    detection: DesktopDetectionOptions(mode: .none)))
+                XCTFail("Expected retry failure")
+            } catch let error as DesktopObservationError {
+                XCTAssertEqual(
+                    error,
+                    targetChanged
+                        ? .targetChanged("retry", diagnostic: retryDiagnostic.withPassiveRecovery(.exhausted))
+                        : .targetNotFound("retry fixture"))
+            }
+            XCTAssertEqual(capture.captureCalls, 2)
+        }
     }
 
     func testPassiveObservationDoesNotRetryNonrecoverableCaptureErrors() async throws {
@@ -151,8 +187,12 @@ final class DesktopObservationReceiptRecoveryTests: XCTestCase {
                     failure.outcome.projection.requiresFreshObservation,
                     expected)
                 XCTAssertTrue(failure.causeDescription?.contains("targetChanged") == true)
+                XCTAssertEqual(failure.desktopObservationTargetChangeDiagnostic, .init(
+                    classification: .captureReceiptMismatch, phase: .afterCapture))
             } catch let error as DesktopObservationError {
                 XCTAssertNil(expectedMutationDispatched[index])
+                XCTAssertEqual(error.targetChangeDiagnostic, .init(
+                    classification: .captureReceiptMismatch, phase: .afterCapture, passiveRecovery: .notAttempted))
                 guard case .targetChanged = error else {
                     XCTFail("Expected targetChanged, got \(error)")
                     continue

@@ -125,6 +125,7 @@ func printGenericError(_ error: any Error, jsonOutput: Bool) {
             actionFailure: actionFailure,
             targetReceipt: actionMetadata.targetReceipt,
             targetIdentity: actionMetadata.targetIdentity,
+            desktopObservationTargetChangeDiagnostic: desktopObservationTargetChangeDiagnostic(for: error),
             screenCaptureKitOwnershipDiagnostic: screenCaptureKitOwnershipDiagnostic(for: error),
             logger: logger
         )

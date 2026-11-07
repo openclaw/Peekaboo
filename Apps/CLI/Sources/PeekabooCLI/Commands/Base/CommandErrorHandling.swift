@@ -27,6 +27,7 @@ extension ErrorHandlingCommand {
             code: code,
             hint: (error as? any ResultEnvelopeError)?.envelopeHint ?? presentation.hint,
             reason: explicitReason ?? defaultActionRefusalReason(code) ?? .targetUnavailable,
+            desktopObservationTargetChangeDiagnostic: desktopObservationTargetChangeDiagnostic(for: error),
             screenCaptureKitOwnershipDiagnostic: screenCaptureKitOwnershipDiagnostic(for: error)
         )
     }
@@ -76,6 +77,7 @@ extension ErrorHandlingCommand {
                     actionFailure: actionFailure,
                     targetReceipt: actionMetadata.targetReceipt,
                     targetIdentity: actionMetadata.targetIdentity,
+                    desktopObservationTargetChangeDiagnostic: desktopObservationTargetChangeDiagnostic(for: error),
                     screenCaptureKitOwnershipDiagnostic: screenCaptureKitOwnershipDiagnostic(for: error),
                     clipboardCleanupStatus: clipboardCleanupStatus,
                     logger: logger

@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import os
+import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -13,13 +14,35 @@ struct DesktopObservationLaneIdentityTests {
     ]
     private nonisolated static let bounds = CGRect(x: 100, y: 100, width: 400, height: 300)
 
+    @Test
+    func `lane phases use wire values independently of message wording`() {
+        #expect(DesktopObservationLaneValidationPhase.beforeOperation.diagnosticPhase == .beforeOperation)
+        #expect(DesktopObservationLaneValidationPhase.afterCapture.diagnosticPhase == .afterCapture)
+        #expect(DesktopObservationLaneValidationPhase.afterOperation.diagnosticPhase == .afterOperation)
+    }
+
+    @Test
+    func `target change keeps legacy textual details`() {
+        let reason = "fixture \"quoted\"\nline"
+        let plain = DesktopObservationError.targetChanged(reason)
+        let typed = DesktopObservationError.targetChanged(
+            reason,
+            diagnostic: .init(
+                classification: .identityUnavailable,
+                phase: .beforeOperation))
+        #expect(String(describing: plain) == "targetChanged(\(String(reflecting: reason)))")
+        #expect(String(describing: typed) == String(describing: plain))
+        #expect(typed.errorDescription == plain.errorDescription)
+    }
+
     @Test(arguments: Self.phases)
     func `unavailable identity`(phase: DesktopObservationLaneValidationPhase, wording: String) {
         let service = self.makeService(windowIdentity: { _ in nil })
 
         #expect(throws: DesktopObservationError.targetChanged(
             "the exact window identity could not be re-read \(wording) " +
-                "(the window or its owner process was unavailable, or its bounds moved while being read)"))
+                "(the window or its owner process was unavailable, or its bounds moved while being read)",
+            diagnostic: .init(classification: .identityUnavailable, phase: phase.diagnosticPhase)))
         {
             try service.validateCurrentLaneIdentity(self.windowPlan(), phase: phase)
         }
@@ -34,7 +57,8 @@ struct DesktopObservationLaneIdentityTests {
 
         #expect(throws: DesktopObservationError.targetChanged(
             "the exact window identity could not be re-read before the operation " +
-                "(the window or its owner process was unavailable, or its bounds moved while being read)"))
+                "(the window or its owner process was unavailable, or its bounds moved while being read)",
+            diagnostic: .init(classification: .identityUnavailable, phase: .beforeOperation)))
         {
             try service.validateCurrentLaneIdentity(
                 self.windowPlan(identity: Self.identity(windowID: windowID)),
@@ -53,7 +77,11 @@ struct DesktopObservationLaneIdentityTests {
         let service = self.makeService(windowIdentity: { _ in current })
 
         #expect(throws: DesktopObservationError.targetChanged(
-            "the exact window \(component) changed after capture"))
+            "the exact window \(component) changed after capture",
+            diagnostic: .init(
+                classification: .identityMismatch,
+                phase: .afterCapture,
+                changedComponents: [Self.component(named: component)])))
         {
             try service.validateCurrentLaneIdentity(self.windowPlan(), phase: .afterCapture)
         }
@@ -72,7 +100,17 @@ struct DesktopObservationLaneIdentityTests {
             : "owner process generation and bounds"
 
         #expect(throws: DesktopObservationError.targetChanged(
-            "the exact window \(components) changed after the operation"))
+            "the exact window \(components) changed after the operation",
+            diagnostic: .init(
+                classification: .identityMismatch,
+                phase: .afterOperation,
+                changedComponents: allComponents ? [
+                    .windowID,
+                    .ownerPID,
+                    .ownerProcessGeneration,
+                    .bounds,
+                ] :
+                    [.ownerProcessGeneration, .bounds])))
         {
             try service.validateCurrentLaneIdentity(self.windowPlan(), phase: .afterOperation)
         }
@@ -86,7 +124,13 @@ struct DesktopObservationLaneIdentityTests {
             ownerProcessStartIdentity: 700)
         let service = self.makeService(windowIdentity: { _ in current })
 
-        #expect(throws: DesktopObservationError.targetChanged("the exact window bounds changed after capture")) {
+        #expect(throws: DesktopObservationError.targetChanged(
+            "the exact window bounds changed after capture",
+            diagnostic: .init(
+                classification: .identityMismatch,
+                phase: .afterCapture,
+                changedComponents: [.bounds])))
+        {
             try service.validateCurrentLaneIdentity(self.windowPlan(), phase: .afterCapture)
         }
     }
@@ -105,7 +149,11 @@ struct DesktopObservationLaneIdentityTests {
             expectedWindowIdentity: nil)
 
         #expect(throws: DesktopObservationError.targetChanged(
-            "the target process generation changed \(phaseAndWording.1)"))
+            "the target process generation changed \(phaseAndWording.1)",
+            diagnostic: .init(
+                classification: .identityMismatch,
+                phase: phaseAndWording.0.diagnosticPhase,
+                changedComponents: [.ownerProcessGeneration])))
         {
             try service.validateCurrentLaneIdentity(plan, phase: phaseAndWording.0)
         }
@@ -140,7 +188,8 @@ struct DesktopObservationLaneIdentityTests {
 
         await #expect(throws: DesktopObservationError.targetChanged(
             "the exact window identity could not be re-read before the operation " +
-                "(the window or its owner process was unavailable, or its bounds moved while being read)"))
+                "(the window or its owner process was unavailable, or its bounds moved while being read)",
+            diagnostic: .init(classification: .identityUnavailable, phase: .beforeOperation)))
         {
             try await service.withDesktopOperationLane(for: self.request()) { _ in
                 Issue.record("The operation must not run after failed identity validation")
@@ -155,7 +204,8 @@ struct DesktopObservationLaneIdentityTests {
         let service = self.makeService(windowIdentity: { _ in current.withLock { $0 } })
 
         await #expect(throws: DesktopObservationError.targetChanged(
-            "the exact window bounds changed after the operation"))
+            "the exact window bounds changed after the operation",
+            diagnostic: .init(classification: .identityMismatch, phase: .afterOperation, changedComponents: [.bounds])))
         {
             try await service.withDesktopOperationLane(for: self.request()) { _ in
                 current.withLock { $0 = Self.identity(bounds: Self.bounds.offsetBy(dx: 1, dy: 0)) }
@@ -176,11 +226,66 @@ struct DesktopObservationLaneIdentityTests {
             detection: DesktopDetectionOptions(mode: .none, allowWebFocusFallback: true))
 
         await #expect(throws: DesktopObservationError.targetChanged(
-            "the exact window owner process generation changed after capture"))
+            "the exact window owner process generation changed after capture",
+            diagnostic: .init(
+                classification: .identityMismatch,
+                phase: .afterCapture,
+                changedComponents: [.ownerProcessGeneration])))
         {
             _ = try await service.observe(request)
         }
         #expect(capture.operations.count == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func `resolved target mismatch is typed`(window: Bool) {
+        let service = self.makeService()
+        let process = Self.identity().processIdentity
+        let plan = window ? self.windowPlan() : DesktopObservationLanePlan(
+            scope: .process(process), access: .read, expectedProcessIdentity: process, expectedWindowIdentity: nil)
+        let target = ResolvedObservationTarget(kind: .windowID(42), app: nil, window: nil, bounds: nil)
+        let reason = window ? "the resolved exact window no longer matched its process-generation lane" :
+            "the resolved PID no longer matched its process-generation lane"
+        #expect(throws: DesktopObservationError.targetChanged(
+            reason,
+            diagnostic: .init(
+                classification: .resolvedTargetMismatch,
+                phase: .targetResolution)))
+        {
+            try service.validateResolvedTarget(target, for: plan)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func `capture receipt mismatch is typed`(popover: Bool) {
+        let target = ResolvedObservationTarget(
+            kind: popover ? .menubarPopover : .windowID(42),
+            app: nil,
+            window: WindowIdentity(windowID: 42, title: "Fixture", bounds: Self.bounds, index: 0),
+            bounds: Self.bounds,
+            detectionContext: popover ? nil : WindowContext(
+                applicationName: "Fixture", windowMutationIdentity: Self.identity()))
+        let capture = CaptureResult(imageData: Data(), metadata: .init(size: Self.bounds.size, mode: .window))
+        let reason = popover ? "the window-backed menu-bar popover had no pre-capture owner-generation receipt" :
+            "the captured application generation, exact window ID, owner receipt, or bounds no longer " +
+            "matched the resolved target"
+        #expect(throws: DesktopObservationError.targetChanged(
+            reason,
+            diagnostic: .init(
+                classification: .captureReceiptMismatch,
+                phase: .afterCapture)))
+        {
+            try DesktopObservationService.validateCaptureReceipt(capture, for: target)
+        }
+    }
+
+    private static func component(named name: String) -> DesktopObservationTargetChangeDiagnostic.ChangedComponent {
+        switch name {
+        case "window ID": .windowID
+        case "owner PID": .ownerPID
+        case "owner process generation": .ownerProcessGeneration
+        default: .bounds
+        }
     }
 
     private func request() -> DesktopObservationRequest {

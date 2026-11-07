@@ -71,6 +71,12 @@ final class DesktopObservationMenubarTests: XCTestCase {
             guard case .targetChanged = error else {
                 return XCTFail("Expected targetChanged, received \(error)")
             }
+            XCTAssertEqual(error.targetChangeDiagnostic, .init(
+                classification: .resolvedTargetMismatch, phase: .targetResolution, passiveRecovery: .exhausted))
+            XCTAssertEqual(
+                error.localizedDescription,
+                "Desktop observation target changed during capture: " +
+                    "the window-backed menu-bar popover had no exact pre-capture owner-generation receipt")
         }
 
         XCTAssertTrue(capture.capturedWindowIDs.isEmpty)

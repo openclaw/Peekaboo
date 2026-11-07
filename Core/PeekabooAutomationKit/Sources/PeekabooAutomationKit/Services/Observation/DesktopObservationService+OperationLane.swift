@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import PeekabooFoundation
 
 struct DesktopObservationLanePlan: Sendable {
     let scope: DesktopOperationScope
@@ -18,6 +19,14 @@ enum DesktopObservationLaneValidationPhase: String, Sendable {
     case beforeOperation = "before the operation"
     case afterOperation = "after the operation"
     case afterCapture = "after capture"
+
+    var diagnosticPhase: DesktopObservationTargetChangeDiagnostic.Phase {
+        switch self {
+        case .beforeOperation: .beforeOperation
+        case .afterOperation: .afterOperation
+        case .afterCapture: .afterCapture
+        }
+    }
 }
 
 extension DesktopObservationService {
@@ -96,7 +105,8 @@ extension DesktopObservationService {
                   Self.sameWindowIdentity(resolvedWindowIdentity, expectedWindowIdentity)
             else {
                 throw DesktopObservationError.targetChanged(
-                    "the resolved exact window no longer matched its process-generation lane")
+                    "the resolved exact window no longer matched its process-generation lane",
+                    diagnostic: .init(classification: .resolvedTargetMismatch, phase: .targetResolution))
             }
             return
         }
@@ -107,7 +117,8 @@ extension DesktopObservationService {
                   target.detectionContext?.applicationProcessId == expectedProcessIdentity.processIdentifier
             else {
                 throw DesktopObservationError.targetChanged(
-                    "the resolved PID no longer matched its process-generation lane")
+                    "the resolved PID no longer matched its process-generation lane",
+                    diagnostic: .init(classification: .resolvedTargetMismatch, phase: .targetResolution))
             }
         }
     }
@@ -123,12 +134,15 @@ extension DesktopObservationService {
             else {
                 throw DesktopObservationError.targetChanged(
                     "the exact window identity could not be re-read \(phase.rawValue) " +
-                        "(the window or its owner process was unavailable, or its bounds moved while being read)")
+                        "(the window or its owner process was unavailable, or its bounds moved while being read)",
+                    diagnostic: .init(classification: .identityUnavailable, phase: phase.diagnosticPhase))
             }
             guard Self.sameWindowIdentity(currentWindowIdentity, expectedWindowIdentity) else {
-                let changes = Self.windowIdentityChanges(currentWindowIdentity, expectedWindowIdentity)
+                let changes = Self.changedWindowIdentityComponents(currentWindowIdentity, expectedWindowIdentity)
                 throw DesktopObservationError.targetChanged(
-                    "the exact window \(changes) changed \(phase.rawValue)")
+                    "the exact window \(Self.windowIdentityChanges(changes)) changed \(phase.rawValue)",
+                    diagnostic: .init(
+                        classification: .identityMismatch, phase: phase.diagnosticPhase, changedComponents: changes))
             }
             return
         }
@@ -137,7 +151,11 @@ extension DesktopObservationService {
            expectedProcessIdentity.processStartIdentity
         {
             throw DesktopObservationError.targetChanged(
-                "the target process generation changed \(phase.rawValue)")
+                "the target process generation changed \(phase.rawValue)",
+                diagnostic: .init(
+                    classification: .identityMismatch,
+                    phase: phase.diagnosticPhase,
+                    changedComponents: [.ownerProcessGeneration]))
         }
     }
 
@@ -169,22 +187,37 @@ extension DesktopObservationService {
             lhs.capturedBounds == rhs.capturedBounds
     }
 
-    private static func windowIdentityChanges(
+    private static func changedWindowIdentityComponents(
         _ current: WindowMutationIdentity,
-        _ expected: WindowMutationIdentity) -> String
+        _ expected: WindowMutationIdentity) -> [DesktopObservationTargetChangeDiagnostic.ChangedComponent]
     {
-        var changes: [String] = []
+        var changes: [DesktopObservationTargetChangeDiagnostic.ChangedComponent] = []
         if current.windowID != expected.windowID {
-            changes.append("window ID")
+            changes.append(.windowID)
         }
         if current.ownerProcessIdentifier != expected.ownerProcessIdentifier {
-            changes.append("owner PID")
+            changes.append(.ownerPID)
         }
         if current.ownerProcessStartIdentity != expected.ownerProcessStartIdentity {
-            changes.append("owner process generation")
+            changes.append(.ownerProcessGeneration)
         }
         if current.capturedBounds != expected.capturedBounds {
-            changes.append("bounds")
+            changes.append(.bounds)
+        }
+        return changes
+    }
+
+    private static func windowIdentityChanges(
+        _ components: [DesktopObservationTargetChangeDiagnostic.ChangedComponent]) -> String
+    {
+        var changes = components.map { component in
+            switch component {
+            case .windowID: "window ID"
+            case .ownerPID: "owner PID"
+            case .ownerProcessGeneration: "owner process generation"
+            case .bounds: "bounds"
+            case .unknown: "unknown"
+            }
         }
         guard let last = changes.popLast() else { return "" }
         return changes.isEmpty ? last : "\(changes.joined(separator: ", ")) and \(last)"
