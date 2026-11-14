@@ -5,25 +5,44 @@ import XCTest
 
 @MainActor
 final class ElementDetectionDetachedRunnerTests: XCTestCase {
-    func testHostObservationRunsOnMainActorAndExternalObservationRemainsDetached() async throws {
-        let hostPID = getpid()
-        let hostIsMainThread = try await ElementDetectionService.runObservation(
-            targetProcessIdentifier: hostPID,
-            targetProcessStartIdentity: 1,
-            seconds: 2)
-        {
-            Thread.isMainThread
-        }
-        XCTAssertTrue(hostIsMainThread)
+    func testDefaultServiceRoutesHostObservationToMainActorAndOthersToDetachedLane() async throws {
+        let service = ElementDetectionService(
+            snapshotManager: nil,
+            applicationService: nil,
+            nativeAXInspector: { request in
+                DetachedAXObservationResult(
+                    elements: [],
+                    windowID: request.windowID,
+                    windowTitle: Thread.isMainThread ? "main" : "detached",
+                    windowBounds: nil,
+                    isDialog: false,
+                    truncationInfo: nil)
+            })
 
-        let externalIsMainThread = try await ElementDetectionService.runObservation(
-            targetProcessIdentifier: 910_007,
-            targetProcessStartIdentity: 1,
-            seconds: 2)
-        {
-            Thread.isMainThread
+        for (pid, expected) in [(getpid(), "main"), (Int32(910_007), "detached")] {
+            let result = try await service.cachedOrRunDetachedAXObservation(
+                cacheKey: nil,
+                invalidatedThrough: nil,
+                cachedContext: CachedDetachedAXObservationContext(
+                    processStartIdentity: 7,
+                    windowID: nil,
+                    windowTitle: nil,
+                    windowBounds: nil))
+            {
+                DetachedAXObservationRequest(
+                    processIdentifier: pid,
+                    expectedProcessStartIdentity: 7,
+                    windowID: nil,
+                    windowTitle: nil,
+                    expectedWindowBounds: nil,
+                    windowMutationIdentity: nil,
+                    includeMenuBarElements: false,
+                    appIsActive: false,
+                    traversalBudget: AXTraversalBudget(),
+                    timing: DetachedAXObservationTiming(hardTimeoutSeconds: 2))
+            }
+            XCTAssertEqual(result.windowTitle, expected)
         }
-        XCTAssertFalse(externalIsMainThread)
     }
 
     func testCompletedSlotIsReleasedBeforePublishingAndAllowsImmediateReentry() async {
