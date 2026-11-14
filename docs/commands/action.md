@@ -14,6 +14,16 @@ peekaboo action AXIncrement --on Stepper --app Calculator
 peekaboo action --action AXShowMenu --on "$ELEMENT_ID" --pid 1234 --foreground
 ```
 
+UIKit and Mac Catalyst apps advertise their custom accessibility actions as
+`Name:<title>\nTarget:<...>\nSelector:<...>` instead of `AX...` names. Pass the `<title>` (for example
+`peekaboo action "More Controls" --on "$ELEMENT_ID" --foreground`, the panel Apple's Home app offers on accessory tiles) and Peekaboo invokes the element's action whose `Name:` line
+matches it exactly; case and prefixes are not folded. The full advertised string is accepted as well. Custom actions are not classified as background-safe, so they need `--foreground` (MCP: a server started with `--allow-foreground`). If several
+actions on the element share a title, the request is refused as ambiguous and lists the full names to choose from.
+A custom action is never background-safe: a title that reads as a background-safe built-in (`Increment`,
+`Decrement`, with or without `AX`, any case) is not mapped to a custom action of that title. Pass its full advertised
+name with `--foreground` (MCP: with foreground authorization) instead. A real `AXIncrement` keeps its exact name.
+A name or title the element does not advertise is refused before anything is invoked.
+
 Use `--app`, `--pid`, `--window-id`, `--window-title`, or `--window-index` to resolve the intended target without
 activating it. Window title/index selectors require an app or PID. Actions that can raise or expose foreground UI,
 including `AXPress` and `AXShowMenu`, require `--foreground`; state-only actions such as `AXIncrement` remain

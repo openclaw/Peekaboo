@@ -34,7 +34,7 @@ Action-oriented UI tools include:
 - `click`, `scroll`, `type`, and `press` for the background-safe interaction surface.
 - `set_value` for direct accessibility value mutation on settable fields and controls.
 - `select_text` for literal text selection or caret placement without changing the text value.
-- `action` for invoking a named accessibility action such as `AXPress`, `AXShowMenu`, or `AXIncrement`.
+- `action` for invoking a named accessibility action such as `AXPress`, `AXShowMenu`, or `AXIncrement`, or a UIKit/Catalyst custom action by its title (for example "More Controls" in Apple's Home app); custom actions need a foreground-authorised server (`peekaboo mcp --allow-foreground`).
 
 Inventory is exposed on the nouns: use `app` with `action: "list"` for running applications and `window` with
 `action: "list"` plus `app` for window IDs, bounds, off-screen state, and combined-observation eligibility. Each

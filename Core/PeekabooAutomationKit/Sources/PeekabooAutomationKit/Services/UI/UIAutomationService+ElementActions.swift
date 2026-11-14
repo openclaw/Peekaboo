@@ -226,6 +226,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         let requiredSnapshotId = try Self.requireElementActionSnapshotID(snapshotId)
         let captureReceipt = try await self.elementMutationCaptureReceipt(snapshotId: requiredSnapshotId)
         var resolved: ResolvedElementMutationTarget?
+        var resolvedActionName = actionName
         let plan = try DesktopOperationPlan(
             verb: .performAction,
             selector: .element(target),
@@ -234,7 +235,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 for: .performAction,
                 bundleIdentifier: captureReceipt.bundleIdentifier),
             prepare: {
-                guard Self.isValidActionName(actionName) else {
+                guard Self.isPlausibleActionName(actionName) else {
                     throw PeekabooError.invalidInput(
                         "Invalid action name '\(actionName)'. Use an accessibility action name such as AXPress.")
                 }
@@ -243,6 +244,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                     snapshotId: requiredSnapshotId,
                     targetProcessIdentifier: captureReceipt.processIdentifier)
                 try self.validateElementMutationTarget(target, receipt: captureReceipt)
+                resolvedActionName = try Self.resolveActionName(actionName, advertised: target.element.actionNames)
                 resolved = target
             },
             routing: {
@@ -259,7 +261,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 do {
                     return try self.actionInputDriver.tryPerformAction(
                         element: resolved.element,
-                        actionName: actionName)
+                        actionName: resolvedActionName)
                 } catch let error as ActionInputError where error.isUnsupportedActionInvocation {
                     throw PeekabooError.invalidInput(Self.unsupportedActionMessage(
                         actionName: actionName,
@@ -491,12 +493,71 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             standardErrorCode: standardErrorCode)
     }
 
-    private static func isValidActionName(_ actionName: String) -> Bool {
-        guard !actionName.isEmpty else { return false }
-        guard actionName.count <= 128 else { return false }
-        return actionName.allSatisfy { character in
+    /// Cheap input hygiene that runs before any Accessibility call: non-empty, bounded, and free of control
+    /// characters. A newline is tolerated because UIKit/Catalyst advertise custom actions as
+    /// `Name:<title>\nTarget:<..>\nSelector:<..>`. The old letters-and-digits allowlist made those actions
+    /// unreachable (for example "More Controls" in Apple's Home app). Whether a string is acceptable is decided
+    /// later by `resolveActionName`, which only lets it through when the element itself advertises it.
+    nonisolated static func isPlausibleActionName(_ actionName: String) -> Bool {
+        guard !actionName.isEmpty, actionName.count <= 128 else { return false }
+        return actionName.unicodeScalars.allSatisfy { scalar in
+            scalar == "\n" || scalar.properties.generalCategory != .control
+        }
+    }
+
+    /// Plain Accessibility action names (`AXPress`, `AXShowMenu`, `AX_Custom-Action1`).
+    private nonisolated static func isStandardActionName(_ actionName: String) -> Bool {
+        actionName.allSatisfy { character in
             character.isLetter || character.isNumber || character == "_" || character == "-"
         }
+    }
+
+    /// Maps a requested action to the name the element advertises.
+    ///
+    /// Why: macOS Accessibility lists a UIKit `UIAccessibilityCustomAction` under a three-line name, but a user or
+    /// agent only knows its title (Apple's Home app, a Catalyst app, offers "More Controls" on accessory tiles).
+    /// Resolving against the element's own list keeps arbitrary strings away from the AX call.
+    ///
+    /// - An advertised name (including a full UIKit `Name:..\nTarget:..\nSelector:..` string) is used as is.
+    /// - A custom-action title such as `More Controls` is mapped to the single advertised action whose
+    ///   `Name:` line equals it exactly (no prefix or case-insensitive matching).
+    /// - A title shared by several advertised actions is refused as ambiguous; the caller must pass the full name.
+    /// - A title that reads as a background-safe built-in (`Increment`, `AXDecrement`, any case) is never mapped to a
+    ///   custom action: the full name is classified differently, so the caller passes it with foreground consent.
+    ///   A real `AXIncrement` the element advertises keeps its exact name.
+    /// - A plain AX-style name that is not advertised is returned unchanged, so the caller reports the usual
+    ///   "not supported" error with the advertised list.
+    /// - Anything else that is not advertised is refused as an invalid action name.
+    nonisolated static func resolveActionName(_ requested: String, advertised: [String]) throws -> String {
+        if advertised.contains(requested) {
+            return requested
+        }
+        let linePrefix = "Name:\(requested)\n"
+        let titleMatches = advertised.filter { $0.hasPrefix(linePrefix) }
+        if titleMatches.count > 1 {
+            throw PeekabooError.invalidInput(
+                "Action '\(requested)' is ambiguous: \(titleMatches.count) custom actions share that title. " +
+                    "Pass one of the full advertised names instead: " +
+                    titleMatches.map { "'\($0)'" }.joined(separator: ", ") + ".")
+        }
+        if let match = titleMatches.first {
+            // CLI and MCP decide foreground consent on the requested string, before this mapping. A title that
+            // reads as a background-safe built-in (`Increment`, `AXDecrement`) must not turn into a custom
+            // handler, whose full name needs consent: the caller passes the full name under that consent.
+            guard AccessibilityActionPolicy.requiresForegroundConsent(requested) else {
+                throw PeekabooError.invalidInput(
+                    "Action '\(requested)' is also the name of a background-safe action, so it is not mapped to " +
+                        "the custom action of that title. Pass the full advertised name with foreground " +
+                        "consent instead: '\(match)'.")
+            }
+            return match
+        }
+        guard Self.isStandardActionName(requested) else {
+            throw PeekabooError.invalidInput(
+                "Invalid action name '\(requested)'. Use an accessibility action name such as AXPress, " +
+                    "or the title of a custom action the element advertises.")
+        }
+        return requested
     }
 
     nonisolated static func unsupportedActionMessage(
