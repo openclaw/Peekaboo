@@ -7,6 +7,43 @@ import Testing
 
 struct DetachedAXObservationWorkerTests {
     @Test
+    func `self observation stays off the detached AX reader`() throws {
+        let request = DetachedAXObservationRequest(
+            processIdentifier: getpid(),
+            expectedProcessStartIdentity: 7,
+            windowID: 42,
+            windowTitle: "General",
+            expectedWindowBounds: CGRect(x: 10, y: 20, width: 600, height: 800),
+            windowMutationIdentity: nil,
+            includeMenuBarElements: false,
+            appIsActive: true,
+            traversalBudget: AXTraversalBudget(),
+            timing: DetachedAXObservationTiming(hardTimeoutSeconds: 1))
+
+        #expect(DetachedAXObservationWorker.shouldSkipSelfObservation(
+            targetProcessIdentifier: getpid(), observerProcessIdentifier: getpid()))
+        #expect(!DetachedAXObservationWorker.shouldSkipSelfObservation(
+            targetProcessIdentifier: getpid() + 1, observerProcessIdentifier: getpid()))
+
+        let result = try DetachedAXObservationWorker.inspect(
+            request,
+            resolveWindow: { _, _, _ in
+                Issue.record("Self inspection must not enter the detached AX reader")
+                throw PeekabooError.windowNotFound(criteria: "Unexpected AX read")
+            },
+            exactWindowUnavailableResult: { _, _ in
+                Issue.record("Self inspection must not enter AX fallback")
+                return nil
+            },
+            validateIdentity: { _ in })
+
+        #expect(result.elements.isEmpty)
+        #expect(result.windowID == 42)
+        #expect(result.windowTitle == "General")
+        #expect(result.truncationInfo?.incompleteAccessibilityRead == true)
+    }
+
+    @Test
     func `disabled native read diagnostics never construct attribute payloads`() {
         var payloadCount = 0
         func payload() -> (names: [String], values: [Any]?) {
