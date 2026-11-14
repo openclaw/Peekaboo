@@ -51,9 +51,9 @@ peekaboo see --app Finder --json
 
 That is the core loop: observe the current screen, choose an element from the result, and act on it.
 
-## What's new in 4.9.8
+## What's new in 4.9.9
 
-Peekaboo 4.9.8 is a fix release. `dialog file` can now select a file in an Open panel, going through Go to Folder and checking the selection before it confirms, and it no longer types filenames into Search. Exact-window clicks and `window focus` keep working when another running app shares the target's name, `see` and `window list` find windows that an app exposes only through its focused or main window, `window focus` falls back to Accessibility when macOS declines activation, and MCP starts when another Peekaboo process owns the capture lane without a Bridge.
+Peekaboo 4.9.9 is a fix release. `action` can now invoke UIKit and Mac Catalyst custom accessibility actions by their title, fresh `see` accepts localized Chrome profile window titles, and exact-window target-change failures now include a typed JSON diagnostic saying which check failed and how. In the Mac app, Ollama model discovery refreshes when its base URL changes, Settings is found by its identity instead of its window title, and Launch at Login stays off until macOS approves it.
 
 ## Automate an app
 

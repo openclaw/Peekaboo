@@ -5,6 +5,12 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 4.9.9 - 2026-11-14
+
+- Let `action` (CLI and MCP) invoke UIKit and Mac Catalyst custom accessibility actions by their title, for example `peekaboo action "More Controls" --on <id> --foreground` (custom actions need foreground consent; MCP: `--allow-foreground`), instead of refusing them as `Invalid action name`. The title is matched exactly against the `Name:` line of the actions the element advertises, an ambiguous title is refused with the full names, a title that reads as a background-safe action (`Increment`, `Decrement`) is not mapped to a custom action and needs its full advertised name under foreground consent, and anything the element does not advertise is still refused before dispatch. Thanks @hermannakruse! #1178.
+- Accept localized Chrome profile window titles during fresh observation while retaining exact document matching and all window-ownership checks. Thanks @wannT-1 and @wineoflove! #1177, fixes #1176.
+- Report exact-window target changes as typed JSON in `desktop_observation_target_change_diagnostic`, with the classification, validation phase, changed components and passive recovery status but no identity values, alongside the unchanged message and error code. Bridge hosts send it only to clients offering the new `desktopObservationTargetChangeDiagnostics` capability, so older clients keep their exact signed responses. SwiftPM code that binds the `DesktopObservationError.targetChanged` payload needs to handle its new optional `diagnostic`. Thanks @tonyliu009-cell! #1151.
+
 ## 4.9.8 - 2026-11-05
 
 - Select files in Open panels with `dialog file`, using `--path <file>` or `--path <dir> --name <file>`: the full path goes through Go to Folder and the selection is verified before confirming, and a missing file is refused before any input. Open panels have no filename field, so this could not work before. Thanks @realchrisbarnes for the report! #1158.
