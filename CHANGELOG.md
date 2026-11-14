@@ -1,15 +1,14 @@
 # Changelog
 
-## Unreleased
+## 4.9.9 - 2026-11-14
 
-- Accept localized Chrome profile window titles during fresh observation while retaining exact document matching and all window-ownership checks. Thanks @wannT-1 and @wineoflove! #1177, fixes #1176.
+**Highlights:** Invoke UIKit and Mac Catalyst custom accessibility actions by title with `action`; accept localized Chrome profile window titles in fresh `see`; report exact-window target changes as a typed JSON diagnostic; and refresh Ollama models, find Settings and handle Launch at Login approval correctly in the Mac app.
 
-- Sync Tachikoma 0.6.0 to preserve empty and nested tool arguments and suppress tool calls from truncated or filtered responses, with refreshed Swift dependencies, Xcode 27 CI, and pinned source-release retry checks. Thanks @SebTardif! [Tachikoma#114](https://github.com/openclaw/Tachikoma/pull/114).
 - Let `action` (CLI and MCP) invoke UIKit and Mac Catalyst custom accessibility actions by their title, for example `peekaboo action "More Controls" --on <id> --foreground` (custom actions need foreground consent; MCP: `--allow-foreground`), instead of refusing them as `Invalid action name`. The title is matched exactly against the `Name:` line of the actions the element advertises, an ambiguous title is refused with the full names, a title that reads as a background-safe action (`Increment`, `Decrement`) is not mapped to a custom action and needs its full advertised name under foreground consent, and anything the element does not advertise is still refused before dispatch. Thanks @hermannakruse! #1178.
-
+- Accept localized Chrome profile window titles during fresh observation while retaining exact document matching and all window-ownership checks. Thanks @wannT-1 and @wineoflove! #1177, fixes #1176.
 - Report exact-window target changes as typed JSON in `desktop_observation_target_change_diagnostic`, with the classification, validation phase, changed components and passive recovery status but no identity values, alongside the unchanged message and error code. Bridge hosts send it only to clients offering the new `desktopObservationTargetChangeDiagnostics` capability, so older clients keep their exact signed responses. SwiftPM code that binds the `DesktopObservationError.targetChanged` payload needs to handle its new optional `diagnostic`. Thanks @tonyliu009-cell! #1151.
-
 - Refresh Ollama model discovery when its base URL changes, ignore stale replies, identify Settings by its window/controller identity, and reflect Launch at Login approval without registering a pending service again. Thanks @SebTardif! #1171, #1172, #1173.
+- Sync Tachikoma 0.6.0 to preserve empty and nested tool arguments and suppress tool calls from truncated or filtered responses, with refreshed Swift dependencies, Xcode 27 CI, and pinned source-release retry checks. Thanks @SebTardif! [Tachikoma#114](https://github.com/openclaw/Tachikoma/pull/114).
 
 ## 4.9.8 - 2026-11-05
 
