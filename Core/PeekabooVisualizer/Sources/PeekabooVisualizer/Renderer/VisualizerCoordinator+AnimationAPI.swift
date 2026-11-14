@@ -164,4 +164,23 @@ extension VisualizerCoordinator {
                 duration: duration)
         }
     }
+
+    public func showArrow(
+        id: UUID,
+        target: VisualizerArrowTarget,
+        label: String?,
+        duration: TimeInterval,
+        sticky: Bool) async -> Bool
+    {
+        await self.animationQueue.enqueue(priority: .high) {
+            await self.displayArrow(id: id, target: target, label: label, duration: duration, sticky: sticky)
+        }
+    }
+
+    @discardableResult
+    public func dismissArrow(id: UUID) async -> Bool {
+        await self.animationQueue.enqueue(priority: .high) {
+            self.overlayManager.fadeOutAnimation(replaceKey: OverlaySlot.arrow(id: id))
+        }
+    }
 }

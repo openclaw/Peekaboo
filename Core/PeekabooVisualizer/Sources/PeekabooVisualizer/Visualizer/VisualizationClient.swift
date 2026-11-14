@@ -215,12 +215,34 @@ public final class VisualizationClient: @unchecked Sendable {
                 duration: duration))
     }
 
+    /// Shows a non-interactive arrow at a global display point or rectangle.
+    /// Sticky arrows remain until `dismissArrow(id:)` is dispatched.
+    public func showArrow(
+        target: VisualizerArrowTarget,
+        label: String? = nil,
+        duration: TimeInterval = 3.0,
+        sticky: Bool = false) async -> UUID?
+    {
+        let id = UUID()
+        return self.dispatch(.arrow(target: target, label: label, duration: duration, sticky: sticky), eventID: id)
+    }
+
+    /// Dismisses an arrow previously returned by `showArrow`.
+    @discardableResult
+    public func dismissArrow(id: UUID) async -> Bool {
+        self.dispatch(.arrowDismiss(id: id))
+    }
+
     // MARK: - Helpers
 
     private func dispatch(_ payload: VisualizerEvent.Payload) -> Bool {
+        self.dispatch(payload, eventID: UUID()) != nil
+    }
+
+    private func dispatch(_ payload: VisualizerEvent.Payload, eventID: UUID) -> UUID? {
         guard self.isEnabled else {
             self.log(.info, "Visualizer disabled, dropping \(payload.eventKindDescription)")
-            return false
+            return nil
         }
 
         guard self.canDispatchEvents else {
@@ -231,21 +253,21 @@ public final class VisualizationClient: @unchecked Sendable {
                 self.log(.debug, "Peekaboo.app is not running; visual feedback unavailable until it launches")
                 self.hasLoggedMissingApp = true
             }
-            return false
+            return nil
         }
 
         self.hasLoggedMissingApp = false
 
         do {
             try VisualizerEventStore.prepareStorage()
-            let event = VisualizerEvent(payload: payload)
+            let event = VisualizerEvent(id: eventID, payload: payload)
             try VisualizerEventStore.persist(event)
             self.post(event: event)
             self.scheduleCleanupIfNeeded()
-            return true
+            return event.id
         } catch {
             self.log(.error, "Failed to dispatch visualizer event: \(error.localizedDescription)")
-            return false
+            return nil
         }
     }
 
@@ -390,6 +412,8 @@ extension VisualizerEvent.Payload {
         case .spaceSwitch: "spaceSwitch"
         case .elementDetection: "elementDetection"
         case .annotatedScreenshot: "annotatedScreenshot"
+        case .arrow: "arrow"
+        case .arrowDismiss: "arrowDismiss"
         }
     }
 }
