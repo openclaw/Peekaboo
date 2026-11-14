@@ -5,6 +5,27 @@ import XCTest
 
 @MainActor
 final class ElementDetectionDetachedRunnerTests: XCTestCase {
+    func testHostObservationRunsOnMainActorAndExternalObservationRemainsDetached() async throws {
+        let hostPID = getpid()
+        let hostIsMainThread = try await ElementDetectionService.runObservation(
+            targetProcessIdentifier: hostPID,
+            targetProcessStartIdentity: 1,
+            seconds: 2)
+        {
+            Thread.isMainThread
+        }
+        XCTAssertTrue(hostIsMainThread)
+
+        let externalIsMainThread = try await ElementDetectionService.runObservation(
+            targetProcessIdentifier: 910_007,
+            targetProcessStartIdentity: 1,
+            seconds: 2)
+        {
+            Thread.isMainThread
+        }
+        XCTAssertFalse(externalIsMainThread)
+    }
+
     func testCompletedSlotIsReleasedBeforePublishingAndAllowsImmediateReentry() async {
         let pool = AXObservationWorkerPool()
         let completed = expectation(description: "immediate same-lane reentry completed")

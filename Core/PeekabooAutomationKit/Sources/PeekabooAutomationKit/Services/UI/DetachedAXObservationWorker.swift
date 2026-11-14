@@ -222,13 +222,6 @@ enum DetachedAXObservationWorker {
         }
     }
 
-    static func shouldSkipSelfObservation(
-        targetProcessIdentifier: Int32,
-        observerProcessIdentifier: Int32) -> Bool
-    {
-        targetProcessIdentifier == observerProcessIdentifier
-    }
-
     static func inspect(_ request: DetachedAXObservationRequest) throws -> DetachedAXObservationResult {
         try self.inspect(
             request,
@@ -263,20 +256,6 @@ enum DetachedAXObservationWorker {
                 windowID: request.windowID)
         }
         try validateIdentity(request)
-        // A detached AX read of the host's own SwiftUI controls can call main-actor-only
-        // accessibility getters on this background queue and terminate the Bridge host.
-        if self.shouldSkipSelfObservation(
-            targetProcessIdentifier: request.processIdentifier,
-            observerProcessIdentifier: getpid())
-        {
-            return DetachedAXObservationResult(
-                elements: [],
-                windowID: request.windowID,
-                windowTitle: request.windowTitle ?? "Untitled",
-                windowBounds: request.expectedWindowBounds,
-                isDialog: false,
-                truncationInfo: DetectionTruncationInfo(incompleteAccessibilityRead: true))
-        }
         let deadline = ContinuousClock.now.advanced(by: .seconds(request.timing.cooperativeDeadlineSeconds))
         let application = AXUIElementCreateApplication(request.processIdentifier)
         self.prepare(application, deadline: deadline)

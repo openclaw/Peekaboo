@@ -78,7 +78,7 @@ public final class ElementDetectionService {
             applicationService: applicationService,
             axTreeCache: ElementDetectionCache(),
             detachedAXObservationRunner: { request in
-                try await ElementDetectionTimeoutRunner.runDetached(
+                try await Self.runObservation(
                     targetProcessIdentifier: request.processIdentifier,
                     targetProcessStartIdentity: request.expectedProcessStartIdentity,
                     seconds: request.timing.hardTimeoutSeconds)
@@ -86,6 +86,29 @@ public final class ElementDetectionService {
                     try DetachedAXObservationWorker.inspect(request)
                 }
             })
+    }
+
+    /// In-process AX callbacks may access MainActor-only AppKit state. Keep host reads on
+    /// MainActor, while external processes retain the bounded detached observation lane.
+    static func runObservation<T: Sendable>(
+        targetProcessIdentifier: Int32,
+        targetProcessStartIdentity: UInt64,
+        seconds: TimeInterval,
+        hostProcessIdentifier: Int32 = getpid(),
+        operation: @escaping @Sendable () throws -> T) async throws -> T
+    {
+        if targetProcessIdentifier == hostProcessIdentifier {
+            return try await ElementDetectionTimeoutRunner.run(seconds: seconds) {
+                try operation()
+            }
+        }
+        return try await ElementDetectionTimeoutRunner.runDetached(
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetProcessStartIdentity: targetProcessStartIdentity,
+            seconds: seconds)
+        {
+            try operation()
+        }
     }
 
     init(
