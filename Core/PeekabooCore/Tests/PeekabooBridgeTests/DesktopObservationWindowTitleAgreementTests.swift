@@ -46,7 +46,8 @@ struct DesktopObservationWindowTitleAgreementTests {
 
     @Test
     func `suffix without the separator space is rejected`() {
-        // "Doc - Chrome" is not the documented " - <applicationName>" form for "Google Chrome".
+        // "Doc - Chrome" is not the documented " - <applicationName>" form for "Google Chrome",
+        // and it is not the localized profile decoration " - Chrome - {profile}" either.
         #expect(!PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
             "Doc - Chrome", "Doc", applicationName: "Google Chrome"))
     }
@@ -69,6 +70,156 @@ struct DesktopObservationWindowTitleAgreementTests {
             "Doc - Google Chrome", "Doc", applicationName: nil))
         #expect(!PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
             "Doc - Google Chrome", "Doc", applicationName: "   "))
+    }
+
+    // MARK: - Localized Chrome profile decoration
+
+    /// Korean stable Chrome (multiple profiles) exposes
+    /// "{page} - Chrome - {profile}" through Accessibility while CoreGraphics keeps "{page}".
+    /// The macOS application name remains "Google Chrome".
+    @Test
+    func `localized chrome profile title matches the bare document title`() {
+        #expect(PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            "Peekaboo title test - Chrome - Work",
+            "Peekaboo title test",
+            applicationName: "Google Chrome"))
+        #expect(PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            "  Peekaboo title test - Chrome - Work  ",
+            "Peekaboo title test",
+            applicationName: "Google Chrome"))
+    }
+
+    @Test
+    func `localized chrome profile title matches regardless of argument order`() {
+        #expect(PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            "Peekaboo title test",
+            "Peekaboo title test - Chrome - Work",
+            applicationName: "Google Chrome"))
+    }
+
+    @Test
+    func `localized chrome profile title keeps a different document rejected`() {
+        #expect(!PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            "Document A - Chrome - Work",
+            "Document B",
+            applicationName: "Google Chrome"))
+    }
+
+    @Test
+    func `localized chrome profile decoration does not match a partial document`() {
+        #expect(!PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            "Peekaboo title test - Chrome - Work",
+            "Peekaboo",
+            applicationName: "Google Chrome"))
+        #expect(!PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            "DocX - Chrome - Work",
+            "Doc",
+            applicationName: "Google Chrome"))
+    }
+
+    @Test
+    func `localized chrome profile decoration is tied to google chrome`() {
+        #expect(!PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            "Peekaboo title test - Chrome - Work",
+            "Peekaboo title test",
+            applicationName: "Safari"))
+        #expect(!PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            "Peekaboo title test - Chrome - Work",
+            "Peekaboo title test",
+            applicationName: "Google Chrome Canary"))
+        #expect(!PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            "Peekaboo title test - Chrome - Work",
+            "Peekaboo title test",
+            applicationName: nil))
+        #expect(!PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            "Peekaboo title test - Chrome - Work",
+            "Peekaboo title test",
+            applicationName: "   "))
+    }
+
+    @Test
+    func `empty chrome profile decoration is rejected`() {
+        #expect(!PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            "Doc - Chrome -",
+            "Doc",
+            applicationName: "Google Chrome"))
+        #expect(!PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            "Doc - Chrome -   ",
+            "Doc",
+            applicationName: "Google Chrome"))
+    }
+
+    @Test
+    func `a different title that merely contains the chrome profile marker is rejected`() {
+        #expect(!PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            "Doc - Chrome - Work - extra",
+            "Doc - Chrome - Work",
+            applicationName: "Google Chrome"))
+        #expect(!PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            "Peekaboo title test \u{2013} Chrome \u{2013} Work",
+            "Peekaboo title test",
+            applicationName: "Google Chrome"))
+    }
+
+    /// The profile marker is removed before middle-elision, so a long AX title
+    /// "{page} - Chrome - {profile}" still agrees with a WindowServer-elided "{page}".
+    @Test
+    func `localized chrome profile decoration matches an elided document title`() {
+        let decorated = "Guide for authors - Linguistics and Education | Elsevier - Chrome - Work"
+        let elided = "Guide for authors - Linguistics \u{2026} | Elsevier"
+        #expect(PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            decorated,
+            elided,
+            applicationName: "Google Chrome"))
+        #expect(PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            elided,
+            decorated,
+            applicationName: "Google Chrome"))
+        #expect(!PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            decorated,
+            "Guide for authors - Linguistics \u{2026} | Somewhere else",
+            applicationName: "Google Chrome"))
+    }
+
+    /// " - Google Chrome" inside the page is document text. Stripping it before the profile
+    /// grammar would turn the CoreGraphics title into "Download" and reject the real pair.
+    @Test
+    func `localized chrome profile decoration preserves a document ending in the application name`() {
+        let decorated = "Download - Google Chrome - Chrome - Work"
+        let document = "Download - Google Chrome"
+        #expect(PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            decorated,
+            document,
+            applicationName: "Google Chrome"))
+        #expect(PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            document,
+            decorated,
+            applicationName: "Google Chrome"))
+        #expect(!PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            decorated,
+            "Download",
+            applicationName: "Google Chrome"))
+        #expect(!PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            decorated,
+            "Upload - Google Chrome",
+            applicationName: "Google Chrome"))
+    }
+
+    /// A profile whose name is the application name must stay part of the decoration.
+    @Test
+    func `localized chrome profile decoration keeps an opaque profile named google chrome`() {
+        #expect(PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            "Doc - Chrome - Google Chrome",
+            "Doc",
+            applicationName: "Google Chrome"))
+        #expect(PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            "Doc",
+            "Doc - Chrome - Google Chrome",
+            applicationName: "Google Chrome"))
+        #expect(PeekabooBridgeDesktopObservationBinding.windowTitlesAgree(
+            "Doc - Chrome - Google Chrome",
+            "Doc - Google Chrome",
+            applicationName: "Google Chrome"))
     }
 
     // MARK: - WindowServer middle elision
