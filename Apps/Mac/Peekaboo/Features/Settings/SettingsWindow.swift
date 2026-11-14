@@ -2,6 +2,7 @@ import AppKit
 import KeyboardShortcuts
 import Observation
 import PeekabooCore
+import ServiceManagement
 import SwiftUI
 
 struct SettingsWindow: View {
@@ -99,6 +100,7 @@ struct GeneralSettingsView: View {
     let updater: any UpdaterProviding
 
     @Environment(PeekabooSettings.self) private var settings
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("autoUpdateEnabled") private var autoUpdateEnabled: Bool = true
     @State private var didLoadUpdaterState = false
 
@@ -163,12 +165,37 @@ struct GeneralSettingsView: View {
         }
         .formStyle(.grouped)
         .onAppear {
+            self.settings.refreshLaunchAtLoginFromService()
             guard !self.didLoadUpdaterState else { return }
             self.updater.automaticallyChecksForUpdates = self.autoUpdateEnabled
             self.didLoadUpdaterState = true
         }
+        .onChange(of: self.scenePhase) { _, phase in
+            if phase == .active {
+                self.settings.refreshLaunchAtLoginFromService()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            self.settings.refreshLaunchAtLoginFromService()
+        }
+        .task(id: self.settings.launchAtLoginNeedsApproval) {
+            guard self.settings.launchAtLoginNeedsApproval else { return }
+            await self.watchLoginItemsApproval()
+        }
         .onChange(of: self.autoUpdateEnabled) { _, newValue in
             self.updater.automaticallyChecksForUpdates = newValue
+        }
+    }
+
+    /// scenePhase stays active when System Settings opens, so poll until approval lands.
+    private func watchLoginItemsApproval() async {
+        while !Task.isCancelled, self.settings.launchAtLoginNeedsApproval {
+            self.settings.refreshLaunchAtLoginFromService()
+            do {
+                try await Task.sleep(for: .milliseconds(400))
+            } catch {
+                return
+            }
         }
     }
 }
@@ -266,7 +293,6 @@ struct SettingsToggleRow: View {
 struct AgentSettingsView: View {
     @Environment(PeekabooSettings.self) private var settings
     @State private var detectedOllamaModelOptions: [(id: String, name: String)] = []
-    @State private var hasAttemptedOllamaDetection = false
 
     static let builtinProviderCatalog: [(provider: String, models: [(id: String, name: String)])] = [
         ("openai", [
@@ -685,33 +711,50 @@ struct AgentSettingsView: View {
         ("llama3.2-vision:latest", "Llama 3.2 Vision"),
     ]
 
-    @MainActor
-    private func refreshOllamaModels() async {
-        if self.hasAttemptedOllamaDetection {
-            return
-        }
-        self.hasAttemptedOllamaDetection = true
+    struct OllamaListedModel: Equatable, Sendable {
+        let id: String
+        let name: String
+    }
 
-        guard let url = URL(string: "\(self.settings.ollamaBaseURL)/api/tags") else { return }
+    /// GET `{baseURL}/api/tags`. An empty list means the probe failed, was
+    /// cancelled, or the settings URL changed before the body arrived.
+    static func probeOllamaModels(
+        baseURL: String,
+        session: URLSession = .shared,
+        isCurrent: @escaping @Sendable () async -> Bool) async -> [OllamaListedModel]
+    {
+        guard let url = URL(string: "\(baseURL)/api/tags") else { return [] }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                return
+            let (data, response) = try await session.data(for: request)
+            guard await isCurrent(), let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200
+            else {
+                return []
             }
-
             let decoded = try JSONDecoder().decode(OllamaTagsResponse.self, from: data)
-            let models = decoded.models.map { model in
-                (id: model.name, name: model.displayName)
-            }
-
-            if !models.isEmpty {
-                self.detectedOllamaModelOptions = models
-            }
+            guard await isCurrent() else { return [] }
+            return decoded.models.map { OllamaListedModel(id: $0.name, name: $0.displayName) }
         } catch {
-            // Silently ignore detection failures; defaults remain.
+            return []
+        }
+    }
+
+    @MainActor
+    private func refreshOllamaModels() async {
+        let baseURL = self.settings.ollamaBaseURL
+        // Drop the previous host's list before the new probe returns.
+        self.detectedOllamaModelOptions = []
+
+        let models = await Self.probeOllamaModels(baseURL: baseURL) {
+            await MainActor.run {
+                !Task.isCancelled && self.settings.ollamaBaseURL == baseURL
+            }
+        }
+        guard !Task.isCancelled, self.settings.ollamaBaseURL == baseURL else { return }
+        if !models.isEmpty {
+            self.detectedOllamaModelOptions = models.map { (id: $0.id, name: $0.name) }
         }
     }
 }

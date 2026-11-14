@@ -5,6 +5,44 @@ import PeekabooCore
 import ServiceManagement
 import Tachikoma
 
+enum LaunchAtLoginRegistration {
+    enum Action: Equatable {
+        case register
+        case unregister
+        case openLoginItems
+        case none
+    }
+
+    static func accepted(_ status: SMAppService.Status) -> Bool {
+        status == .enabled
+    }
+
+    static func needsLoginItemsApproval(_ status: SMAppService.Status) -> Bool {
+        status == .requiresApproval
+    }
+
+    /// What the switch should do for the status macOS already has.
+    /// A pending registration must open Login Items again, not call register().
+    static func action(requestedOn: Bool, status: SMAppService.Status) -> Action {
+        if requestedOn {
+            switch status {
+            case .enabled:
+                return .none
+            case .requiresApproval:
+                return .openLoginItems
+            default:
+                return .register
+            }
+        }
+        switch status {
+        case .notRegistered:
+            return .none
+        default:
+            return .unregister
+        }
+    }
+}
+
 /// Application settings and preferences manager.
 ///
 /// Settings are automatically persisted to UserDefaults and synchronized across app launches.
@@ -152,6 +190,8 @@ final class PeekabooSettings {
         }
     }
 
+    private(set) var launchAtLoginNeedsApproval = false
+
     var launchAtLogin: Bool = false {
         didSet {
             // Don't save or update during loading to prevent recursion
@@ -160,17 +200,29 @@ final class PeekabooSettings {
 
                 // Update launch at login status
                 do {
-                    if self.launchAtLogin {
+                    let current = SMAppService.mainApp.status
+                    switch LaunchAtLoginRegistration.action(requestedOn: self.launchAtLogin, status: current) {
+                    case .openLoginItems:
+                        self.setLaunchAtLogin(false)
+                        SMAppService.openSystemSettingsLoginItems()
+                    case .register:
                         try SMAppService.mainApp.register()
-                    } else {
+                        let after = SMAppService.mainApp.status
+                        if !LaunchAtLoginRegistration.accepted(after) {
+                            self.setLaunchAtLogin(false)
+                            if LaunchAtLoginRegistration.needsLoginItemsApproval(after) {
+                                SMAppService.openSystemSettingsLoginItems()
+                            }
+                        }
+                    case .unregister:
                         try SMAppService.mainApp.unregister()
+                    case .none:
+                        break
                     }
+                    self.refreshLaunchAtLoginFromService()
                 } catch {
                     print("Failed to update launch at login: \(error)")
-                    // Prevent recursion when reverting - temporarily set isLoading
-                    self.isLoading = true
-                    self.launchAtLogin = !self.launchAtLogin
-                    self.isLoading = false
+                    self.refreshLaunchAtLoginFromService()
                 }
             }
         }
@@ -180,6 +232,29 @@ final class PeekabooSettings {
 
     // Keyboard shortcuts are now managed by sindresorhus/KeyboardShortcuts library
     // See KeyboardShortcutNames.swift for the defined shortcuts
+
+    /// Read Service Management again when Settings becomes active, so an
+    /// approval in Login Items turns the switch on without another register().
+    func refreshLaunchAtLoginFromService() {
+        self.applyLaunchAtLoginServiceStatus(SMAppService.mainApp.status)
+    }
+
+    func applyLaunchAtLoginServiceStatus(_ status: SMAppService.Status) {
+        self.launchAtLoginNeedsApproval = LaunchAtLoginRegistration.needsLoginItemsApproval(status)
+        let enabled = LaunchAtLoginRegistration.accepted(status)
+        self.setLaunchAtLogin(enabled)
+    }
+
+    private func setLaunchAtLogin(_ value: Bool) {
+        guard self.launchAtLogin != value else { return }
+        let wasLoading = self.isLoading
+        self.isLoading = true
+        self.launchAtLogin = value
+        self.isLoading = wasLoading
+        if !wasLoading {
+            self.save()
+        }
+    }
 
     /// Mac-specific UI Features
     var agentModeEnabled: Bool = false {
@@ -419,7 +494,7 @@ extension PeekabooSettings {
             self.showInDock = self.userDefaults.bool(forKey: showInDockKey)
         }
 
-        self.launchAtLogin = SMAppService.mainApp.status == .enabled
+        self.applyLaunchAtLoginServiceStatus(SMAppService.mainApp.status)
         self.userDefaults.set(self.launchAtLogin, forKey: self.namespaced("launchAtLogin"))
 
         self.agentModeEnabled = self.valueOrDefault(key: "agentModeEnabled", defaultValue: false)
@@ -690,8 +765,8 @@ extension PeekabooSettings {
     /// Copies a pre-config vision toggle into `agent.visionModel` once.
     /// After that, a missing config key stays missing.
     private func backfillVisionModelIfNeeded() {
-        guard !self.visionConfigAbsenceIsAuthoritative() else { return }
-        guard let config = self.configManager.loadConfiguration() else { return }
+        guard !self.visionConfigAbsenceIsAuthoritative(),
+              let config = self.configManager.loadConfiguration() else { return }
         if self.useCustomVisionModel {
             let configured = config.agent?.visionModel?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -848,19 +923,18 @@ extension PeekabooSettings {
         let wasSelected = self.customProviderIdentifier(matching: self.selectedProvider) == id
         try self.configManager.addCustomProvider(provider, id: id)
 
-        if wasSelected {
-            if let models = provider.models,
-               !models.isEmpty,
-               models[self.selectedModel] == nil,
-               let replacementModel = models.keys.min()
-            {
-                let wasLoading = self.isLoading
-                self.isLoading = true
-                self.selectedModel = replacementModel
-                self.isLoading = wasLoading
-                if !wasLoading {
-                    self.save()
-                }
+        if wasSelected,
+           let models = provider.models,
+           !models.isEmpty,
+           models[self.selectedModel] == nil,
+           let replacementModel = models.keys.min()
+        {
+            let wasLoading = self.isLoading
+            self.isLoading = true
+            self.selectedModel = replacementModel
+            self.isLoading = wasLoading
+            if !wasLoading {
+                self.save()
             }
         }
 
