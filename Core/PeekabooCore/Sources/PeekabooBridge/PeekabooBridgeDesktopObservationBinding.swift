@@ -752,8 +752,17 @@ enum PeekabooBridgeDesktopObservationBinding {
     ///
     /// Windows Server reports the bare document title, while Accessibility may append the owning
     /// application name (Chrome reports "Document - Google Chrome" where CG reports "Document").
-    /// WindowServer may additionally elide the middle of a long title with a single U+2026
-    /// ellipsis, so a truncated form must agree on both its visible prefix and suffix.
+    /// With more than one profile, Chromium then appends " - {profile}". Korean stable Chrome
+    /// localizes the browser label to "Chrome", so Accessibility reports
+    /// "Document - Chrome - {profile}" while the macOS application name remains "Google Chrome".
+    /// That decoration is accepted only for the validated application name "Google Chrome".
+    /// It is read from the preserved title, before a trailing application suffix is removed, so
+    /// document text that itself ends in "Google Chrome" and an opaque profile name such as
+    /// "Google Chrome" are not consumed as the application decoration. The bounded
+    /// " - Chrome - {profile}" decoration is removed first. The recovered page stays intact and
+    /// must agree with the other title exactly, after that other title loses a trailing
+    /// application suffix, or as its middle-elided form. WindowServer may elide the middle of a
+    /// long document with a single U+2026 ellipsis, so either argument may be the truncated form.
     /// Only these documented forms are tolerated; every other difference still fails.
     static func windowTitlesAgree(
         _ candidate: String,
@@ -766,6 +775,13 @@ enum PeekabooBridgeDesktopObservationBinding {
             return true
         }
         let appName = applicationName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Localized Chrome profile windows keep the document title and add
+        // " - Chrome - {profile}" instead of " - Google Chrome". Match that grammar on the
+        // preserved titles: stripping " - Google Chrome" first would eat a document that ends
+        // with the application name, or a profile whose name is "Google Chrome".
+        if Self.chromeLocalizedProfileTitlesAgree(left, right, applicationName: appName) {
+            return true
+        }
         let suffix = appName.flatMap { $0.isEmpty ? nil : " - \($0)" }
         // Strip each side's application suffix first: an Accessibility-side suffix would
         // otherwise hide the tail that a WindowServer-elided title must match.
@@ -794,6 +810,89 @@ enum PeekabooBridgeDesktopObservationBinding {
         guard let suffix, title.hasSuffix(suffix) else { return title }
         return String(title.dropLast(suffix.count))
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Accepts Chromium's localized stable-Chrome profile decoration for one validated app.
+    ///
+    /// `GetAccessibleWindowTitleForChannelAndProfile` builds "{page} - {localized browser name}"
+    /// and, when more than one profile exists, "{that title} - {profile}". Korean resources
+    /// localize the stable browser name to "Chrome", so the accessible title is
+    /// "{page} - Chrome - {profile}" while WindowServer still reports "{page}". The macOS
+    /// application name stays "Google Chrome", which is why the plain application suffix misses
+    /// this form. The fixed marker " - Chrome - " and a non-empty opaque profile are removed
+    /// from the preserved title first. The recovered page must then agree with the other title
+    /// exactly, or through that other title's application suffix and the middle-elision rule.
+    private static func chromeLocalizedProfileTitlesAgree(
+        _ left: String,
+        _ right: String,
+        applicationName: String?) -> Bool
+    {
+        guard applicationName == "Google Chrome" else { return false }
+        let suffix = " - Google Chrome"
+        for document in Self.chromeLocalizedProfileDocuments(left) {
+            if Self.chromeProfileDocumentAgrees(document, with: right, applicationSuffix: suffix) {
+                return true
+            }
+        }
+        for document in Self.chromeLocalizedProfileDocuments(right) {
+            if Self.chromeProfileDocumentAgrees(document, with: left, applicationSuffix: suffix) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Document prefixes of one "{page} - Chrome - {profile}" title.
+    ///
+    /// The profile is the non-empty text after a " - Chrome - " marker. A page title or a profile
+    /// name may itself contain that marker, so every split is kept and the caller decides which
+    /// document agrees with the other layer.
+    private static func chromeLocalizedProfileDocuments(_ title: String) -> [String] {
+        let marker = " - Chrome - "
+        var documents: [String] = []
+        var searchRange = title.startIndex..<title.endIndex
+        while let markerRange = title.range(of: marker, range: searchRange) {
+            let document = String(title[..<markerRange.lowerBound])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let profile = String(title[markerRange.upperBound...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !document.isEmpty, !profile.isEmpty {
+                documents.append(document)
+            }
+            searchRange = title.index(after: markerRange.lowerBound)..<title.endIndex
+        }
+        return documents
+    }
+
+    /// The recovered page agrees with the other layer's title.
+    ///
+    /// The page text stays intact. Only the other title may lose a trailing " - Google Chrome"
+    /// suffix, so a document that itself ends with the application name is not rewritten before
+    /// the comparison. Either side may be the middle-elided form of that page.
+    private static func chromeProfileDocumentAgrees(
+        _ document: String,
+        with other: String,
+        applicationSuffix: String) -> Bool
+    {
+        if document == other {
+            return true
+        }
+        let otherBare = Self.strippingApplicationSuffix(other, suffix: applicationSuffix)
+        if document == otherBare {
+            return true
+        }
+        if Self.elidedTitleMatches(other, fullTitle: document)
+            || Self.elidedTitleMatches(document, fullTitle: other)
+        {
+            return true
+        }
+        if otherBare != other,
+           Self.elidedTitleMatches(otherBare, fullTitle: document)
+           || Self.elidedTitleMatches(document, fullTitle: otherBare)
+        {
+            return true
+        }
+        return false
     }
 
     /// Reports whether `elided` is a WindowServer middle-elided form of `fullTitle`: it must carry

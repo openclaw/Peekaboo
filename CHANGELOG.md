@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Accept localized Chrome profile window titles during fresh observation while retaining exact document matching and all window-ownership checks. Thanks @wannT-1 and @wineoflove! #1177, fixes #1176.
+
 - Sync Tachikoma 0.6.0 to preserve empty and nested tool arguments and suppress tool calls from truncated or filtered responses, with refreshed Swift dependencies, Xcode 27 CI, and pinned source-release retry checks. Thanks @SebTardif! [Tachikoma#114](https://github.com/openclaw/Tachikoma/pull/114).
 - Let `action` (CLI and MCP) invoke UIKit and Mac Catalyst custom accessibility actions by their title, for example `peekaboo action "More Controls" --on <id> --foreground` (custom actions need foreground consent; MCP: `--allow-foreground`), instead of refusing them as `Invalid action name`. The title is matched exactly against the `Name:` line of the actions the element advertises, an ambiguous title is refused with the full names, a title that reads as a background-safe action (`Increment`, `Decrement`) is not mapped to a custom action and needs its full advertised name under foreground consent, and anything the element does not advertise is still refused before dispatch. Thanks @hermannakruse! #1178.
 

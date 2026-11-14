@@ -294,3 +294,5 @@ their verified content. Changed or oversized artifacts fail closed. Independentl
 - Preferred orientations nudge horizontally tight elements toward vertical labels when scores tie.
 - Tests: `Apps/CLI/Tests/CoreCLITests/SmartLabelPlacerTests.swift` (run with `swift test --package-path Apps/CLI --filter SmartLabelPlacerTests`).
 - Manual validation: `peekaboo see --app Playground --annotate --path /tmp/see.png --json` then inspect the annotated PNG; if labels cover dense UI, capture the repro and adjust padding/scoring before committing.
+
+Chrome window observations accept the application-name suffix and the localized ` - Chrome - <profile>` decoration when comparing Accessibility and WindowServer titles. The document title must still match; process, window ID, geometry, and capture-receipt checks remain required.
