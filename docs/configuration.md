@@ -244,3 +244,5 @@ echo 'export OPENAI_API_KEY="sk-..."' >> ~/.zshrc
 ```
 
 When in doubt, run `peekaboo config show --effective` to see the merged view from every layer.
+
+The Mac app refreshes its Ollama model list when the base URL changes and ignores responses from an earlier host. Launch at Login remains off while macOS approval is pending; General settings opens Login Items for approval and refreshes the switch when approval changes.

@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import PeekabooCore
+import ServiceManagement
 import Testing
 @testable import Peekaboo
 
@@ -979,6 +980,31 @@ struct PeekabooSettingsConfigHydrationTests {
             let persistedJSON = try #require(JSONSerialization.jsonObject(with: persistedData) as? [String: Any])
             let agent = try #require(persistedJSON["agent"] as? [String: Any])
             #expect(agent["defaultModel"] as? String == "grok/mini")
+        }
+    }
+
+    @Test
+    func `Launch at login opens Login Items for a pending registration`() {
+        #expect(LaunchAtLoginRegistration.action(requestedOn: true, status: .notRegistered) == .register)
+        #expect(LaunchAtLoginRegistration.action(requestedOn: true, status: .requiresApproval) == .openLoginItems)
+        #expect(LaunchAtLoginRegistration.action(requestedOn: true, status: .enabled) == .none)
+        #expect(LaunchAtLoginRegistration.action(requestedOn: false, status: .enabled) == .unregister)
+        #expect(LaunchAtLoginRegistration.action(requestedOn: false, status: .requiresApproval) == .unregister)
+        #expect(LaunchAtLoginRegistration.action(requestedOn: false, status: .notRegistered) == .none)
+        #expect(LaunchAtLoginRegistration.accepted(.enabled))
+        #expect(!LaunchAtLoginRegistration.accepted(.requiresApproval))
+    }
+
+    @Test
+    func `Login Items approval updates the switch while Settings stays active`() throws {
+        try withIsolatedSettingsEnvironment { _, credentialCoordinator in
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            settings.applyLaunchAtLoginServiceStatus(.requiresApproval)
+            #expect(settings.launchAtLoginNeedsApproval)
+            #expect(settings.launchAtLogin == false)
+            settings.applyLaunchAtLoginServiceStatus(.enabled)
+            #expect(!settings.launchAtLoginNeedsApproval)
+            #expect(settings.launchAtLogin == true)
         }
     }
 
