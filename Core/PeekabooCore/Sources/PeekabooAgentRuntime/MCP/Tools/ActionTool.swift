@@ -28,7 +28,9 @@ public struct ActionTool: MCPTool {
                 "on": SchemaBuilder.string(
                     description: "Opaque element ID from current `see` or `inspect_ui` output, or a query string."),
                 "action": SchemaBuilder.string(
-                    description: "Accessibility action name to invoke, e.g. AXPress, AXShowMenu, AXIncrement."),
+                    description: "Accessibility action name to invoke, e.g. AXPress, AXShowMenu, AXIncrement, " +
+                        "or the title of a UIKit/Catalyst custom action the element advertises " +
+                        "(custom actions need foreground authorization)."),
                 "snapshot": SchemaBuilder.string(
                     description: "Optional snapshot ID from `see` or `inspect_ui`; latest is used when omitted."),
             ],
