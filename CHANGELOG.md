@@ -2,11 +2,11 @@
 
 ## Unreleased
 
-- Refresh Ollama model discovery when its base URL changes, ignore stale replies, identify Settings by its window/controller identity, and reflect Launch at Login approval without registering a pending service again. Thanks @SebTardif! #1171, #1172, #1173.
-
 - Sync Tachikoma 0.6.0 to preserve empty and nested tool arguments and suppress tool calls from truncated or filtered responses, with refreshed Swift dependencies, Xcode 27 CI, and pinned source-release retry checks. Thanks @SebTardif! [Tachikoma#114](https://github.com/openclaw/Tachikoma/pull/114).
 
 - Report exact-window target changes as typed JSON in `desktop_observation_target_change_diagnostic`, with the classification, validation phase, changed components and passive recovery status but no identity values, alongside the unchanged message and error code. Bridge hosts send it only to clients offering the new `desktopObservationTargetChangeDiagnostics` capability, so older clients keep their exact signed responses. SwiftPM code that binds the `DesktopObservationError.targetChanged` payload needs to handle its new optional `diagnostic`. Thanks @tonyliu009-cell! #1151.
+
+- Refresh Ollama model discovery when its base URL changes, ignore stale replies, identify Settings by its window/controller identity, and reflect Launch at Login approval without registering a pending service again. Thanks @SebTardif! #1171, #1172, #1173.
 
 ## 4.9.8 - 2026-11-05
 
