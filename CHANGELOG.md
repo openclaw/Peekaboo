@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep Peekaboo.app running when a Bridge client inspects the app's own windows, such as `see --window-id <Settings> --tree`. Accessibility reads into the host process now run on the main actor instead of a background lane, where they could reach main-actor-only AppKit state and trap. Thanks @Rybots! #1181, fixes #1180.
 - Accept localized Chrome profile window titles during fresh observation while retaining exact document matching and all window-ownership checks. Thanks @wannT-1 and @wineoflove! #1177, fixes #1176.
 
 - Sync Tachikoma 0.6.0 to preserve empty and nested tool arguments and suppress tool calls from truncated or filtered responses, with refreshed Swift dependencies, Xcode 27 CI, and pinned source-release retry checks. Thanks @SebTardif! [Tachikoma#114](https://github.com/openclaw/Tachikoma/pull/114).
