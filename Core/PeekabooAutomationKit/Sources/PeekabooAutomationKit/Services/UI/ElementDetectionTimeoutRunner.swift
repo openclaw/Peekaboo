@@ -46,8 +46,14 @@ import PeekabooFoundation
         targetProcessStartIdentity: UInt64? = nil,
         seconds: TimeInterval,
         maximumPendingOperationCount: Int? = nil,
+        hostProcessIdentifier: Int32 = getpid(),
         operation: @escaping @Sendable () throws -> T) async throws -> T
     {
+        // AX calls into this same process run synchronously on the calling thread and can reach MainActor-only
+        // AppKit state, such as a shortcut recorder's canBecomeKeyView (#1180). Read the host itself on MainActor.
+        if targetProcessIdentifier == hostProcessIdentifier {
+            return try await self.run(seconds: seconds) { try operation() }
+        }
         let state = try ElementDetectionDeadline<T>(seconds: seconds)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in

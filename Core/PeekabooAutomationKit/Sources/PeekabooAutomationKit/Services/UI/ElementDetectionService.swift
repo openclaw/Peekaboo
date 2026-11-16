@@ -76,6 +76,18 @@ public final class ElementDetectionService {
         self.init(
             snapshotManager: snapshotManager,
             applicationService: applicationService,
+            nativeAXInspector: { try DetachedAXObservationWorker.inspect($0) })
+    }
+
+    /// Injection at the production runner boundary keeps native AX scheduling testable.
+    convenience init(
+        snapshotManager: (any SnapshotManagerProtocol)?,
+        applicationService: ApplicationService?,
+        nativeAXInspector: @escaping @Sendable (DetachedAXObservationRequest) throws -> DetachedAXObservationResult)
+    {
+        self.init(
+            snapshotManager: snapshotManager,
+            applicationService: applicationService,
             axTreeCache: ElementDetectionCache(),
             detachedAXObservationRunner: { request in
                 try await ElementDetectionTimeoutRunner.runDetached(
@@ -83,7 +95,7 @@ public final class ElementDetectionService {
                     targetProcessStartIdentity: request.expectedProcessStartIdentity,
                     seconds: request.timing.hardTimeoutSeconds)
                 {
-                    try DetachedAXObservationWorker.inspect(request)
+                    try nativeAXInspector(request)
                 }
             })
     }

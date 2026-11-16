@@ -5,6 +5,66 @@ import XCTest
 
 @MainActor
 final class ElementDetectionDetachedRunnerTests: XCTestCase {
+    func testDefaultServiceRoutesHostObservationToMainActorAndOthersToDetachedLane() async throws {
+        let service = ElementDetectionService(
+            snapshotManager: nil,
+            applicationService: nil,
+            nativeAXInspector: { request in
+                DetachedAXObservationResult(
+                    elements: [],
+                    windowID: request.windowID,
+                    windowTitle: Thread.isMainThread ? "main" : "detached",
+                    windowBounds: nil,
+                    isDialog: false,
+                    truncationInfo: nil)
+            })
+
+        for (pid, expected) in [(getpid(), "main"), (Int32(910_007), "detached")] {
+            let result = try await service.cachedOrRunDetachedAXObservation(
+                cacheKey: nil,
+                invalidatedThrough: nil,
+                cachedContext: CachedDetachedAXObservationContext(
+                    processStartIdentity: 7,
+                    windowID: nil,
+                    windowTitle: nil,
+                    windowBounds: nil))
+            {
+                DetachedAXObservationRequest(
+                    processIdentifier: pid,
+                    expectedProcessStartIdentity: 7,
+                    windowID: nil,
+                    windowTitle: nil,
+                    expectedWindowBounds: nil,
+                    windowMutationIdentity: nil,
+                    includeMenuBarElements: false,
+                    appIsActive: false,
+                    traversalBudget: AXTraversalBudget(),
+                    timing: DetachedAXObservationTiming(hardTimeoutSeconds: 2))
+            }
+            XCTAssertEqual(result.windowTitle, expected)
+        }
+    }
+
+    func testRunnerKeepsHostReadsOnMainActorForEveryDetachedLane() async throws {
+        let host = try await ElementDetectionTimeoutRunner.runDetached(
+            targetProcessIdentifier: 910_011,
+            seconds: 2,
+            hostProcessIdentifier: 910_011)
+        {
+            Thread.isMainThread
+        }
+        let other = try await ElementDetectionTimeoutRunner.runDetached(
+            targetProcessIdentifier: 910_012,
+            seconds: 2,
+            hostProcessIdentifier: 910_011)
+        {
+            Thread.isMainThread
+        }
+
+        XCTAssertTrue(host)
+        XCTAssertFalse(other)
+    }
+
     func testCompletedSlotIsReleasedBeforePublishingAndAllowsImmediateReentry() async {
         let pool = AXObservationWorkerPool()
         let completed = expectation(description: "immediate same-lane reentry completed")
