@@ -45,6 +45,26 @@ final class ElementDetectionDetachedRunnerTests: XCTestCase {
         }
     }
 
+    func testRunnerKeepsHostReadsOnMainActorForEveryDetachedLane() async throws {
+        let host = try await ElementDetectionTimeoutRunner.runDetached(
+            targetProcessIdentifier: 910_011,
+            seconds: 2,
+            hostProcessIdentifier: 910_011)
+        {
+            Thread.isMainThread
+        }
+        let other = try await ElementDetectionTimeoutRunner.runDetached(
+            targetProcessIdentifier: 910_012,
+            seconds: 2,
+            hostProcessIdentifier: 910_011)
+        {
+            Thread.isMainThread
+        }
+
+        XCTAssertTrue(host)
+        XCTAssertFalse(other)
+    }
+
     func testCompletedSlotIsReleasedBeforePublishingAndAllowsImmediateReentry() async {
         let pool = AXObservationWorkerPool()
         let completed = expectation(description: "immediate same-lane reentry completed")
