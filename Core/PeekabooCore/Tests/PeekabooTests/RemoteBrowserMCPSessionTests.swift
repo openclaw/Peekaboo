@@ -11,6 +11,81 @@ import Testing
 @MainActor
 struct RemoteBrowserMCPSessionTests {
     @Test
+    func `default MCP starts on a native only Bridge without changing filters`() async throws {
+        let root = RemoteBrowserMCPClient(client: PeekabooBridgeClient(
+            socketPath: "/private/tmp/peekaboo-native-only-no-server.sock",
+            requestTimeoutSec: 0.1))
+        let server = try await PeekabooMCPServer(toolContext: Self.remoteContext(browser: root))
+        let names = await server.registeredToolNamesForTesting()
+        #expect(names.contains("type"))
+        #expect(names.contains("permissions"))
+        #expect(names.contains("browser"))
+        let scoped = await server.browserClientForTesting()
+        #expect(scoped !== root)
+        #expect(scoped is UnavailableRemoteBrowserMCPSession)
+        let status = await scoped.status(channel: nil)
+        #expect(!status.isConnected)
+        #expect(status.toolCount == 0)
+        #expect(status.detectedBrowsers.isEmpty)
+        #expect(status.connectionReceipt == nil)
+        #expect(status.error == RemoteBrowserMCPSessionError.unavailable.localizedDescription)
+        await #expect(throws: RemoteBrowserMCPSessionError.self) {
+            _ = try await scoped.connect(channel: nil)
+        }
+        await #expect(throws: RemoteBrowserMCPSessionError.self) {
+            _ = try await scoped.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
+        }
+        await #expect(throws: RemoteBrowserMCPSessionError.self) {
+            _ = try await scoped.execute(toolName: "list_pages", arguments: [:], channel: nil)
+        }
+        await #expect(throws: RemoteBrowserMCPSessionError.self) {
+            _ = try await scoped.executeSequence([], channel: nil)
+        }
+        await #expect(throws: RemoteBrowserMCPSessionError.self) {
+            _ = try await scoped.executeSequence(
+                [], channel: nil, expectedConnectionReceipt: BrowserMCPConnectionReceipt())
+        }
+        let (clientTransport, serverTransport) = await InMemoryTransport.createConnectedPair()
+        try await serverTransport.connect()
+        let client = Client(name: "NativeOnlyBridgeRegression", version: "1")
+        try await server.startForTesting(transport: serverTransport)
+        do {
+            _ = try await client.connect(transport: clientTransport)
+            let (tools, _) = try await client.listTools()
+            #expect(tools.map(\.name).sorted() == names)
+            let sleep: RequestContext<CallTool.Result> = try await client.callTool(
+                name: "sleep", arguments: ["duration": .int(1)])
+            #expect(try await sleep.value.isError != true)
+            let unpinnedType: RequestContext<CallTool.Result> = try await client.callTool(
+                name: "type", arguments: ["text": .string("non-secret-test")])
+            #expect(try await unpinnedType.value.isError == true)
+        } catch {
+            await client.disconnect()
+            await server.stopForTesting()
+            throw error
+        }
+        await client.disconnect()
+        let second = try await PeekabooMCPServer(toolContext: Self.remoteContext(browser: root))
+        #expect(await second.browserClientForTesting() !== scoped)
+        await server.stopForTesting()
+        #expect(await second.registeredToolNamesForTesting() == names)
+        await second.stopForTesting()
+    }
+
+    @Test
+    func `native only Bridge still refuses an explicit browser handoff`() async {
+        let root = RemoteBrowserMCPClient(client: PeekabooBridgeClient(
+            socketPath: "/private/tmp/peekaboo-native-only-no-server.sock",
+            requestTimeoutSec: 0.1))
+        await #expect(throws: RemoteBrowserMCPSessionError.self) {
+            _ = try await PeekabooMCPServer(
+                toolContext: Self.remoteContext(browser: root),
+                browserHandoff: BrowserMCPHandoffGrant(payload: Data("test-only".utf8)))
+        }
+        #expect(!root.browserMCPScopedSessionOpenAttemptRequiresRecovery)
+    }
+
+    @Test
     func `browser free MCP catalog starts on a legacy remote provider`() async throws {
         let legacy = LegacyUnscopedRemoteBrowserClient()
         let server = try await PeekabooMCPServer(

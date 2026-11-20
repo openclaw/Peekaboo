@@ -16,6 +16,12 @@ read_when:
 
 ## Implementation notes
 - `serve` instantiates `PeekabooMCPServer` and maps the transport string to `PeekabooCore.TransportType`. Stdio is the default for Claude Code integrations.
+- Native-only embedded Bridges, including OpenClaw.app, can start the default MCP catalog without browser-session support.
+  Their browser tool reports that scoped browser sessions are unavailable; it cannot connect, enumerate browsers, or
+  borrow another caller's connection. Native tools continue through the same pinned, authenticated Bridge with their
+  existing permission and exact-target checks. No tool filter or foreground grant is required for this startup case.
+  An explicit browser handoff still fails unless the host supports a real authenticated browser scope. Transport errors
+  while opening a supported scope remain errors and retain the normal recovery and cleanup rules.
 - Public MCP servers are background-only by default. Foreground actions, shared desktop input, and browser connection
   setup fail before dispatch unless a human starts that server process with `--allow-foreground`. Each server whose
   catalog includes `browser`, or which consumes an explicit browser handoff, owns a fresh browser child and does not

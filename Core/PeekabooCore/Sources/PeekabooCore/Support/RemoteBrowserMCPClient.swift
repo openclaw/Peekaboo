@@ -83,10 +83,16 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
     public func openBrowserMCPScopedSession(
         handoff: BrowserMCPHandoffGrant?) async throws -> any BrowserMCPScopedSessionEnding
     {
-        guard self.sessionHandle == nil,
-              let sessionTransport = self.sessionTransport
-        else {
+        guard self.sessionHandle == nil else {
             throw RemoteBrowserMCPSessionError.unavailable
+        }
+        guard let sessionTransport = self.sessionTransport else {
+            // Embedded native-only hosts (including OpenClaw.app) deliberately do not
+            // expose browser sessions. Keep the native MCP catalog usable without ever
+            // returning this root client or borrowing an unscoped browser connection.
+            // An explicit handoff still requires a real authenticated remote scope.
+            guard handoff == nil else { throw RemoteBrowserMCPSessionError.unavailable }
+            return UnavailableRemoteBrowserMCPSession()
         }
         let attempt = try self.beginScopedSessionOpenAttempt(handoff: handoff)
         let handle: RemoteBrowserMCPSessionHandle
