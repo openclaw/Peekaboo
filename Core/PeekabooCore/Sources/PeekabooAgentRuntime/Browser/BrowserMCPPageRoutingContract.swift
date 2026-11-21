@@ -43,12 +43,32 @@ enum BrowserMCPPageRoutingContract {
 
     typealias ActionSemantics = BrowserToolActionSemantics
 
-    static let dependencyVersion = "1.10.1"
+    static let dependencyVersion = "1.13.0"
 
     // CSS responses introduce nested element references that do not yet have an opaque-reference projection.
     // chrome-devtools-mcp-contract:unsupported-response-begin
     static let unsupportedResponseToolNames: Set<String> = ["get_css_styles"]
     // chrome-devtools-mcp-contract:unsupported-response-end
+
+    // New provider tools need separate capability and effect audits before becoming caller-facing APIs.
+    // chrome-devtools-mcp-contract:unavailable-begin
+    static let unavailableToolNames: Set<String> = [
+        "analyze_heapsnapshot_contexts",
+        "configure_webauthn",
+        "evaluate",
+        "get_devtools_comments",
+        "mock_network",
+        "navigate",
+        "open_devtools",
+        "remove_network_mock",
+        "resolve_devtools_comment",
+        "reveal_in_devtools",
+        "screenshot",
+        "set_logpoints",
+    ]
+    // chrome-devtools-mcp-contract:unavailable-end
+
+    static let unsupportedToolNames = unsupportedResponseToolNames.union(unavailableToolNames)
 
     // chrome-devtools-mcp-contract:element-reference-path-begin
     static let elementReferencePathMarkers: Set<String> = [
@@ -61,6 +81,7 @@ enum BrowserMCPPageRoutingContract {
         "fill_form.elements[].uid",
         "get_css_styles.uid",
         "hover.uid",
+        "reveal_in_devtools.uid",
         "take_screenshot.uid",
         "upload_file.uid",
     ]
@@ -79,6 +100,21 @@ enum BrowserMCPPageRoutingContract {
         "uninstall_pwa",
     ]
     // chrome-devtools-mcp-contract:page-response-end
+
+    // Action results may contain a partial list of opened pages, even without an included snapshot.
+    // chrome-devtools-mcp-contract:opened-page-response-begin
+    static let openedPageResponseToolNames: Set<String> = [
+        "click",
+        "click_at",
+        "drag",
+        "evaluate_script",
+        "fill",
+        "fill_form",
+        "hover",
+        "press_key",
+        "type_text",
+    ]
+    // chrome-devtools-mcp-contract:opened-page-response-end
 
     // chrome-devtools-mcp-contract:snapshot-response-begin
     static let snapshotResponseToolNames: Set<String> = [
@@ -100,6 +136,7 @@ enum BrowserMCPPageRoutingContract {
     static let pageScopedToolNames: Set<String> = [
         "click",
         "click_at",
+        "configure_webauthn",
         "drag",
         "emulate",
         "execute_3p_developer_tool",
@@ -108,6 +145,7 @@ enum BrowserMCPPageRoutingContract {
         "fill_form",
         "get_console_message",
         "get_css_styles",
+        "get_devtools_comments",
         "get_network_request",
         "get_tab_id",
         "handle_dialog",
@@ -117,14 +155,20 @@ enum BrowserMCPPageRoutingContract {
         "list_console_messages",
         "list_network_requests",
         "list_webmcp_tools",
+        "mock_network",
         "navigate_page",
+        "open_devtools",
         "performance_analyze_insight",
         "performance_start_trace",
         "performance_stop_trace",
         "press_key",
+        "remove_network_mock",
+        "resolve_devtools_comment",
         "resize_page",
+        "reveal_in_devtools",
         "screencast_start",
         "screencast_stop",
+        "set_logpoints",
         "take_heapsnapshot",
         "take_screenshot",
         "take_snapshot",
@@ -134,7 +178,7 @@ enum BrowserMCPPageRoutingContract {
     ]
     // chrome-devtools-mcp-contract:page-scoped-end
 
-    // These upstream tools are not marked `pageScoped`, but their v1.10.1 schemas still require `pageId`.
+    // These upstream tools are not marked `pageScoped`, but their v1.13.0 schemas still require `pageId`.
     // chrome-devtools-mcp-contract:explicit-page-target-begin
     static let explicitPageTargetToolNames: Set<String> = [
         "close_page",
@@ -145,6 +189,7 @@ enum BrowserMCPPageRoutingContract {
 
     // chrome-devtools-mcp-contract:global-begin
     static let globalToolNames: Set<String> = [
+        "analyze_heapsnapshot_contexts",
         "close_heapsnapshot",
         "compare_heapsnapshots",
         "get_heapsnapshot_class_nodes",
@@ -173,6 +218,9 @@ enum BrowserMCPPageRoutingContract {
     // These schema-global tools still read upstream's shared selected page internally and cannot be routed safely.
     // chrome-devtools-mcp-contract:blocked-selected-page-begin
     static let blockedSelectedPageToolNames: Set<String> = [
+        "evaluate",
+        "navigate",
+        "screenshot",
         "trigger_extension_action",
     ]
     // chrome-devtools-mcp-contract:blocked-selected-page-end
@@ -213,7 +261,8 @@ enum BrowserMCPPageRoutingContract {
         arguments: [String: Any] = [:]) -> BrowserMCPToolCapabilityContract?
     {
         guard self.routing(for: toolName) != nil,
-              !self.unsupportedResponseToolNames.contains(toolName) else { return nil }
+              !self.unsupportedToolNames.contains(toolName),
+              toolName != "evaluate_script" || arguments["sourcePath"] == nil else { return nil }
         let elementInputs: [BrowserMCPToolCapabilityContract.ElementInput] = switch toolName {
         case "click", "fill", "hover", "take_screenshot", "upload_file":
             [.direct("uid")]

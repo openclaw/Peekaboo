@@ -10,15 +10,16 @@ const swift = readFileSync(new URL('../Core/PeekabooCore/Sources/PeekabooAgentRu
 const bootstrap = swift.match(/static let source = #"""\n([\s\S]*?)\n    """#/)[1].replace(/^    /gm, '');
 process.env.PATH = fileURLToPath(new URL('../node_modules/.bin', import.meta.url)) + delimiter + process.env.PATH;
 await import('data:text/javascript,' + encodeURIComponent(bootstrap.split('process.argv =')[0]));
-const { McpServer } = await import('../node_modules/chrome-devtools-mcp/build/src/index.js');
-const { BrowserManager } = await import('../node_modules/chrome-devtools-mcp/build/src/BrowserManager.js');
-const { mcpOptions } = await import('../node_modules/chrome-devtools-mcp/build/src/config/mcp-options.js');
-const defaults = Object.fromEntries(Object.entries(mcpOptions).map(([key, option]) => [key, option.default]));
+const { McpServer } = await import('../node_modules/chrome-devtools-mcp/out/Default/gen/src/index.js');
+const { BrowserManager } = await import('../node_modules/chrome-devtools-mcp/out/Default/gen/src/BrowserManager.js');
+const { ServerConfig } = await import('../node_modules/chrome-devtools-mcp/out/Default/gen/src/config/ServerConfig.js');
 
 async function provider(endpoint) {
-  const args = { ...defaults, usageStatistics: false, wsEndpoint: endpoint };
-  const manager = new BrowserManager(args);
-  const server = await McpServer.from(args, {browserManager: manager});
+  const config = ServerConfig.create({
+    cliArgs: { usageStatistics: false, wsEndpoint: endpoint }, fileArgs: {}, env: {},
+  });
+  const manager = new BrowserManager(config);
+  const server = await McpServer.from(config, {browserManager: manager});
   return {manager, server, verify: server.server._registeredTools.peekaboo_browser_connect.handler};
 }
 

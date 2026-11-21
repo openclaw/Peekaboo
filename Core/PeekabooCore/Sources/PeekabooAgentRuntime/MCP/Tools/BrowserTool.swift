@@ -128,7 +128,7 @@ public struct BrowserTool: MCPTool {
             "insight_name": SchemaBuilder.string(description: "Insight name from trace summary."),
             "mcp_tool": SchemaBuilder.string(
                 description: foregroundCapable
-                    ? "Advanced: audited Chrome DevTools MCP v1.10.1 tool name for call. " +
+                    ? "Advanced: audited Chrome DevTools MCP v1.13.0 tool name for call. " +
                     "Routes that enter page evaluation use foreground browser authority."
                     : "Audited raw tool whose complete path cannot grant browser user activation.",
                 enum: BrowserMCPUserActivationPolicy.catalogToolNames(foregroundCapable: foregroundCapable)),
@@ -1088,7 +1088,7 @@ public enum BrowserMCPCallMapper {
             throw BrowserToolError.missingParameter("mcp_tool")
         }
         guard let routing = BrowserMCPPageRoutingContract.routing(for: toolName),
-              !BrowserMCPPageRoutingContract.unsupportedResponseToolNames.contains(toolName)
+              !BrowserMCPPageRoutingContract.unsupportedToolNames.contains(toolName)
         else {
             throw BrowserToolError.unsupportedRawTool(toolName)
         }
@@ -1099,6 +1099,9 @@ public enum BrowserMCPCallMapper {
             throw BrowserToolError.globalPageReferenceUnsupported(toolName)
         }
         var rawArguments = try self.parseJSONObject(arguments.getString("mcp_args_json") ?? "{}")
+        if toolName == "evaluate_script", rawArguments["sourcePath"] != nil {
+            throw BrowserToolError.unsupportedRawTool("evaluate_script with sourcePath")
+        }
         if routing == .pageTargeted {
             rawArguments["pageId"] = try self.requiredPageID(arguments)
         }

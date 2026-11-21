@@ -5,6 +5,7 @@ import TachikomaMCP
 enum BrowserToolCapabilityProjection {
     struct ProviderProjection {
         let pageMappings: [String: String]
+        let openedPageMappings: [String: String]
         let structuralElementMappings: [String: String]
         let issueElementMappings: [String: String]
         let phraseElementMappings: [String: String]
@@ -20,6 +21,33 @@ enum BrowserToolCapabilityProjection {
     }
 
     private static let thirdPartySnapshotMarker = "\n## Latest page snapshot"
+
+    private static func replacingPageIDs(in text: String, projection: ProviderProjection) -> String {
+        var projected = self.replacingPageIDs(in: text, mappings: projection.pageMappings)
+        if projection.calls.contains(where: { $0.toolName == "performance_stop_trace" }) {
+            projected = projected.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+                guard line.hasPrefix("Error: the active performance trace is running") else { return String(line) }
+                return "Error: the active performance trace belongs to another page. Call list_pages to refresh " +
+                    "page references, then target the page that started the trace."
+            }.joined(separator: "\n")
+        }
+        guard !projection.openedPageMappings.isEmpty else { return projected }
+        var inOpenedPages = false
+        return projected.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+            if line == "## Opened pages" {
+                inOpenedPages = true
+                return String(line)
+            }
+            guard inOpenedPages else { return String(line) }
+            guard let separator = line.firstIndex(of: ":"),
+                  let reference = projection.openedPageMappings[String(line[..<separator])]
+            else {
+                inOpenedPages = false
+                return String(line)
+            }
+            return reference + line[separator...]
+        }.joined(separator: "\n")
+    }
 
     static func replacingPageIDs(in text: String, mappings: [String: String]) -> String {
         guard !mappings.isEmpty else { return text }
@@ -153,7 +181,7 @@ enum BrowserToolCapabilityProjection {
             in: value,
             mappings: projection.issueElementMappings)
         return self.projectingProviderFields(in: issueProjected) { text in
-            var projected = self.replacingPageIDs(in: text, mappings: projection.pageMappings)
+            var projected = self.replacingPageIDs(in: text, projection: projection)
             projected = self.replacingUploadResponse(in: projected, calls: projection.calls)
             if let thirdPartyMessage = projection.thirdPartyMessage {
                 projected = projected.replacingOccurrences(
@@ -425,7 +453,7 @@ enum BrowserToolCapabilityProjection {
         projection: ContentProjection) -> [Tool.Content]
     {
         func projectMetadataString(_ value: String) -> String {
-            var projected = self.replacingPageIDs(in: value, mappings: projection.provider.pageMappings)
+            var projected = self.replacingPageIDs(in: value, projection: projection.provider)
             projected = self.replacingUploadResponse(in: projected, calls: projection.provider.calls)
             if projection.responseProjection == .thirdPartySnapshot {
                 projected = self.replacingThirdPartyResultUIDs(
@@ -452,7 +480,7 @@ enum BrowserToolCapabilityProjection {
                     transform: projectMetadataString,
                     projectAllMetadata: false)
             }
-            var projected = self.replacingPageIDs(in: text, mappings: projection.provider.pageMappings)
+            var projected = self.replacingPageIDs(in: text, projection: projection.provider)
             projected = self.replacingUploadResponse(in: projected, calls: projection.provider.calls)
             if projection.mayContainSnapshot {
                 if projection.responseProjection == .thirdPartySnapshot {

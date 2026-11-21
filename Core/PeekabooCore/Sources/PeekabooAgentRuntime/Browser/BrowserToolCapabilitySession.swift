@@ -159,20 +159,19 @@ actor BrowserToolCapabilitySession {
         let rawStructuredMessage = response.structuredContent?.objectValue?["message"]?.stringValue
         var structured = response.structuredContent
         var textMappings = selectedPageMappings
-        if responseProjection == .pages {
-            var currentPageMappings: [String: String] = [:]
-            if var value = structured {
-                currentPageMappings = try self.projectPages(
-                    in: &value,
-                    connection: ConnectionBinding(sessionBinding: sessionBinding))
-                structured = value
-            }
-            if currentPageMappings.isEmpty {
-                currentPageMappings = self.projectPages(
-                    inText: Self.textContent(response),
-                    connection: ConnectionBinding(sessionBinding: sessionBinding))
-            }
-            textMappings = currentPageMappings
+        var pageListMappings: [String: String] = [:]
+        let mayOpenPages = calls.contains {
+            BrowserMCPPageRoutingContract.openedPageResponseToolNames.contains($0.toolName)
+        }
+        if responseProjection == .pages || mayOpenPages {
+            pageListMappings = try self.projectPageLists(
+                in: &structured,
+                response: response,
+                connection: ConnectionBinding(sessionBinding: sessionBinding),
+                completeList: responseProjection == .pages)
+            textMappings = responseProjection == .pages
+                ? pageListMappings
+                : selectedPageMappings.merging(pageListMappings) { _, current in current }
         }
 
         var snapshotReference: String?
@@ -245,6 +244,7 @@ actor BrowserToolCapabilitySession {
         }
         let providerProjection = BrowserToolCapabilityProjection.ProviderProjection(
             pageMappings: responseProjection == .pages ? textMappings : [:],
+            openedPageMappings: mayOpenPages ? pageListMappings : [:],
             structuralElementMappings: elementMappings,
             issueElementMappings: calls.contains(where: { $0.toolName == "get_console_message" })
                 ? retainedElementMappings
@@ -453,12 +453,35 @@ actor BrowserToolCapabilitySession {
         return result
     }
 
+    private func projectPageLists(
+        in structured: inout Value?,
+        response: ToolResponse,
+        connection: ConnectionBinding,
+        completeList: Bool) throws -> [String: String]
+    {
+        var mappings: [String: String] = [:]
+        if var value = structured {
+            mappings = try self.projectPages(
+                in: &value,
+                connection: connection,
+                keys: completeList ? ["pages", "extensionPages", "openedPages"] : ["openedPages"])
+            structured = value
+        }
+        if mappings.isEmpty, completeList {
+            mappings = self.projectPages(inText: Self.textContent(response), connection: connection)
+        }
+        if Self.textContent(response).contains("## Opened pages"), mappings.isEmpty {
+            throw BrowserToolCapabilityError.invalidProviderResponse
+        }
+        return mappings
+    }
+
     private func projectPages(
         in structured: inout Value,
-        connection: ConnectionBinding) throws -> [String: String]
+        connection: ConnectionBinding,
+        keys: [String]) throws -> [String: String]
     {
         guard case var .object(root) = structured else { return [:] }
-        let keys = ["pages", "extensionPages"]
         var liveProviderIDs = Set<Int>()
         var mapping: [String: String] = [:]
         for key in keys {
@@ -482,7 +505,8 @@ actor BrowserToolCapabilitySession {
             }
             root[key] = .array(pages)
         }
-        if keys.contains(where: { root[$0] != nil }) {
+        // Opened pages are a partial observation; they cannot expire unrelated caller capabilities.
+        if keys.contains(where: { $0 != "openedPages" && root[$0] != nil }) {
             let stale = self.pageReferenceByProviderID
                 .filter { !liveProviderIDs.contains($0.key) }
                 .map(\.value)
@@ -719,7 +743,7 @@ actor BrowserToolCapabilitySession {
         func walk(_ value: Value) {
             switch value {
             case let .object(fields):
-                if let id = fields["id"]?.stringValue {
+                if let id = fields["id"]?.stringValue, !id.isEmpty {
                     result.append(id)
                     bindings[id] = ElementBinding(
                         backendNodeID: fields["backendNodeId"]?.intValue.map(Int64.init),
