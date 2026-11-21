@@ -18,7 +18,7 @@ jobs:
   macos-host:
     runs-on: xcode-27
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
       - name: Swift version
@@ -47,7 +47,7 @@ jobs:
       run:
         working-directory: Commander
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
       - name: Build for ${{ matrix.platform }}
@@ -63,10 +63,10 @@ jobs:
     runs-on: ubuntu-24.04
     needs: macos-host
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
-      - uses: SwiftyLab/setup-swift@v1
+      - uses: SwiftyLab/setup-swift@d60245579ea3836a3f2fa65ebbe1e8891d577c76 # v1.14.2
         with:
           swift-version: '6.3.3'
       - name: Test (Linux)
