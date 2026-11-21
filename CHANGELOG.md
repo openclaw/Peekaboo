@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Update the audited Chrome DevTools MCP browser provider to 1.13.0 (Puppeteer 25.17.0, MCP SDK 2.4.0). Its new network-mocking, logpoint, WebAuthn, heap-context, DevTools UI and slim tools stay unavailable; file-backed `evaluate_script` sources are refused; provider config discovery is disabled; pages opened by an action are returned as opaque page references; and full-page screenshots and screencasts require foreground authority.
+
 ## 4.9.9 - 2026-11-15
 
 **Highlights:** Keep Peekaboo.app running when a Bridge client inspects its own Settings window; invoke UIKit and Mac Catalyst custom accessibility actions by title with `action`; accept localized Chrome profile window titles in fresh `see`; report exact-window target changes as a typed JSON diagnostic; and refresh Ollama models, find Settings and handle Launch at Login approval correctly in the Mac app.
