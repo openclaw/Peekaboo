@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Update AXorcist to 0.2.3, Commander to 0.3.1, Swiftdansi to 0.3.2, Tachikoma to 0.6.1 and TauTUI to 0.2.3, picking up Commander's inherited-option and positional-order parsing fixes, TauTUI's oversized Kitty key crash fix, and AXorcist's observation fixes.
+- Refresh Swift package locks to Swift Crypto 5.1.2, SwiftNIO 2.105.0, Swift Log 1.17.2, Swift Configuration 1.5.0, Swift System 1.9.0, Swift ASN.1 1.7.4, EventSource 1.6.0, Swift Subprocess 1.0.2, Rainbow 4.2.2 and Swift DisplayWidth 0.2.0, keeping Swift Collections 1.6.0, Async Algorithms 1.1.5 and Sparkle 2.10.0 for runtime and release-tool compatibility.
+- Move CI and the verified qualification runtime to Node 26.13.1 for its HTTP/2 and TLS security fixes, update pnpm to 11.28.13, and pin CI SwiftLint to checksum-verified 0.65.1.
+
 ## 4.9.9 - 2026-11-15
 
 **Highlights:** Keep Peekaboo.app running when a Bridge client inspects its own Settings window; invoke UIKit and Mac Catalyst custom accessibility actions by title with `action`; accept localized Chrome profile window titles in fresh `see`; report exact-window target changes as a typed JSON diagnostic; and refresh Ollama models, find Settings and handle Launch at Login approval correctly in the Mac app.
