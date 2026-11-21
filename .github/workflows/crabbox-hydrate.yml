@@ -30,7 +30,7 @@ permissions:
   contents: read
 
 env:
-  NODE_VERSION: "26.12.1"
+  NODE_VERSION: "26.13.1"
 
 jobs:
   hydrate:
@@ -42,9 +42,9 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.ref }}
 
-      - uses: pnpm/action-setup@v6.1.0
+      - uses: pnpm/action-setup@v6.1.1
         with:
-          version: '11.28.4'
+          version: '11.28.13'
 
       - uses: actions/setup-node@v7
         with:
