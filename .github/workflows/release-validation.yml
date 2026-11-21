@@ -151,7 +151,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '26.12.1'
+          node-version: '26.13.1'
           package-manager-cache: false
 
       - name: Check workflow contract
@@ -173,7 +173,7 @@ jobs:
       - name: Set up repository-pinned pnpm
         if: matrix.group == 'full-safe'
         timeout-minutes: 5
-        uses: pnpm/action-setup@v6.1.0
+        uses: pnpm/action-setup@v6.1.1
         with:
           run_install: false
           cache: false

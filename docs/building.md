@@ -118,7 +118,7 @@ navigator package-root reference. Promoting Commander to a root package also res
 dependency, which is outside the consuming graph's canonical lock. Keep Commander as a dependency rather than adding
 it as another workspace root; the compile-only real-submodule fixture verifies that its uncommitted source stays live.
 
-The public root `Package.swift` pins AXorcist exact `0.2.2`, matching the internal AXorcist submodule.
+The public root `Package.swift` pins AXorcist exact `0.2.3`, matching the internal AXorcist submodule.
 Standalone AutomationKit, Foundation, Protocols, Visualizer, and submodule builds are not given a Commander override:
 those graphs do not select Peekaboo's live Commander package.
 Adding another consuming package requires adding its explicit context to the helper and qualifying it. A transitive
@@ -161,7 +161,7 @@ reused binaries and extracted archives. Weak imports remain distinct; this does 
 replace system libraries. Successful execution on the build host alone does not prove older-macOS compatibility.
 
 Keep Swift Async Algorithms at 1.1.5 while this constraint remains: 1.1.7 requires Swift Collections 1.7.0.
-The shared consumer locks use SwiftNIO 2.104.0 and Service Lifecycle 2.13.0. The latter retains the Unix signal
+The shared consumer locks use SwiftNIO 2.105.0 and Service Lifecycle 2.13.0. The latter retains the Unix signal
 dispatch-source leak fix and now declares the same Swift 6.2 minimum as Peekaboo. Its older-compiler compatibility
 cleanup preserves the locking code selected on supported Swift toolchains.
 
@@ -192,8 +192,9 @@ because the oldest eligible SDK wins.
 ## Tachikoma integration
 
 The internal CLI and Mac app consume the committed Tachikoma submodule revision. The tracked consumer
-locks retain their existing compatible versions, including Swift Crypto 4.5.2 and Peekaboo's pinned MCP SDK revision;
-Tachikoma's standalone `Package.resolved` does not replace those consumer locks.
+locks own their versions, including Swift Crypto 5.1.2 and Peekaboo's pinned MCP SDK revision; Tachikoma's standalone
+`Package.resolved` does not replace those consumer locks. On Apple platforms Tachikoma hashes through CryptoKit and
+imports Swift Crypto only where CryptoKit is unavailable.
 
 Keep Peekaboo's Agent schema conversion in the integration layer: its recursive union projection preserves structured
 `verify_state` predicate-array items that Tachikoma's legacy parameter projection still treats as strings. Updating the
