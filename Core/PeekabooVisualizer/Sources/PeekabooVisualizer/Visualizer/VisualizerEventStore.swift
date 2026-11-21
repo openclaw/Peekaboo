@@ -36,6 +36,14 @@ public enum VisualizerEventKind: String, Codable, Sendable {
     case spaceSwitch
     case elementDetection
     case annotatedScreenshot
+    case arrow
+    case arrowDismiss
+}
+
+/// A location reported in `see --json` global display coordinates.
+public enum VisualizerArrowTarget: Codable, Equatable, Sendable {
+    case point(CGPoint)
+    case rect(CGRect)
 }
 
 public struct VisualizerEvent: Codable, Sendable {
@@ -83,6 +91,10 @@ public struct VisualizerEvent: Codable, Sendable {
             .elementDetection
         case .annotatedScreenshot:
             .annotatedScreenshot
+        case .arrow:
+            .arrow
+        case .arrowDismiss:
+            .arrowDismiss
         }
     }
 
@@ -128,6 +140,12 @@ public struct VisualizerEvent: Codable, Sendable {
             elements: [DetectedElement],
             windowBounds: CGRect,
             duration: TimeInterval)
+        case arrow(
+            target: VisualizerArrowTarget,
+            label: String?,
+            duration: TimeInterval,
+            sticky: Bool)
+        case arrowDismiss(id: UUID)
     }
 }
 

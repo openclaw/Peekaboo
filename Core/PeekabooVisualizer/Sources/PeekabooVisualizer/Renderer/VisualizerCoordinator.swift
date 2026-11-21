@@ -64,7 +64,12 @@ public final class VisualizerCoordinator {
         static let pointer = "pointer"
         static let click = "click"
         static let annotatedScreenshot = "annotatedScreenshot"
+        static let arrowPrefix = "arrow-"
         static let elementSheetPrefix = "elements-screen-"
+
+        static func arrow(id: UUID) -> String {
+            "\(self.arrowPrefix)\(id.uuidString)"
+        }
 
         static func elementSheet(screenIndex: Int) -> String {
             "\(self.elementSheetPrefix)\(screenIndex)"
