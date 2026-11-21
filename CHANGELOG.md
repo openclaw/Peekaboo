@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Start the default MCP catalog against native-only embedded Bridges such as OpenClaw.app. Keep browser operations unavailable on those hosts instead of failing the entire server with `unavailable`; retain the selected Bridge, native permission checks, tool filters and strict browser-handoff validation.
 - Update the audited Chrome DevTools MCP browser provider to 1.13.0 (Puppeteer 25.17.0, MCP SDK 2.4.0). Its new network-mocking, logpoint, WebAuthn, heap-context, DevTools UI and slim tools stay unavailable; file-backed `evaluate_script` sources are refused; provider config discovery is disabled; pages opened by an action are returned as opaque page references; and full-page screenshots and screencasts require foreground authority.
 
 ## 4.9.9 - 2026-11-15
