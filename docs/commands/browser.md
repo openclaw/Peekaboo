@@ -21,14 +21,18 @@ peekaboo browser snapshot --page-id 2 --path /tmp/page.txt --foreground
 
 Use `peekaboo browser --help` for the complete action-specific option set. Page-scoped automation should retain the returned page ID and pass `--page-id` on later calls so concurrent browser work cannot redirect it.
 
-The CLI is background-only by default. Chrome DevTools MCP 1.10.1's bundled Puppeteer grants browser user activation to
-every page evaluation, including evaluation used internally for page titles, stable-DOM waits, snapshots, and element
+The CLI is background-only by default. Chrome DevTools MCP 1.13.0's bundled Puppeteer grants browser user activation to
+every page evaluation, including evaluation used internally for stable-DOM waits, snapshots, and element
 geometry. Default mode therefore exposes only source-audited routes that cannot enter that evaluation path. Page
 discovery, snapshots, navigation, waits, element interaction, and arbitrary script evaluation refuse before provider
 I/O unless the caller passes `--foreground`; accepted calls report `browser_protocol` / `foreground` delivery even if
-the page remains visually behind another app. Exact positive-ID network lookup, page screenshot without an element,
+the page remains visually behind another app. Exact positive-ID network lookup, viewport screenshot without an element,
 console listing, emulation, Lighthouse, performance trace operations, and heap capture retain background routes.
 Those source-audited calls report `browser_protocol` / `background` delivery.
+Full-page screenshots and screencast tools require foreground authority. New upstream network-mocking, logpoint, WebAuthn, heap-context,
+DevTools UI/comment, and slim tools remain unavailable. Raw `evaluate_script` accepts inline code but refuses the new
+`sourcePath` file-source argument. Provider config discovery is disabled to keep routing and filesystem authority
+under Peekaboo's control.
 All default calls require an existing exact browser connection receipt and never ambiently auto-connect. With explicit
 `--foreground`, only standalone CLI page actions may auto-connect when no receipt exists. Persistent MCP, Agent, and
 Bridge-scoped page actions never ambiently auto-connect.

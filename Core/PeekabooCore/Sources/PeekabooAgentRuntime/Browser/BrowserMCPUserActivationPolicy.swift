@@ -2,7 +2,7 @@ import Foundation
 
 /// Fail-closed user-activation policy for the exactly pinned Chrome DevTools MCP provider.
 ///
-/// Puppeteer 25.11.0 sends every `evaluate` and `evaluateHandle` call with CDP `userGesture: true`. The provider can
+/// Puppeteer 25.17.0 sends every `evaluate` and `evaluateHandle` call with CDP `userGesture: true`. The provider can
 /// therefore grant transient browser user activation without visibly fronting a page. Background execution is limited
 /// to routes whose complete successful call path is source-proven not to reach those Puppeteer APIs.
 enum BrowserMCPUserActivationPolicy {
@@ -33,6 +33,8 @@ enum BrowserMCPUserActivationPolicy {
         "new_page",
         "press_key",
         "resize_page",
+        "screencast_start",
+        "screencast_stop",
         "select_page",
         "type_text",
         "upload_file",
@@ -128,9 +130,9 @@ enum BrowserMCPUserActivationPolicy {
             return .foregroundRequired(
                 "\(toolName) can evaluate an open DevTools page with browser user activation")
         case "take_screenshot":
-            guard call.arguments["uid"] == nil else {
+            guard call.arguments["uid"] == nil, call.arguments["fullPage"] as? Bool != true else {
                 return .foregroundRequired(
-                    "take_screenshot with uid evaluates element geometry with browser user activation")
+                    "take_screenshot with uid or fullPage evaluates geometry with browser user activation")
             }
             return .sourceProvenBackground
         default:
