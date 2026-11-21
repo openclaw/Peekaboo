@@ -49,5 +49,7 @@ final class UnavailableRemoteBrowserMCPSession: BrowserMCPScopedSessionEnding {
     func disconnect() async {}
 
     @discardableResult
-    func endBrowserMCPScopedSession() async -> Bool { true }
+    func endBrowserMCPScopedSession() async -> Bool {
+        true
+    }
 }
