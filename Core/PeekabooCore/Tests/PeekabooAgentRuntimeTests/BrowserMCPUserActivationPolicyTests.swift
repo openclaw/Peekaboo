@@ -9,7 +9,8 @@ struct BrowserMCPUserActivationPolicyTests {
             "get_console_message", "get_network_request", "handle_dialog", "hover", "lighthouse_audit",
             "list_console_messages", "list_network_requests", "list_pages", "navigate_page", "new_page",
             "performance_analyze_insight", "performance_start_trace", "performance_stop_trace", "press_key",
-            "resize_page", "select_page", "take_heapsnapshot", "take_screenshot", "take_snapshot", "type_text",
+            "resize_page", "screencast_start", "screencast_stop", "select_page", "take_heapsnapshot",
+            "take_screenshot", "take_snapshot", "type_text",
             "upload_file", "wait_for",
         ]
         let classified = BrowserMCPUserActivationPolicy.alwaysForegroundToolNames
@@ -18,7 +19,7 @@ struct BrowserMCPUserActivationPolicyTests {
 
         #expect(classified == registered)
         #expect(Set(BrowserMCPUserActivationPolicy.catalogToolNames(foregroundCapable: true)) == registered)
-        #expect(BrowserMCPUserActivationPolicy.alwaysForegroundToolNames.count == 16)
+        #expect(BrowserMCPUserActivationPolicy.alwaysForegroundToolNames.count == 18)
         #expect(BrowserMCPUserActivationPolicy.conditionalToolNames.count == 6)
         #expect(BrowserMCPUserActivationPolicy.sourceProvenBackgroundToolNames.count == 7)
     }
@@ -46,7 +47,8 @@ struct BrowserMCPUserActivationPolicyTests {
             ("get_network_request", ["reqid": 0], true),
             ("get_network_request", [:], true),
             ("take_screenshot", [:], false),
-            ("take_screenshot", ["fullPage": true], false),
+            ("take_screenshot", ["fullPage": false], false),
+            ("take_screenshot", ["fullPage": true], true),
             ("take_screenshot", ["uid": "1_0"], true),
             ("get_console_message", ["msgid": 1], true),
             ("list_network_requests", [:], true),

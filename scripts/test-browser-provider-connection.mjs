@@ -11,19 +11,20 @@ const swift = readFileSync(new URL('../Core/PeekabooCore/Sources/PeekabooAgentRu
 const bootstrap = swift.match(/static let source = #"""\n([\s\S]*?)\n    """#/)[1].replace(/^    /gm, '');
 process.env.PATH = fileURLToPath(new URL('../node_modules/.bin', import.meta.url)) + delimiter + process.env.PATH;
 await import('data:text/javascript,' + encodeURIComponent(bootstrap.split('process.argv =')[0]));
-const { McpServer } = await import('../node_modules/chrome-devtools-mcp/build/src/index.js');
-const { BrowserManager } = await import('../node_modules/chrome-devtools-mcp/build/src/BrowserManager.js');
-const { mcpOptions } = await import('../node_modules/chrome-devtools-mcp/build/src/config/mcp-options.js');
-const defaults = Object.fromEntries(Object.entries(mcpOptions).map(([key, option]) => [key, option.default]));
+const { McpServer } = await import('../node_modules/chrome-devtools-mcp/out/Default/gen/src/index.js');
+const { BrowserManager } = await import('../node_modules/chrome-devtools-mcp/out/Default/gen/src/BrowserManager.js');
+const { ServerConfig } = await import('../node_modules/chrome-devtools-mcp/out/Default/gen/src/config/ServerConfig.js');
 
 // Exercise the real bundled Puppeteer against an approval-mode-shaped listener.
 const fixture = await devtoolsFixture();
 let server;
 let browserManager;
 async function createServer(endpoint) {
-  const args = { ...defaults, usageStatistics: false, wsEndpoint: endpoint };
-  browserManager = new BrowserManager(args);
-  return McpServer.from(args, { browserManager });
+  const config = ServerConfig.create({
+    cliArgs: { usageStatistics: false, wsEndpoint: endpoint }, fileArgs: {}, env: {},
+  });
+  browserManager = new BrowserManager(config);
+  return McpServer.from(config, { browserManager });
 }
 try {
   server = await createServer(fixture.endpoint);
@@ -43,6 +44,14 @@ try {
   await disconnected;
   await assert.rejects(browserManager.ensureBrowser(), /reconnect explicitly/);
   assert.equal(fixture.attaches, 1, 'a disconnected provider must not ask Chrome for another approval');
+  browserManager.abandonPendingAttempt();
+  await assert.rejects(browserManager.ensureBrowser(), /reconnect explicitly/);
+  assert.equal(fixture.attaches, 1, 'abandoning a stale attempt must not remove the one-attempt guard');
+  await server.close();
+  server = await createServer(fixture.endpoint);
+  const reconnected = await server.server._registeredTools.peekaboo_browser_connect.handler({});
+  assert.equal(reconnected.isError, undefined);
+  assert.equal(fixture.attaches, 2, 'only a new explicitly created provider owner may reconnect');
 } finally {
   await server?.close();
   await fixture.close();
@@ -56,6 +65,8 @@ try {
   assert.equal(rejected.isError, true);
   assert.match(rejected.content[0].text, /403/);
   assert.deepEqual(await tool.handler({}), rejected);
+  browserManager.abandonPendingAttempt();
+  await assert.rejects(browserManager.ensureBrowser(), /reconnect explicitly/);
   assert.equal(refusal.attaches, 1, 'a refused approval must remain one attempt');
 } finally {
   await server?.close();
@@ -108,7 +119,7 @@ try {
   const initialized = await request('initialize', {
     protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'peekaboo-contract', version: '1.0.0' },
   });
-  assert.equal(initialized.serverInfo.version, '1.10.1');
+  assert.equal(initialized.serverInfo.version, '1.13.0');
   child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
   const catalog = await request('tools/list', {});
   assert.ok(catalog.tools.some(tool => tool.name === 'peekaboo_browser_connect'));
@@ -119,6 +130,11 @@ try {
   assert.deepEqual(await request('tools/call', { name: 'peekaboo_browser_connect', arguments: {} }), result);
   assert.equal(stdioFixture.attaches, 1, 'the full launcher must retain one provider connection');
   assert.equal(stdioFixture.requests, 0);
+  const invalid = await request('tools/call', { name: 'take_snapshot', arguments: {} });
+  assert.equal(invalid.isError, true);
+  assert.match(invalid.content[0].text, /pageId/);
+  await assert.rejects(request('tools/call', { name: 'mock_network', arguments: {} }), /disabled/);
+  assert.equal(stdioFixture.attaches, 1, 'delegated dispatch must preserve schema and disabled-tool refusals');
 } finally {
   lines.close();
   const exited = child.exitCode === null && child.signalCode === null ? once(child, 'exit') : Promise.resolve();

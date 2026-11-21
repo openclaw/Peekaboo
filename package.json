@@ -93,7 +93,7 @@
     "x64"
   ],
   "devDependencies": {
-    "chrome-devtools-mcp": "1.10.1"
+    "chrome-devtools-mcp": "1.13.0"
   },
-  "packageManager": "pnpm@11.28.4+sha512.f905a61563f89b49a292634d3d87d024cfdea9dccf5c66b2ccc261675fa7b2774320a959db472e6caa7f9ff7314709cd50d06c8fd64addb60647377a78d250ff"
+  "packageManager": "pnpm@11.28.13+sha512.d5caa9cdcd6067ac2902f9f44daa00b1288a73babf1e98f4f375b3a7583b1894b4d49f7527da8f5e1530198bb10e03adba321a1f015429dc2946ce8a7a9a8c65"
 }

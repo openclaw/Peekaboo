@@ -307,10 +307,10 @@ test('full safe lane shares source gates and runs only the complete pinned comma
   assert.deepEqual(steps.filter((entry) => /\bbrew install\b|\brg --version\b|\buv --version\b/.test(entry)), [tools]);
   assert.match(safe, /if: matrix.group == 'full-safe'\n        id: safe\n        timeout-minutes: \$\{\{ matrix.test_minutes }}/);
   assert.match(install, /if: matrix.group == 'full-safe'\n        id: safe-install\n        timeout-minutes: 10/);
-  assert.match(pnpm, /if: matrix.group == 'full-safe'\n        timeout-minutes: 5\n        uses: pnpm\/action-setup@v6\.1\.0/);
+  assert.match(pnpm, /if: matrix.group == 'full-safe'\n        timeout-minutes: 5\n        uses: pnpm\/action-setup@v6\.1\.1/);
   assert.match(pnpm, /run_install: false\n          cache: false/);
   assert.doesNotMatch(pnpm, /\n\s+version:/, 'pnpm version must come from package.json');
-  assert.match(workflow, /uses: actions\/setup-node@v7\n        with:\n          node-version: '26\.12\.1'\n          package-manager-cache: false/);
+  assert.match(workflow, /uses: actions\/setup-node@v7\n        with:\n          node-version: '26\.13\.1'\n          package-manager-cache: false/);
   assert.match(script('Record safe-suite runtime and frozen dependency install'), /^pnpm install --frozen-lockfile 2>&1 \| tee /m);
   assert.match(script('Run full repository safe suite'), /^pnpm run test:safe 2>&1 \| tee /m);
   assert.equal(script('Run full repository safe suite').match(/^pnpm /gm)?.length, 1);

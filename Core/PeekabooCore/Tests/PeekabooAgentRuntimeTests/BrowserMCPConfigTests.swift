@@ -60,7 +60,7 @@ struct BrowserMCPConfigTests {
     private func expectStructuredCapabilityArguments(_ arguments: [String]) {
         #expect(Array(arguments.prefix(10)) == [
             "-y",
-            "--package=chrome-devtools-mcp@1.10.1",
+            "--package=chrome-devtools-mcp@1.13.0",
             "--",
             "node",
             "--input-type=module",
