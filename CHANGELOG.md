@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Start the default MCP catalog against native-only embedded Bridges such as OpenClaw.app. Keep browser operations unavailable on those hosts instead of failing the entire server with `unavailable`; retain the selected Bridge, native permission checks, tool filters and strict browser-handoff validation.
+
 ## 4.9.9 - 2026-11-15
 
 **Highlights:** Keep Peekaboo.app running when a Bridge client inspects its own Settings window; invoke UIKit and Mac Catalyst custom accessibility actions by title with `action`; accept localized Chrome profile window titles in fresh `see`; report exact-window target changes as a typed JSON diagnostic; and refresh Ollama models, find Settings and handle Launch at Login approval correctly in the Mac app.
