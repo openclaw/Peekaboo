@@ -77,6 +77,7 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "browser", arguments: ["action": "network", "page_id": 1]),
             .init(tool: "browser", arguments: ["action": "network", "page_id": 1, "request_id": 0]),
             .init(tool: "browser", arguments: ["action": "screenshot", "page_id": 1, "uid": "1_0"]),
+            .init(tool: "browser", arguments: ["action": "screenshot", "page_id": 1, "full_page": true]),
             .init(tool: "browser", arguments: ["action": "new_page", "background": false]),
             .init(tool: "browser", arguments: [
                 "action": "call",
@@ -204,11 +205,6 @@ struct MCPToolExecutionPolicyTests {
                 "action": "network",
                 "page_id": 1,
                 "request_id": 1,
-            ]),
-            .init(tool: "browser", arguments: [
-                "action": "screenshot",
-                "page_id": 1,
-                "full_page": true,
             ]),
             .init(tool: "browser", arguments: [
                 "action": "performance_trace",

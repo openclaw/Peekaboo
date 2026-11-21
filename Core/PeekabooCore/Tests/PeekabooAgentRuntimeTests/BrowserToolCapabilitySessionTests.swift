@@ -7,6 +7,125 @@ import Testing
 struct BrowserToolCapabilitySessionTests {
     private static let providerSessionEpoch = BrowserMCPProviderSessionEpoch()
 
+    @Test(arguments: [false, true])
+    func `opened pages are projected without expiring the source page`(includeSnapshot: Bool) async throws {
+        let session = BrowserToolCapabilitySession()
+        let binding = Self.binding(Self.receipt())
+        let listed = try await session.project(
+            Self.pageResponse(id: 7, url: "https://example.test/"),
+            calls: Self.calls("list_pages"),
+            resolved: nil,
+            sessionBinding: binding)
+        let sourceReference = try Self.pageReference(from: listed)
+        let resolved = try await session.resolve(
+            action: .call,
+            arguments: ToolArguments(raw: ["page_id": sourceReference, "mcp_tool": "fill_form"]),
+            sessionBinding: binding)
+        var fields: [String: Value] = [
+            "openedPages": .array([.object([
+                "id": .int(8), "url": .string("https://example.test/popup"), "title": .string("Popup"),
+            ])]),
+        ]
+        if includeSnapshot {
+            fields["snapshot"] = Self.snapshotResponse(uid: "1_0").structuredContent?.objectValue?["snapshot"]
+        }
+        let text = "8: domain data\nNote: Page 8 domain data\n## Opened pages\n8: Popup (https://example.test/popup)" +
+            (includeSnapshot ? "\n## Latest page snapshot\nuid=1_0 button \"Continue\"" : "")
+        let response = try await session.project(
+            ToolResponse(
+                content: [.text(text: text, annotations: nil, _meta: nil)],
+                structuredContent: .object(fields)),
+            calls: [BrowserMCPMappedCall(
+                toolName: "fill_form", arguments: ["elements": [], "includeSnapshot": includeSnapshot])],
+            resolved: resolved,
+            sessionBinding: binding)
+        let opened = try #require(response.structuredContent?.objectValue?["openedPages"]?.arrayValue?.first?
+            .objectValue)
+        let popupReference = try #require(opened["id"]?.stringValue)
+        #expect(popupReference.hasPrefix("bp1_"))
+        #expect(opened["page_ref"]?.stringValue == popupReference)
+        let projectedText = response.content.compactMap { item -> String? in
+            guard case let .text(value, _, _) = item else { return nil }
+            return value
+        }.joined()
+        #expect(projectedText.contains("\(popupReference): Popup"))
+        #expect(projectedText.hasPrefix("8: domain data\nNote: Page 8 domain data\n"))
+        #expect(!projectedText.contains("## Opened pages\n8:"))
+        if includeSnapshot {
+            #expect(try Self.elementReference(from: response).hasPrefix("be1_"))
+            #expect(!projectedText.contains("uid=1_0"))
+        }
+        for (reference, expectedID) in [(sourceReference, 7), (popupReference, 8)] {
+            let page = try await session.resolve(
+                action: .snapshot,
+                arguments: ToolArguments(raw: ["page_id": reference]),
+                sessionBinding: binding)
+            #expect(page.providerPageID == expectedID)
+        }
+    }
+
+    @Test
+    func `opened page text without structured identity fails closed`() async throws {
+        let session = BrowserToolCapabilitySession()
+        await #expect(throws: BrowserToolCapabilityError.invalidProviderResponse) {
+            _ = try await session.project(
+                .text("## Opened pages\n8: Popup (https://example.test/)"),
+                calls: Self.calls("evaluate_script"),
+                resolved: nil,
+                sessionBinding: Self.binding(Self.receipt()))
+        }
+    }
+
+    @Test
+    func `trace page mismatch guidance does not expose provider page IDs`() async throws {
+        let session = BrowserToolCapabilitySession()
+        let message = "Error: the active performance trace is running on page 8, not on page 7. " +
+            "Pass pageId: 8 to performance_stop_trace to stop it."
+        let response = try await session.project(
+            ToolResponse(
+                content: [.text(text: message, annotations: nil, _meta: nil)],
+                structuredContent: .object(["message": .string(message)])),
+            calls: Self.calls("performance_stop_trace"),
+            resolved: nil,
+            sessionBinding: Self.binding(Self.receipt()))
+        let projected = try #require(response.structuredContent?.objectValue?["message"]?.stringValue)
+        #expect(projected.contains("Call list_pages"))
+        #expect(!projected.contains("pageId:"))
+        #expect(!projected.contains("page 8"))
+        guard let first = response.content.first, case let .text(text, _, _) = first else {
+            Issue.record("Expected projected trace guidance")
+            return
+        }
+        #expect(text == projected)
+    }
+
+    @Test
+    func `layout only snapshot nodes never receive element capabilities`() async throws {
+        let session = BrowserToolCapabilitySession()
+        let binding = Self.binding(Self.receipt())
+        let listed = try await session.project(
+            Self.pageResponse(id: 7, url: "https://example.test/"),
+            calls: Self.calls("list_pages"),
+            resolved: nil,
+            sessionBinding: binding)
+        let reference = try Self.pageReference(from: listed)
+        let resolved = try await session.resolve(
+            action: .snapshot,
+            arguments: ToolArguments(raw: ["page_id": reference]),
+            sessionBinding: binding)
+        var fields = try #require(Self.snapshotResponse(uid: "1_0").structuredContent?.objectValue)
+        var snapshot = try #require(fields["snapshot"]?.objectValue)
+        snapshot["children"] = .array([.object(["id": .string(""), "role": .string("StaticText")])])
+        fields["snapshot"] = .object(snapshot)
+        let response = try await session.project(
+            ToolResponse(content: [], structuredContent: .object(fields)),
+            calls: Self.calls("take_snapshot"),
+            resolved: resolved,
+            sessionBinding: binding)
+        let child = response.structuredContent?.objectValue?["snapshot"]?.objectValue?["children"]?.arrayValue?.first
+        #expect(child?.objectValue?["element_ref"] == nil)
+    }
+
     @Test
     func `page and element capabilities are rejected outside their caller session`() async throws {
         let first = BrowserToolCapabilitySession()

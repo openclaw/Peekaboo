@@ -28,6 +28,7 @@ struct BrowserToolCapabilityContractTests {
             "fill_form.elements[].uid",
             "get_css_styles.uid",
             "hover.uid",
+            "reveal_in_devtools.uid",
             "take_screenshot.uid",
             "upload_file.uid",
         ])
@@ -39,5 +40,29 @@ struct BrowserToolCapabilityContractTests {
             "click", "click_at", "drag", "execute_3p_developer_tool", "fill", "fill_form", "hover", "press_key",
             "take_snapshot", "upload_file", "wait_for",
         ])
+    }
+
+    @Test
+    func `new upstream tools and script file sources do not gain caller authority`() throws {
+        #expect(BrowserMCPPageRoutingContract.unavailableToolNames.count == 12)
+        for name in BrowserMCPPageRoutingContract.unavailableToolNames {
+            #expect(BrowserMCPPageRoutingContract.capabilityContract(for: name) == nil)
+            #expect(!BrowserMCPUserActivationPolicy.registeredToolNames.contains(name))
+        }
+        #expect(BrowserMCPPageRoutingContract.capabilityContract(
+            for: "evaluate_script", arguments: ["sourcePath": "/private/script.js"]) == nil)
+        #expect(throws: (any Error).self) {
+            try BrowserMCPCallMapper.mapRawCall(arguments: ToolArguments(raw: [
+                "mcp_tool": "evaluate_script",
+                "page_id": 7,
+                "mcp_args_json": #"{"sourcePath":"/private/script.js"}"#,
+            ]))
+        }
+        let inline = try BrowserMCPCallMapper.mapRawCall(arguments: ToolArguments(raw: [
+            "mcp_tool": "evaluate_script",
+            "page_id": 7,
+            "mcp_args_json": #"{"function":"() => 42"}"#,
+        ]))
+        #expect(inline.arguments["pageId"] as? Int == 7)
     }
 }

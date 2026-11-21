@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -44,6 +44,8 @@ const expectedExplicitPageTargetNames = namesInContractSection("explicit-page-ta
 const expectedGlobalNames = namesInContractSection("global");
 const expectedBlockedSelectedPageNames = namesInContractSection("blocked-selected-page");
 const expectedUnsupportedResponseNames = namesInContractSection("unsupported-response");
+const expectedUnavailableNames = namesInContractSection("unavailable");
+const expectedOpenedPageResponseNames = namesInContractSection("opened-page-response");
 const expectedReadOnlyNames = namesInContractSection("semantic-read-only", semanticsContract);
 const expectedMutatingNames = namesInContractSection("semantic-mutating", semanticsContract);
 const expectedArgumentDependentNames = namesInContractSection("semantic-argument-dependent", semanticsContract);
@@ -63,7 +65,7 @@ const expectedElementReferencePaths = namesInContractSection("element-reference-
 const expectedPageResponseNames = namesInContractSection("page-response");
 const expectedSnapshotResponseNames = namesInContractSection("snapshot-response");
 
-assert.equal(declaredVersion, "1.10.1", "keep the audited browser routing contract pinned exactly");
+assert.equal(declaredVersion, "1.13.0", "keep the audited browser routing contract pinned exactly");
 assert.equal(dependencyPackage.version, declaredVersion, "installed Chrome DevTools MCP must match the pin");
 assert.equal(swiftVersion, declaredVersion, "Swift browser routing contract must match the dependency pin");
 
@@ -81,15 +83,15 @@ const originalPath = process.env.PATH;
 process.env.PATH = fileURLToPath(new URL("../node_modules/.bin", import.meta.url)) + delimiter + originalPath;
 await import("data:text/javascript," + encodeURIComponent(bootstrap.split("process.argv =")[0]));
 process.env.PATH = originalPath;
-const handlerURL = new URL("../node_modules/chrome-devtools-mcp/build/src/ToolHandler.js", import.meta.url);
+const handlerURL = new URL("../node_modules/chrome-devtools-mcp/out/Default/gen/src/ToolHandler.js", import.meta.url);
 const { ToolHandler } = await import(handlerURL);
 const { ToolHandler: UnpatchedToolHandler } = await import(new URL(handlerURL.href + "?unpatched-regression"));
 const { createTools } = await import(
-  new URL("../node_modules/chrome-devtools-mcp/build/src/tools/tools.js", import.meta.url)
+  new URL("../node_modules/chrome-devtools-mcp/out/Default/gen/src/tools/tools.js", import.meta.url)
 );
 
 const { mcpOptions } = await import(new URL(
-  "../node_modules/chrome-devtools-mcp/build/src/config/mcp-options.js", import.meta.url,
+  "../node_modules/chrome-devtools-mcp/out/Default/gen/src/config/mcp-options.js", import.meta.url,
 ));
 const serverArgs = {
   ...Object.fromEntries(Object.entries(mcpOptions).map(([key, option]) => [key, option.default])),
@@ -99,15 +101,36 @@ const serverArgs = {
   slim: false,
   viaCli: false,
 };
-const inertMutex = {
-  async acquire() {
+const inertQueue = {
+  async scheduleTask() {
     return { [Symbol.dispose]() {} };
   },
 };
 const tools = createTools(serverArgs);
 const handlers = new Map(
-  tools.map((tool) => [tool.name, new ToolHandler(tool, serverArgs, async () => undefined, inertMutex)]),
+  tools.map((tool) => [tool.name, new ToolHandler(tool, { resolved: serverArgs }, async () => undefined, () => {})]),
 );
+
+// Exercise the actual screenshot handler: v1.13.0 added a geometry probe to full-page shots.
+assert.equal(serverArgs.screenshotMaxWidth, undefined);
+assert.equal(serverArgs.screenshotMaxHeight, undefined);
+const screenshotTool = tools.find((tool) => tool.name === "take_screenshot");
+let geometryReads = 0;
+let viewportCaptures = 0;
+const screenshotPage = {
+  pptrPage: {
+    async evaluate() { geometryReads++; throw new Error("geometry grants activation"); },
+    async screenshot() { viewportCaptures++; return new Uint8Array([1, 2, 3]); },
+  },
+};
+const screenshotResponse = { appendResponseLine() {}, attachImage() {} };
+await screenshotTool.handler({ page: screenshotPage, params: { format: "png" } }, screenshotResponse, {});
+assert.equal(geometryReads, 0, "the default viewport screenshot must remain free of page evaluation");
+assert.equal(viewportCaptures, 1);
+await assert.rejects(screenshotTool.handler(
+  { page: screenshotPage, params: { format: "png", fullPage: true } }, screenshotResponse, {},
+), /geometry grants activation/);
+assert.equal(geometryReads, 1, "full-page screenshots require foreground authority before provider I/O");
 
 const structuredFixtureTool = {
   name: "peekaboo_structured_fixture",
@@ -123,6 +146,8 @@ const structuredFixtureTool = {
 let disabledTelemetryMetadataReads = 0;
 const fixtureContext = {
   browser: { process() { return {}; } },
+  taskQueue: inertQueue,
+  async ensureBrowser() { return this.browser; },
   async getDevToolsData() {
     disabledTelemetryMetadataReads++;
     throw new Error("Disabled telemetry must not inspect DevTools UI");
@@ -136,22 +161,22 @@ const fixtureContext = {
   },
 };
 const unpatchedFixture = await new UnpatchedToolHandler(
-  structuredFixtureTool, serverArgs, async () => fixtureContext, inertMutex,
+  structuredFixtureTool, { resolved: serverArgs }, async () => fixtureContext, () => {},
 ).handle({});
-assert.equal(unpatchedFixture.isError, true, "the unfixed 1.10.1 handler must reproduce the telemetry probe");
+assert.equal(unpatchedFixture.isError, true, "the unfixed 1.13.0 handler must reproduce the telemetry probe");
 assert.equal(disabledTelemetryMetadataReads, 1, "the negative control must reach DevTools metadata");
 disabledTelemetryMetadataReads = 0;
 const structuredHandler = new ToolHandler(
   structuredFixtureTool,
-  serverArgs,
+  { resolved: serverArgs },
   async () => fixtureContext,
-  inertMutex,
+  () => {},
 );
 const textOnlyHandler = new ToolHandler(
   structuredFixtureTool,
-  { ...serverArgs, experimentalStructuredContent: false },
+  { resolved: { ...serverArgs, experimentalStructuredContent: false } },
   async () => fixtureContext,
-  inertMutex,
+  () => {},
 );
 const structuredFixture = await structuredHandler.handle({});
 const textOnlyFixture = await textOnlyHandler.handle({});
@@ -172,7 +197,7 @@ assert.equal(
 );
 const failedHandler = new ToolHandler(
   { ...structuredFixtureTool, async handler() { throw new Error("fixture tool failed"); } },
-  serverArgs, async () => fixtureContext, inertMutex,
+  { resolved: serverArgs }, async () => fixtureContext, () => {},
 );
 assert.equal((await failedHandler.handle({})).isError, true);
 assert.equal(disabledTelemetryMetadataReads, 0, "failed tools must also skip disabled telemetry probes");
@@ -180,13 +205,13 @@ assert.equal(disabledTelemetryMetadataReads, 0, "failed tools must also skip dis
 // The patch only gates telemetry: real tool-owned DevTools reads must retain their normal semantics.
 const metadataHandler = new ToolHandler(
   { ...structuredFixtureTool, async handler(_request, _response, context) { await context.getDevToolsData(); } },
-  serverArgs, async () => fixtureContext, inertMutex,
+  { resolved: serverArgs }, async () => fixtureContext, () => {},
 );
 assert.equal((await metadataHandler.handle({})).isError, true);
 assert.equal(disabledTelemetryMetadataReads, 1, "do not stub the shared DevTools helper");
 
 const { ClearcutLogger } = await import(new URL(
-  "../node_modules/chrome-devtools-mcp/build/src/telemetry/ClearcutLogger.js", import.meta.url,
+  "../node_modules/chrome-devtools-mcp/out/Default/gen/src/telemetry/ClearcutLogger.js", import.meta.url,
 ));
 const originalGetLogger = ClearcutLogger.get;
 let loggedInvocation;
@@ -198,7 +223,7 @@ try {
     getSelectedMcpPageUrl() { return "https://example.invalid/"; },
   };
   const result = await new ToolHandler(
-    structuredFixtureTool, { ...serverArgs, usageStatistics: true }, async () => enabledContext, inertMutex,
+    structuredFixtureTool, { resolved: { ...serverArgs, usageStatistics: true } }, async () => enabledContext, () => {},
   ).handle({});
   assert.equal(result.isError, undefined);
   assert.deepEqual(loggedInvocation.devToolsData, { fixture: "devtools" });
@@ -219,17 +244,63 @@ try {
   const fakeBin = join(tamperedRoot, "node_modules/.bin");
   const fakePackage = join(tamperedRoot, "node_modules/chrome-devtools-mcp");
   mkdirSync(fakeBin, { recursive: true });
-  mkdirSync(join(fakePackage, "build/src"), { recursive: true });
+  mkdirSync(join(fakePackage, "out/Default/gen/src"), { recursive: true });
   writeFileSync(join(fakePackage, "package.json"), JSON.stringify({
     name: "chrome-devtools-mcp", version: declaredVersion, type: "module",
   }));
-  writeFileSync(join(fakePackage, "build/src/ToolHandler.js"), "throw new Error('unverified code ran');");
+  writeFileSync(join(fakePackage, "out/Default/gen/src/ToolHandler.js"), "throw new Error('unverified code ran');");
   const rejected = spawnSync(process.execPath, ["--input-type=module", "--eval", bootstrap], {
     encoding: "utf8", timeout: 10_000, env: { ...process.env, PATH: fakeBin + delimiter + originalPath },
   });
   assert.notEqual(rejected.status, 0);
   assert.match(rejected.stderr, /Error: Peekaboo: unaudited Chrome DevTools MCP ToolHandler/);
   assert.doesNotMatch(rejected.stderr, /Error: unverified code ran/);
+
+  rmSync(fakePackage, { recursive: true });
+  cpSync(realpathSync(fileURLToPath(new URL(".", dependencyPackageURL))), fakePackage, { recursive: true });
+  for (const [module, diagnostic] of [
+    ["ToolHandler.js", "ToolHandler"],
+    ["BrowserManager.js", "browser transport"],
+    ["third_party/index.js", "dependencies"],
+  ]) {
+    const path = join(fakePackage, "out/Default/gen/src", module);
+    const original = readFileSync(path);
+    writeFileSync(path, Buffer.concat([original, Buffer.from("\nthrow new Error('unverified code ran');\n")]));
+    const result = spawnSync(process.execPath, ["--input-type=module", "--eval", connectionBootstrap], {
+      encoding: "utf8", timeout: 10_000, env: { ...process.env, PATH: fakeBin + delimiter + originalPath },
+    });
+    assert.notEqual(result.status, 0, `tampered ${module} must fail before provider startup`);
+    assert.ok(result.stderr.includes(`Error: Peekaboo: unaudited Chrome DevTools MCP ${diagnostic}`));
+    assert.doesNotMatch(result.stderr, /Error: unverified code ran/);
+    writeFileSync(path, original);
+  }
+
+  writeFileSync(join(fakePackage, "package.json"), JSON.stringify({ ...dependencyPackage, version: "1.13.1" }));
+  const wrongVersion = spawnSync(process.execPath, ["--input-type=module", "--eval", connectionBootstrap], {
+    encoding: "utf8", timeout: 10_000, env: { ...process.env, PATH: fakeBin + delimiter + originalPath },
+  });
+  assert.notEqual(wrongVersion.status, 0);
+  assert.match(wrongVersion.stderr, /unexpected Chrome DevTools MCP package/);
+
+  const pluginData = join(tamperedRoot, "plugin-data");
+  mkdirSync(pluginData);
+  writeFileSync(join(pluginData, "cd4a.config.json"), JSON.stringify({
+    allowUnrestrictedPaths: true, categoryExtensions: true, pageIdRouting: false,
+  }));
+  const configProbe = spawnSync(process.execPath, ["--input-type=module", "--eval", connectionBootstrap + `
+    const {ConfigParser} = await import(pathToFileURL(join(modules, 'config/ConfigParser.js')).href);
+    const config = new ConfigParser('fixture', ['node', 'fixture', '--no-usage-statistics', '--page-id-routing']).parseConfig();
+    const {default: assert} = await import('node:assert/strict');
+    assert.equal(config.configPath, undefined);
+    assert.notEqual(config.resolved.allowUnrestrictedPaths, true);
+    assert.notEqual(config.resolved.categoryExtensions, true);
+    assert.equal(config.resolved.pageIdRouting, true);
+  `], {
+    encoding: "utf8", timeout: 10_000,
+    env: { ...process.env, PATH: localBin + delimiter + originalPath, PLUGIN_DATA: pluginData,
+      CHROME_DEVTOOLS_MCP_NO_CONFIG_DISCOVERY: "" },
+  });
+  assert.equal(configProbe.status, 0, `ambient provider config must not gain authority: ${configProbe.stderr}`);
 } finally {
   rmSync(tamperedRoot, { recursive: true, force: true });
 }
@@ -247,7 +318,7 @@ function uidPaths(schema, prefix = "") {
   if (!current) return [];
   if (current._def?.type === "string") {
     const description = `${schema?.description ?? ""} ${current.description ?? ""}`;
-    return /\buid\b/i.test(description) ? [prefix] : [];
+    return /\buids?\b/i.test(description) ? [prefix] : [];
   }
   if (current._def?.type === "array") {
     return uidPaths(current._def.element, `${prefix}[]`);
@@ -266,55 +337,55 @@ const schemaElementReferencePaths = tools.flatMap((tool) =>
 // execute_3p_developer_tool.params is intentionally JSON text in the Zod schema. McpPage resolves only
 // top-level singleton {uid: String} parameter values, so keep that implementation-owned path explicit.
 const mcpPageSource = readFileSync(
-  new URL("../node_modules/chrome-devtools-mcp/build/src/McpPage.js", import.meta.url),
+  new URL("../node_modules/chrome-devtools-mcp/out/Default/gen/src/McpPage.js", import.meta.url),
   "utf8",
 );
 const textSnapshotSource = readFileSync(
-  new URL("../node_modules/chrome-devtools-mcp/build/src/TextSnapshot.js", import.meta.url),
+  new URL("../node_modules/chrome-devtools-mcp/out/Default/gen/src/TextSnapshot.js", import.meta.url),
   "utf8",
 );
 const mcpResponseSource = readFileSync(
-  new URL("../node_modules/chrome-devtools-mcp/build/src/McpResponse.js", import.meta.url),
+  new URL("../node_modules/chrome-devtools-mcp/out/Default/gen/src/McpResponse.js", import.meta.url),
   "utf8",
 );
 const inputToolSource = readFileSync(
-  new URL("../node_modules/chrome-devtools-mcp/build/src/tools/input.js", import.meta.url),
+  new URL("../node_modules/chrome-devtools-mcp/out/Default/gen/src/tools/input.js", import.meta.url),
   "utf8",
 );
 const snapshotFormatterSource = readFileSync(
-  new URL("../node_modules/chrome-devtools-mcp/build/src/formatters/SnapshotFormatter.js", import.meta.url),
+  new URL("../node_modules/chrome-devtools-mcp/out/Default/gen/src/formatters/SnapshotFormatter.js", import.meta.url),
   "utf8",
 );
 const screenshotToolSource = readFileSync(
-  new URL("../node_modules/chrome-devtools-mcp/build/src/tools/screenshot.js", import.meta.url),
+  new URL("../node_modules/chrome-devtools-mcp/out/Default/gen/src/tools/screenshot.js", import.meta.url),
   "utf8",
 );
 const issueFormatterSource = readFileSync(
-  new URL("../node_modules/chrome-devtools-mcp/build/src/formatters/IssueFormatter.js", import.meta.url),
+  new URL("../node_modules/chrome-devtools-mcp/out/Default/gen/src/formatters/IssueFormatter.js", import.meta.url),
   "utf8",
 );
 const waitForHelperSource = readFileSync(
-  new URL("../node_modules/chrome-devtools-mcp/build/src/utils/WaitForHelper.js", import.meta.url),
+  new URL("../node_modules/chrome-devtools-mcp/out/Default/gen/src/utils/WaitForHelper.js", import.meta.url),
   "utf8",
 );
 const scriptToolSource = readFileSync(
-  new URL("../node_modules/chrome-devtools-mcp/build/src/tools/script.js", import.meta.url),
+  new URL("../node_modules/chrome-devtools-mcp/out/Default/gen/src/tools/script.js", import.meta.url),
   "utf8",
 );
 const pageToolSource = readFileSync(
-  new URL("../node_modules/chrome-devtools-mcp/build/src/tools/pages.js", import.meta.url),
+  new URL("../node_modules/chrome-devtools-mcp/out/Default/gen/src/tools/pages.js", import.meta.url),
   "utf8",
 );
 const networkToolSource = readFileSync(
-  new URL("../node_modules/chrome-devtools-mcp/build/src/tools/network.js", import.meta.url),
+  new URL("../node_modules/chrome-devtools-mcp/out/Default/gen/src/tools/network.js", import.meta.url),
   "utf8",
 );
 const textSnapshotImplementationSource = readFileSync(
-  new URL("../node_modules/chrome-devtools-mcp/build/src/TextSnapshot.js", import.meta.url),
+  new URL("../node_modules/chrome-devtools-mcp/out/Default/gen/src/TextSnapshot.js", import.meta.url),
   "utf8",
 );
 const puppeteerBundleSource = readFileSync(
-  new URL("../node_modules/chrome-devtools-mcp/build/src/third_party/index.js", import.meta.url),
+  new URL("../node_modules/chrome-devtools-mcp/out/Default/gen/src/third_party/index.js", import.meta.url),
   "utf8",
 );
 assert.match(mcpPageSource, /Object\.values\(params\)/, "third-party parameter traversal changed");
@@ -334,6 +405,31 @@ assert.match(
   /uniqueBackendNodeIdToMcpId\.set\(uniqueBackendId, id\)/,
   "snapshot UID continuity binding changed",
 );
+assert.match(textSnapshotSource, /if \(backendNodeId !== undefined\)/,
+  "non-targetable accessibility nodes must not acquire UIDs");
+const { TextSnapshot } = await import(new URL(
+  "../node_modules/chrome-devtools-mcp/out/Default/gen/src/TextSnapshot.js", import.meta.url,
+));
+let syntheticNode = { role: "button", backendNodeId: 17, loaderId: "loader-a" };
+const snapshotPage = {
+  uniqueBackendNodeIdToMcpId: new Map(),
+  extraHandles: [],
+  pptrPage: { accessibility: { async snapshot() { return structuredClone(syntheticNode); } } },
+};
+const firstUID = (await TextSnapshot.create(snapshotPage, { devtoolsData: {} })).root.id;
+assert.equal((await TextSnapshot.create(snapshotPage, { devtoolsData: {} })).root.id, firstUID,
+  "one page must preserve the UID of the same document/node pair");
+syntheticNode = { ...syntheticNode, loaderId: "loader-b" };
+assert.notEqual((await TextSnapshot.create(snapshotPage, { devtoolsData: {} })).root.id, firstUID,
+  "a new document must not inherit the old UID even if Chrome reuses the backend node ID");
+const otherPage = { ...snapshotPage, uniqueBackendNodeIdToMcpId: new Map() };
+assert.notEqual((await TextSnapshot.create(otherPage, { devtoolsData: {} })).root.id, firstUID,
+  "UID continuity must not cross page namespaces");
+syntheticNode = { role: "StaticText", children: [{ role: "InlineTextBox" }] };
+const untargetable = await TextSnapshot.create(snapshotPage, { devtoolsData: {} });
+assert.equal(untargetable.root.id, "");
+assert.equal(untargetable.idToNode.size, 0);
+assert.deepEqual(untargetable.root.children, []);
 assert.match(
   textSnapshotSource,
   /interestingOnly:\s*!verbose/,
@@ -356,7 +452,7 @@ assert.match(
 );
 assert.match(
   snapshotFormatterSource,
-  /const attributes = \[`uid=\$\{serializedAXNodeRoot\.id\}`\]/,
+  /attributes\.push\(`uid=\$\{serializedAXNodeRoot\.id\}`\)/,
   "snapshot rows no longer start with their structural uid",
 );
 assert.match(
@@ -405,17 +501,17 @@ assert.match(
 );
 assert.match(
   puppeteerBundleSource,
-  /send\('Runtime\.evaluate',[\s\S]{0,500}?userGesture:\s*true/,
+  /send\("Runtime\.evaluate",[\s\S]{0,500}?userGesture:\s*true/,
   "Puppeteer Runtime.evaluate user-activation behavior changed",
 );
 assert.match(
   puppeteerBundleSource,
-  /send\('Runtime\.callFunctionOn',[\s\S]{0,1000}?userGesture:\s*true/,
+  /send\("Runtime\.callFunctionOn",[\s\S]{0,1000}?userGesture:\s*true/,
   "Puppeteer Runtime.callFunctionOn user-activation behavior changed",
 );
 assert.match(
   scriptToolSource,
-  /evaluatable\.evaluateHandle\(`\(\$\{fnString\}\)`\)/,
+  /evaluatable\.evaluateHandle\(`\(\\n\$\{functionSource\}\\n\)`\)/,
   "evaluate_script no longer enters Puppeteer evaluation",
 );
 assert.match(
@@ -438,16 +534,10 @@ assert.match(
   /response\.setIncludePages\(true\)/,
   "provider page actions no longer request page response formatting",
 );
-assert.match(
-  mcpResponseSource,
-  /const title = await fetchPageTitle\(mcpPage\.pptrPage\)/,
-  "provider page responses no longer fetch page titles",
-);
-assert.match(
-  mcpResponseSource,
-  /async function fetchPageTitle\(page\)[\s\S]{0,160}?page\.title\(\)/,
-  "provider page title formatting path changed",
-);
+assert.match(mcpResponseSource, /mcpPage\.getTitle\(targetInfo\)/,
+  "provider page titles must use target metadata");
+assert.doesNotMatch(mcpResponseSource, /\.title\(/,
+  "provider page formatting must not regain Puppeteer evaluation");
 assert.match(
   textSnapshotImplementationSource,
   /options\.devtoolsData \?\? \(await page\.getDevToolsData\(\)\)/,
@@ -470,7 +560,8 @@ const pageTargetedNames = tools.filter((tool) => {
   const parsed = handlers.get(tool.name).registeredInputSchema.safeParse({});
   return !parsed.success && parsed.error.issues.some((issue) => issue.path[0] === "pageId");
 }).map((tool) => tool.name).sort();
-const pageScopedNames = pageScopedTools.map((tool) => tool.name).sort();
+const pageScopedNames = pageScopedTools.filter((tool) => !expectedBlockedSelectedPageNames.includes(tool.name))
+  .map((tool) => tool.name).sort();
 const explicitPageTargetNames = pageTargetedNames.filter((name) => !pageScopedNames.includes(name));
 const globalNames = tools.map((tool) => tool.name).filter((name) => !pageTargetedNames.includes(name)).sort();
 const registeredNames = tools.filter((tool) => !handlers.get(tool.name).disabled).map((tool) => tool.name).sort();
@@ -481,14 +572,15 @@ const auditedNames = [
   ...expectedBlockedSelectedPageNames,
 ].sort();
 
-assert.equal(pageScopedTools.length, 33, "the pinned dependency page-scoped contract changed");
-assert.equal(registeredNames.length, 30, "the pinned provider's default registered catalog changed");
+assert.equal(pageScopedTools.length, 44, "the pinned dependency page-scoped contract changed");
+assert.equal(registeredNames.length, 33, "the pinned provider's default registered catalog changed");
 assert.deepEqual(
   [
     ...expectedAlwaysForegroundNames,
     ...expectedConditionalUserActivationNames,
     ...expectedSourceProvenBackgroundNames,
     ...expectedUnsupportedResponseNames,
+    ...expectedUnavailableNames.filter((name) => registeredNames.includes(name)),
   ].sort(),
   registeredNames,
   "user-activation policy and response refusals must partition every default registered provider tool",
@@ -499,6 +591,7 @@ assert.equal(
     ...expectedConditionalUserActivationNames,
     ...expectedSourceProvenBackgroundNames,
     ...expectedUnsupportedResponseNames,
+    ...expectedUnavailableNames.filter((name) => registeredNames.includes(name)),
   ]).size,
   registeredNames.length,
   "user-activation policy categories must be disjoint",
@@ -516,7 +609,7 @@ assert.deepEqual(
 );
 assert.deepEqual(
   expectedBlockedSelectedPageNames,
-  ["trigger_extension_action"],
+  ["evaluate", "navigate", "screenshot", "trigger_extension_action"],
   "re-audit selected-page blockers before changing this category",
 );
 assert.deepEqual(
@@ -552,7 +645,17 @@ assert.deepEqual(
   ],
   "re-audit every provider tool that can emit a snapshot",
 );
-for (const tool of pageScopedTools) {
+assert.deepEqual(expectedOpenedPageResponseNames, [
+  "click", "click_at", "drag", "evaluate_script", "fill", "fill_form", "hover", "press_key", "type_text",
+], "re-audit tools that can emit partial opened-page lists");
+assert.match(mcpResponseSource, /structuredContent\.openedPages = structuredPages/,
+  "provider opened-page response contract changed");
+assert.deepEqual(expectedUnavailableNames, [
+  "analyze_heapsnapshot_contexts", "configure_webauthn", "evaluate", "get_devtools_comments", "mock_network",
+  "navigate", "open_devtools", "remove_network_mock", "resolve_devtools_comment", "reveal_in_devtools",
+  "screenshot", "set_logpoints",
+], "new upstream tools must remain unavailable until separately audited for exposure");
+for (const tool of pageScopedTools.filter((tool) => !expectedBlockedSelectedPageNames.includes(tool.name))) {
   const handler = handlers.get(tool.name);
   const parsed = handler.registeredInputSchema.safeParse({});
 

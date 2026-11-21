@@ -20,7 +20,7 @@ Use Peekaboo native tools for macOS UI, browser chrome, menus, dialogs, permissi
 
 ## Provider update guard
 
-The provider is pinned to 1.10.1, including bundled Puppeteer 25.11.0 and MCP SDK 2.0.0. Its unmodified handler calls
+The provider is pinned to 1.13.0, including bundled Puppeteer 25.17.0 and MCP SDK 2.4.0. Its unmodified handler calls
 `context.getDevToolsData(page)` after every tool even when usage statistics are disabled. With DevTools open, this
 calls `hasDevTools()`, `openDevTools()`, and DevTools-page Puppeteer evaluation with CDP `userGesture: true`.
 An otherwise background-safe console read can therefore grant web user activation in DevTools. Disabling
@@ -46,16 +46,31 @@ reads with disabled telemetry on both success and error paths, and verifies enab
 It also rejects changed handler bytes, audits every tool's routing/UID/response contract, and starts the full launcher
 without attaching Chrome. Remove the patch only when an upstream release fixes this path and passes the complete
 routing, UID, and user-activation audit. The
-[1.10.1 handler](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/chrome-devtools-mcp-v1.10.1/src/ToolHandler.ts)
-and [page helper](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/chrome-devtools-mcp-v1.10.1/src/McpPage.ts)
-own the behavior; changing Peekaboo's background policy would weaken the existing contract.
+[1.13.0 handler](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/chrome-devtools-mcp-v1.13.0/src/ToolHandler.ts)
+and [page helper](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/chrome-devtools-mcp-v1.13.0/src/McpPage.ts)
+own the behavior; relaxing Peekaboo's background policy would weaken the existing contract.
 
-The audit covers all 59 upstream tools in the configured catalog, while public raw-call schemas advertise 29 of the 30 tools registered by this
+The audit covers all 71 upstream tools in the configured catalog, while public raw-call schemas advertise 31 of the 33 tools registered by this
 provider configuration. Optional PWA tools require a category that conflicts with an existing-browser connection;
 those and disabled experimental tools are not advertised as usable capabilities.
 
-The new `get_css_styles` tool remains unavailable through Peekaboo: its nested CSS response references need an
+The `get_css_styles` tool remains unavailable through Peekaboo: its nested CSS response references need an
 opaque-reference projection before they can safely become caller-facing element references.
+
+All twelve newly catalogued tools remain unavailable, including network mocks, logpoints, WebAuthn configuration,
+heap-context analysis, DevTools comments/UI tools, and selected-page slim tools. The now-default screencast tools
+require foreground authority. Full-page screenshots now evaluate page geometry and also require foreground authority.
+Viewport screenshots without an element retain their background route. The provider's new automatic configuration
+discovery is disabled by the embedded bootstrap so local `cd4a` settings cannot enable categories, relax filesystem
+restrictions, or alter routing.
+`evaluate_script` continues to accept inline JavaScript; its new `sourcePath` argument is refused before dispatch
+because reading host script files is outside Peekaboo's existing browser capability contract.
+
+Input and script results can now report a partial `openedPages` list. Peekaboo projects those numeric IDs into
+caller-owned page references in both structured data and text, without expiring references for other open pages.
+Snapshots omit capabilities for accessibility nodes without a backend node ID; targetable nodes retain the same
+per-page loader/node UID continuity rule. Page titles now come from CDP target metadata, while Peekaboo retains its
+existing conservative foreground requirements for page-list operations.
 
 ## Permission flow
 
@@ -163,7 +178,7 @@ validation.
 - In a local MCP process, the browser tool uses the `BrowserMCPService` from `MCPToolContext`. Public MCP and
   standalone Browser contexts default to background-only and require an existing live exact connection receipt;
   they never auto-connect implicitly. The pinned provider grants browser user activation to every Puppeteer page
-  evaluation, including internal page-title, stable-DOM, snapshot, and element-geometry work. Background contexts
+  evaluation, including internal stable-DOM, snapshot, and element-geometry work. Background contexts
   therefore expose only source-audited routes that cannot reach that path and refuse the rest before provider I/O.
 - In Bridge-backed MCP mode, an explicit `--browser-handoff <absolute-private-path>` plus one exact `--bridge-socket`
   opens an authenticated caller-scoped transport. A foreground `peekaboo browser connect --handoff-file` on that same
@@ -255,7 +270,7 @@ Common actions:
 Advanced escape hatch:
 
 - `call` with `mcp_tool` and `mcp_args_json` forwards a raw tool from the audited, pinned Chrome DevTools MCP
-  v1.10.1 catalog. Page-targeted raw tools require the wrapper's top-level `page_id`; Peekaboo validates and injects
+  v1.13.0 catalog. Page-targeted raw tools require the wrapper's top-level `page_id`; Peekaboo validates and injects
   it as upstream `pageId`, overriding any nested value in `mcp_args_json`. Truly global tools such as `list_pages`
   reject `page_id`. UID-bearing raw schemas are resolved only at their audited positions, including
   `evaluate_script.args`, form elements, and third-party singleton `{ "uid": ... }` parameters; unrelated domain

@@ -713,7 +713,8 @@ struct BrowserToolTests {
         #expect(client.executedTools.isEmpty)
     }
 
-    @Test(arguments: ["future_selected_page_escape_hatch", "get_css_styles"])
+    @Test(arguments: ["future_selected_page_escape_hatch", "get_css_styles"] +
+        BrowserMCPPageRoutingContract.unavailableToolNames.sorted())
     func `Browser raw call rejects tools without a complete capability contract`(toolName: String) async throws {
         let client = MockBrowserMCPClient(status: BrowserMCPStatus(
             isConnected: true,
@@ -733,14 +734,16 @@ struct BrowserToolTests {
 
     @Test
     func `Audited browser routing contract partitions pinned tool catalog`() {
-        #expect(BrowserMCPPageRoutingContract.dependencyVersion == "1.10.1")
+        #expect(BrowserMCPPageRoutingContract.dependencyVersion == "1.13.0")
         #expect(BrowserMCPPageRoutingContract.capabilityContract(for: "get_css_styles") == nil)
         #expect(!BrowserMCPUserActivationPolicy.registeredToolNames.contains("get_css_styles"))
-        #expect(BrowserMCPPageRoutingContract.pageScopedToolNames.count == 33)
+        #expect(BrowserMCPPageRoutingContract.pageScopedToolNames.count == 41)
         #expect(BrowserMCPPageRoutingContract.explicitPageTargetToolNames.count == 3)
-        #expect(BrowserMCPPageRoutingContract.globalToolNames.count == 22)
-        #expect(BrowserMCPPageRoutingContract.blockedSelectedPageToolNames == ["trigger_extension_action"])
-        #expect(BrowserMCPPageRoutingContract.allToolNames.count == 59)
+        #expect(BrowserMCPPageRoutingContract.globalToolNames.count == 23)
+        #expect(BrowserMCPPageRoutingContract.blockedSelectedPageToolNames == [
+            "evaluate", "navigate", "screenshot", "trigger_extension_action",
+        ])
+        #expect(BrowserMCPPageRoutingContract.allToolNames.count == 71)
         #expect(BrowserMCPPageRoutingContract.pageTargetedToolNames.isDisjoint(
             with: BrowserMCPPageRoutingContract.globalToolNames))
         #expect(BrowserMCPPageRoutingContract.pageTargetedToolNames.isDisjoint(
@@ -748,8 +751,8 @@ struct BrowserToolTests {
         #expect(BrowserMCPPageRoutingContract.globalToolNames.isDisjoint(
             with: BrowserMCPPageRoutingContract.blockedSelectedPageToolNames))
         #expect(BrowserMCPPageRoutingContract.routing(for: "trigger_extension_action") == .blockedSelectedPage)
-        #expect(BrowserMCPPageRoutingContract.readOnlyToolNames.count == 31)
-        #expect(BrowserMCPPageRoutingContract.mutatingToolNames.count == 26)
+        #expect(BrowserMCPPageRoutingContract.readOnlyToolNames.count == 33)
+        #expect(BrowserMCPPageRoutingContract.mutatingToolNames.count == 36)
         #expect(BrowserMCPPageRoutingContract.argumentDependentToolNames == [
             "performance_start_trace",
             "select_page",
@@ -1071,6 +1074,13 @@ extension BrowserToolTests {
             ["action": "console", "page_id": 1, "message_id": 1],
             ["action": "network", "page_id": 1],
             ["action": "screenshot", "page_id": 1, "uid": "1_0"],
+            ["action": "screenshot", "page_id": 1, "full_page": true],
+            [
+                "action": "call",
+                "mcp_tool": "take_screenshot",
+                "page_id": 1,
+                "mcp_args_json": #"{"fullPage":true}"#,
+            ],
             [
                 "action": "call",
                 "mcp_tool": "evaluate_script",
