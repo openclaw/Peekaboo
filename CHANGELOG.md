@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased
+
 ## 4.9.10 - 2026-11-20
 
 **Highlights:** Start the MCP server's native tools inside embedded Bridges that offer no browser handoff, such as OpenClaw.app; move browser automation to the audited Chrome DevTools MCP 1.13.0, keeping its new tools unavailable and making full-page captures foreground-only; stop Tachikoma's realtime calculator from crashing on malformed input; and refresh the submodules, Swift package locks, Node 26.13.1 and pnpm 11.28.13.
