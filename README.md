@@ -51,9 +51,9 @@ peekaboo see --app Finder --json
 
 That is the core loop: observe the current screen, choose an element from the result, and act on it.
 
-## What's new in 4.9.9
+## What's new in 4.9.10
 
-Peekaboo 4.9.9 is a fix release. Peekaboo.app no longer crashes when a Bridge client inspects the app's own Settings window. `action` can now invoke UIKit and Mac Catalyst custom accessibility actions by their title, fresh `see` accepts localized Chrome profile window titles, and exact-window target-change failures now include a typed JSON diagnostic saying which check failed and how. In the Mac app, Ollama model discovery refreshes when its base URL changes, Settings is found by its identity instead of its window title, and Launch at Login stays off until macOS approves it.
+Peekaboo 4.9.10 is a maintenance release. `peekaboo mcp serve` now starts its native tools inside embedded Bridges that offer no browser handoff, such as OpenClaw.app, instead of failing at startup; on those hosts only browser actions are unavailable. Browser automation moves to the audited Chrome DevTools MCP 1.13.0: its new tools stay unavailable, file-backed scripts are refused, and full-page screenshots and screencasts need foreground authority. Tachikoma's realtime calculator now rejects malformed input instead of crashing, and Commander, TauTUI, AXorcist, the Swift package locks, Node and pnpm are refreshed.
 
 ## Automate an app
 

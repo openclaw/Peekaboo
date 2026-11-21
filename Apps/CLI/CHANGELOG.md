@@ -5,6 +5,13 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 4.9.10 - 2026-11-20
+
+- Start the default MCP catalog against native-only embedded Bridges such as OpenClaw.app. Keep browser operations unavailable on those hosts instead of failing the entire server with `unavailable`; retain the selected Bridge, native permission checks, tool filters and strict browser-handoff validation.
+- Update the audited Chrome DevTools MCP browser provider to 1.13.0 (Puppeteer 25.17.0, MCP SDK 2.4.0). Its new network-mocking, logpoint, WebAuthn, heap-context, DevTools UI and slim tools stay unavailable; file-backed `evaluate_script` sources are refused; provider config discovery is disabled; pages opened by an action are returned as opaque page references; and full-page screenshots and screencasts require foreground authority.
+- Pick up Tachikoma's realtime fixes on top of 0.6.1: the built-in calculator rejects malformed or deeply nested expressions instead of crashing, and realtime session events decode correctly. Thanks @SebTardif! [Tachikoma#121](https://github.com/openclaw/Tachikoma/pull/121).
+- Update AXorcist to 0.2.3, Commander to 0.3.1, Swiftdansi to 0.3.2, Tachikoma to 0.6.1 and TauTUI to 0.2.3, picking up Commander's inherited-option and positional-order parsing fixes, TauTUI's oversized Kitty key crash fix, and AXorcist's observation fixes.
+
 ## 4.9.9 - 2026-11-15
 
 - Keep Peekaboo.app running when a Bridge client inspects the app's own windows, such as `see --window-id <Settings> --tree`. Accessibility reads into the host process now run on the main actor instead of a background lane, where they could reach main-actor-only AppKit state and trap. Thanks @Rybots! #1181, fixes #1180.
