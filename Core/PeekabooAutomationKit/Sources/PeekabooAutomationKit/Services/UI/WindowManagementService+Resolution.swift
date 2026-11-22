@@ -115,10 +115,10 @@ extension WindowManagementService {
                         processIdentifiers: [ownerPID],
                         timeout: 1)
                 }).value,
-                    snapshot.windowID == id,
-                    snapshot.ownerProcessIdentifier == ownerPID,
-                    snapshot.ownerProcessStartIdentity == originalIdentity.ownerProcessStartIdentity,
-                    SystemIdentityResolver.processStartIdentity(ownerPID) == snapshot.ownerProcessStartIdentity
+                   snapshot.windowID == id,
+                   snapshot.ownerProcessIdentifier == ownerPID,
+                   snapshot.ownerProcessStartIdentity == originalIdentity.ownerProcessStartIdentity,
+                   SystemIdentityResolver.processStartIdentity(ownerPID) == snapshot.ownerProcessStartIdentity
                 {
                     return [windowInfo.withExactAXState(
                         title: snapshot.title,
@@ -138,9 +138,9 @@ extension WindowManagementService {
                 processIdentifiers: processIdentifiers,
                 timeout: 2)
         }).value,
-            snapshot.windowID == id,
-            SystemIdentityResolver.processStartIdentity(snapshot.ownerProcessIdentifier) ==
-            snapshot.ownerProcessStartIdentity
+           snapshot.windowID == id,
+           SystemIdentityResolver.processStartIdentity(snapshot.ownerProcessIdentifier) ==
+           snapshot.ownerProcessStartIdentity
         {
             let identity = WindowMutationIdentity(
                 windowID: id,
@@ -487,19 +487,26 @@ enum BoundedAXWindowIdentityScanner {
         guard AXUIElementGetPid(window, &ownerPID) == .success,
               ownerPID == ownerProcessIdentifier,
               AXWindowIDResolver.copyWindowID(window, into: &candidateID) == .success,
-              candidateID == requestedID
+              candidateID == requestedID,
+              let bounds = Self.reportedWindowBounds(
+                  position: self.pointAttribute(kAXPositionAttribute, of: window),
+                  size: self.sizeAttribute(kAXSizeAttribute, of: window))
         else {
             return nil
         }
-        let position = self.pointAttribute(kAXPositionAttribute, of: window) ?? .zero
-        let size = self.sizeAttribute(kAXSizeAttribute, of: window) ?? .zero
         return BoundedAXWindowIdentitySnapshot(
             windowID: Int(requestedID),
             ownerProcessIdentifier: ownerProcessIdentifier,
             ownerProcessStartIdentity: ownerProcessStartIdentity,
             title: self.stringAttribute(kAXTitleAttribute, of: window) ?? "",
-            bounds: CGRect(origin: position, size: size),
+            bounds: bounds,
             isMinimized: self.boolAttribute(kAXMinimizedAttribute, of: window) == true)
+    }
+
+    /// A missing Accessibility position or size is not a window rectangle.
+    static func reportedWindowBounds(position: CGPoint?, size: CGSize?) -> CGRect? {
+        guard let position, let size else { return nil }
+        return CGRect(origin: position, size: size)
     }
 
     private static func remainingCallTimeout(until deadline: ContinuousClock.Instant) -> Float? {
