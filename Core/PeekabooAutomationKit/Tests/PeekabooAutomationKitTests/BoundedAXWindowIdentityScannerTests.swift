@@ -50,4 +50,60 @@ struct BoundedAXWindowIdentityScannerTests {
                 size: nil) == nil)
         #expect(BoundedAXWindowIdentityScanner.reportedWindowBounds(position: nil, size: nil) == nil)
     }
+
+    @Test
+    func `a missing accessibility rectangle keeps title and minimized state`() throws {
+        let partial = BoundedAXWindowIdentityScanner.identitySnapshot(
+            receipt: BoundedAXWindowScanReceipt(
+                windowID: 7,
+                ownerProcessIdentifier: 42,
+                ownerProcessStartIdentity: 9),
+            title: "Notes",
+            bounds: nil,
+            isMinimized: true)
+        #expect(partial.bounds == nil)
+        #expect(partial.title == "Notes")
+        #expect(partial.isMinimized)
+        #expect(partial.windowRequiringCompleteBounds() == nil)
+
+        let reported = CGRect(x: 12, y: 34, width: 200, height: 80)
+        let complete = BoundedAXWindowIdentityScanner.identitySnapshot(
+            receipt: BoundedAXWindowScanReceipt(
+                windowID: 7,
+                ownerProcessIdentifier: 42,
+                ownerProcessStartIdentity: 9),
+            title: "Notes",
+            bounds: reported,
+            isMinimized: true)
+        #expect(complete.bounds == reported)
+        let axOnly = try #require(complete.windowRequiringCompleteBounds())
+        #expect(axOnly.bounds == reported)
+        #expect(axOnly.title == "Notes")
+        #expect(axOnly.isMinimized)
+        #expect(axOnly.mutationIdentity?.capturedBounds == reported)
+        #expect(axOnly.mutationIdentity?.isMinimized == true)
+
+        let coreGraphicsBounds = CGRect(x: 12, y: 34, width: 200, height: 80)
+        let identity = WindowMutationIdentity(
+            windowID: 924,
+            ownerProcessIdentifier: 42,
+            ownerProcessStartIdentity: 7,
+            capturedBounds: coreGraphicsBounds,
+            isMinimized: false)
+        let cgWindow = ServiceWindowInfo(
+            windowID: 924,
+            title: "WindowServer",
+            bounds: coreGraphicsBounds,
+            isOffScreen: true,
+            isOnScreen: false,
+            mutationIdentity: identity)
+        let enriched = cgWindow.withExactAXState(partial)
+        #expect(enriched.bounds == coreGraphicsBounds)
+        #expect(enriched.title == "Notes")
+        #expect(enriched.isMinimized)
+        let receipt = try #require(enriched.mutationIdentity)
+        #expect(receipt.capturedBounds == coreGraphicsBounds)
+        #expect(receipt.isMinimized == true)
+        #expect(receipt.processIdentity == identity.processIdentity)
+    }
 }

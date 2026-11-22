@@ -120,10 +120,7 @@ extension WindowManagementService {
                     snapshot.ownerProcessStartIdentity == originalIdentity.ownerProcessStartIdentity,
                     SystemIdentityResolver.processStartIdentity(ownerPID) == snapshot.ownerProcessStartIdentity
                 {
-                    return [windowInfo.withExactAXState(
-                        title: snapshot.title,
-                        bounds: snapshot.bounds,
-                        isMinimized: snapshot.isMinimized)]
+                    return [windowInfo.withExactAXState(snapshot)]
                 }
             }
             return [windowInfo]
@@ -140,27 +137,10 @@ extension WindowManagementService {
         }).value,
             snapshot.windowID == id,
             SystemIdentityResolver.processStartIdentity(snapshot.ownerProcessIdentifier) ==
-            snapshot.ownerProcessStartIdentity
+            snapshot.ownerProcessStartIdentity,
+            let window = snapshot.windowRequiringCompleteBounds()
         {
-            let identity = WindowMutationIdentity(
-                windowID: id,
-                ownerProcessIdentifier: snapshot.ownerProcessIdentifier,
-                ownerProcessStartIdentity: snapshot.ownerProcessStartIdentity,
-                capturedBounds: snapshot.bounds,
-                isMinimized: snapshot.isMinimized)
-            return [ServiceWindowInfo(
-                windowID: id,
-                title: snapshot.title,
-                bounds: snapshot.bounds,
-                isMinimized: snapshot.isMinimized,
-                isMainWindow: false,
-                windowLevel: 0,
-                alpha: 1,
-                index: 0,
-                isOffScreen: true,
-                layer: 0,
-                isOnScreen: false,
-                mutationIdentity: identity)]
+            return [window]
         }
         throw PeekabooError.windowNotFound(criteria: "windowId \(id)")
     }
@@ -317,6 +297,14 @@ extension WindowManagementService {
 }
 
 extension ServiceWindowInfo {
+    /// Accessibility geometry is optional. A missing rectangle keeps this window's CoreGraphics bounds.
+    func withExactAXState(_ snapshot: BoundedAXWindowIdentitySnapshot) -> ServiceWindowInfo {
+        self.withExactAXState(
+            title: snapshot.title,
+            bounds: snapshot.bounds ?? self.bounds,
+            isMinimized: snapshot.isMinimized)
+    }
+
     func withExactAXState(title: String, bounds: CGRect, isMinimized: Bool) -> ServiceWindowInfo {
         ServiceWindowInfo(
             windowID: self.windowID,
@@ -356,8 +344,32 @@ struct BoundedAXWindowIdentitySnapshot: Sendable, Equatable {
     let ownerProcessIdentifier: pid_t
     let ownerProcessStartIdentity: UInt64
     let title: String
-    let bounds: CGRect
+    let bounds: CGRect?
     let isMinimized: Bool
+
+    /// An Accessibility-only window still needs a reported rectangle. Title and minimized state are not a frame.
+    func windowRequiringCompleteBounds() -> ServiceWindowInfo? {
+        guard let bounds = self.bounds else { return nil }
+        let identity = WindowMutationIdentity(
+            windowID: self.windowID,
+            ownerProcessIdentifier: self.ownerProcessIdentifier,
+            ownerProcessStartIdentity: self.ownerProcessStartIdentity,
+            capturedBounds: bounds,
+            isMinimized: self.isMinimized)
+        return ServiceWindowInfo(
+            windowID: self.windowID,
+            title: self.title,
+            bounds: bounds,
+            isMinimized: self.isMinimized,
+            isMainWindow: false,
+            windowLevel: 0,
+            alpha: 1,
+            index: 0,
+            isOffScreen: true,
+            layer: 0,
+            isOnScreen: false,
+            mutationIdentity: identity)
+    }
 }
 
 struct BoundedAXWindowScanReceipt: Sendable, Equatable {
@@ -487,20 +499,35 @@ enum BoundedAXWindowIdentityScanner {
         guard AXUIElementGetPid(window, &ownerPID) == .success,
               ownerPID == ownerProcessIdentifier,
               AXWindowIDResolver.copyWindowID(window, into: &candidateID) == .success,
-              candidateID == requestedID,
-              let bounds = Self.reportedWindowBounds(
-                  position: self.pointAttribute(kAXPositionAttribute, of: window),
-                  size: self.sizeAttribute(kAXSizeAttribute, of: window))
+              candidateID == requestedID
         else {
             return nil
         }
-        return BoundedAXWindowIdentitySnapshot(
-            windowID: Int(requestedID),
-            ownerProcessIdentifier: ownerProcessIdentifier,
-            ownerProcessStartIdentity: ownerProcessStartIdentity,
+        return Self.identitySnapshot(
+            receipt: BoundedAXWindowScanReceipt(
+                windowID: Int(requestedID),
+                ownerProcessIdentifier: ownerProcessIdentifier,
+                ownerProcessStartIdentity: ownerProcessStartIdentity),
             title: self.stringAttribute(kAXTitleAttribute, of: window) ?? "",
-            bounds: bounds,
+            bounds: Self.reportedWindowBounds(
+                position: self.pointAttribute(kAXPositionAttribute, of: window),
+                size: self.sizeAttribute(kAXSizeAttribute, of: window)),
             isMinimized: self.boolAttribute(kAXMinimizedAttribute, of: window) == true)
+    }
+
+    static func identitySnapshot(
+        receipt: BoundedAXWindowScanReceipt,
+        title: String,
+        bounds: CGRect?,
+        isMinimized: Bool) -> BoundedAXWindowIdentitySnapshot
+    {
+        BoundedAXWindowIdentitySnapshot(
+            windowID: receipt.windowID,
+            ownerProcessIdentifier: receipt.ownerProcessIdentifier,
+            ownerProcessStartIdentity: receipt.ownerProcessStartIdentity,
+            title: title,
+            bounds: bounds,
+            isMinimized: isMinimized)
     }
 
     /// A missing Accessibility position or size is not a window rectangle.
