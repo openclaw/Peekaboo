@@ -70,6 +70,41 @@ struct VisualizerEventStoreContractTests {
             Issue.record("Decoded payload mismatch")
         }
     }
+
+    @Test
+    func `Arrow payload round-trips a global display rectangle and sticky lifetime`() throws {
+        let target = VisualizerArrowTarget.rect(CGRect(x: -20, y: 40, width: 120, height: 36))
+        let payload = VisualizerEvent.Payload.arrow(
+            target: target,
+            label: "Open settings",
+            duration: 3,
+            sticky: true)
+
+        let data = try JSONEncoder().encode(payload)
+        let decoded = try JSONDecoder().decode(VisualizerEvent.Payload.self, from: data)
+        guard case let .arrow(decodedTarget, label, duration, sticky) = decoded else {
+            Issue.record("Decoded arrow payload mismatch")
+            return
+        }
+
+        #expect(decodedTarget == target)
+        #expect(label == "Open settings")
+        #expect(duration == 3)
+        #expect(sticky)
+    }
+
+    @Test
+    func `Arrow dismissal payload round-trips its guidance identifier`() throws {
+        let id = UUID()
+        let data = try JSONEncoder().encode(VisualizerEvent.Payload.arrowDismiss(id: id))
+        let decoded = try JSONDecoder().decode(VisualizerEvent.Payload.self, from: data)
+        guard case let .arrowDismiss(decodedID) = decoded else {
+            Issue.record("Decoded arrow dismissal payload mismatch")
+            return
+        }
+
+        #expect(decodedID == id)
+    }
 }
 
 private enum LegacyHotkeyPayload: Codable {

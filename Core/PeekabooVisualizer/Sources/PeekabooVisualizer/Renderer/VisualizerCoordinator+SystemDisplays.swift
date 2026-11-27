@@ -58,4 +58,57 @@ extension VisualizerCoordinator {
             replaceKey: OverlaySlot.annotatedScreenshot)
         return true
     }
+
+    func displayArrow(
+        id: UUID,
+        target: VisualizerArrowTarget,
+        label: String?,
+        duration: TimeInterval,
+        sticky: Bool) async -> Bool
+    {
+        guard self.settings?.visualizerEnabled ?? true,
+              let primaryScreenFrame = NSScreen.screens.first?.frame
+        else {
+            return false
+        }
+
+        let appKitPoint: CGPoint
+        let appKitRect: CGRect?
+        switch target {
+        case let .point(point):
+            appKitPoint = VisualizerScreenGeometry.appKitPoint(
+                fromGlobalDisplay: point,
+                primaryScreenFrame: primaryScreenFrame)
+            appKitRect = nil
+        case let .rect(rect):
+            let converted = VisualizerScreenGeometry.appKitRect(
+                fromGlobalDisplay: rect,
+                primaryScreenFrame: primaryScreenFrame)
+            appKitPoint = CGPoint(x: converted.midX, y: converted.midY)
+            appKitRect = converted
+        }
+
+        let screen = NSScreen.screens.first { $0.frame.contains(appKitPoint) }
+            ?? appKitRect.flatMap { rect in NSScreen.screens.first { $0.frame.intersects(rect) } }
+        guard let screen else { return false }
+
+        let localPoint = Self.windowLocalPoint(appKitPoint, in: screen.frame)
+        let localRect = appKitRect.map { Self.windowLocalRect($0, in: screen.frame) }
+        guard let layout = ArrowGuidanceLayout.make(
+            targetPoint: localPoint,
+            targetRect: localRect,
+            size: screen.frame.size)
+        else {
+            return false
+        }
+
+        _ = self.overlayManager.showAnimation(
+            at: screen.frame,
+            content: ArrowGuidanceView(layout: layout, label: label),
+            duration: sticky ? nil : self.scaledDuration(for: duration, minimum: 0.1),
+            fadeOut: true,
+            chromeMargin: 0,
+            replaceKey: OverlaySlot.arrow(id: id))
+        return true
+    }
 }

@@ -186,6 +186,11 @@ All animations share one design system (`VisualizerDesign.swift`): a single viol
 - **Animation**: Pop in with slight scale, fade out at the end; a refreshed detection retires every prior per-screen sheet before drawing the new set, including screens that now have no elements
 - **Duration**: 2 seconds (scaled) before fade
 
+### Arrow Guidance ➤
+- **API**: `VisualizationClient.showArrow(target:label:duration:sticky:)` emits an `arrow` event and returns its UUID when dispatched. `VisualizerArrowTarget.point` points at a global display coordinate; `.rect` also outlines the target bounds. These coordinates use the same global display space as `see --json`.
+- **Label and lifetime**: A short optional label appears beside the arrow. Non-sticky arrows fade after `duration` (3 seconds by default). Sticky arrows remain until `VisualizationClient.dismissArrow(id:)` dispatches an `arrowDismiss` event using the returned UUID.
+- **Window behavior**: The renderer uses the shared borderless, non-activating overlay window, which ignores mouse events. The arrow is visual guidance only and does not interact with the target.
+
 ### Verbosity: throttles and replace slots
 
 Agents fire actions in bursts, so the coordinator coalesces:
