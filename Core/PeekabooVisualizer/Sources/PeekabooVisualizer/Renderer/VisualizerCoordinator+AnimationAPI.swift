@@ -180,7 +180,7 @@ extension VisualizerCoordinator {
     @discardableResult
     public func dismissArrow(id: UUID) async -> Bool {
         await self.animationQueue.enqueue(priority: .high) {
-            self.overlayManager.fadeOutAnimation(replaceKey: OverlaySlot.arrow(id: id))
+            await self.overlayManager.fadeOutAnimation(replaceKey: OverlaySlot.arrow(id: id))
         }
     }
 }

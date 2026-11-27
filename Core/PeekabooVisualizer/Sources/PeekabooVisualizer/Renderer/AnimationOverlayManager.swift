@@ -49,8 +49,9 @@ final class AnimationOverlayManager {
         chromeMargin: CGFloat = AnimationOverlayManager.defaultChromeMargin,
         replaceKey: String? = nil) -> NSWindow
     {
-        self.logger
-            .debug("Showing animation overlay at \(rect.debugDescription), duration: \(duration), fadeOut: \(fadeOut)")
+        let durationText = String(describing: duration)
+        self.logger.debug(
+            "Showing animation overlay at \(rect.debugDescription), duration: \(durationText), fadeOut: \(fadeOut)")
 
         if let replaceKey, let previous = replaceableWindows.removeValue(forKey: replaceKey) {
             self.fadeOutAndRemove(previous, duration: 0.12)
